@@ -1,0 +1,24 @@
+{
+  "name": "majveia-universe",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "An interactive, physically-grounded simulation of the universe — from the cosmic web to planetary surfaces.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "bundle:single": "node scripts/build-single.mjs"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.180.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5",
+    "vitest": "^3.2.4"
+  }
+}
