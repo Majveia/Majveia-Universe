@@ -28,9 +28,9 @@ const logs = [];
 page.on('console', (m) => logs.push(`${m.type()}: ${m.text()}`));
 page.on('pageerror', (e) => logs.push(`PAGEERROR: ${e.message}`));
 
-await page.goto(url + (args.q ? '?' + args.q : ''), { waitUntil: 'load', timeout: 60000 });
+await page.goto(url + (args.page ?? '') + (args.q ? '?' + args.q : ''), { waitUntil: 'load', timeout: 60000 });
 try {
-  await page.waitForFunction(() => window.majveia?.ready === true, null, { timeout: 180000 });
+  await page.waitForFunction(() => window.majveia?.ready === true || window.lab?.ready === true, null, { timeout: 180000 });
 } catch (e) {
   logs.push('TIMEOUT waiting for ready');
 }

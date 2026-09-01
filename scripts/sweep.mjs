@@ -14,12 +14,13 @@ const page = await browser.newPage({
   viewport: { width: +(args.w ?? 760), height: +(args.h ?? 480) }, deviceScaleFactor: 1,
 });
 page.on('console', (m) => { if (m.type() === 'error') console.log('ERR', m.text()); });
-await page.goto('http://localhost:4173/?' + (args.q ?? ''), { waitUntil: 'load' });
-await page.waitForFunction(() => window.majveia?.ready === true, null, { timeout: 240000 });
+await page.goto('http://localhost:4173/' + (args.page ?? '') + '?' + (args.q ?? ''), { waitUntil: 'load' });
+await page.waitForFunction(() => window.majveia?.ready === true || window.lab?.ready === true, null, { timeout: 240000 });
 await page.evaluate(() => document.getElementById('ui').classList.add('hidden'));
 if (args.epoch) await page.evaluate((a) => window.majveia.setEpoch(+a), args.epoch);
+if (args.eval) await page.evaluate(args.eval);
 for (const v of values) {
-  await page.evaluate(([c, val]) => window.majveia[c](val), [call, v]);
+  await page.evaluate(([c, val]) => (window.majveia ?? window.lab)[c](val), [call, v]);
   await page.waitForTimeout(900);
   await page.screenshot({ path: `${args.out ?? 'sweep'}-${v}.png` });
   console.log('shot', v);
