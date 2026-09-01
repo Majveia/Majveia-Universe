@@ -59,6 +59,28 @@ export interface CosmicWebField {
   rmsDisplacement: number;
   /** Comoving sound horizon (BAO ruler) for this cosmology, Mpc. */
   baoScaleMpc: number;
+  /** rms of the linear density field on the grid, for peak-height statistics. */
+  sigmaGrid: number;
+  /** Collapsed peaks: candidate sites for clusters and galaxies. */
+  knots: Knot[];
+}
+
+/**
+ * A collapsed peak of the density field. In a real simulation these would be
+ * found by a friends-of-friends or spherical-overdensity halo finder; here they
+ * are the local maxima of the smallest deformation eigenvalue (all three axes
+ * collapsing) with a mutual-exclusion radius, which selects the same objects to
+ * within the accuracy Zel'dovich itself has.
+ */
+export interface Knot {
+  /** Eulerian comoving position today, Mpc. */
+  x: number; y: number; z: number;
+  /** Peak height nu = delta_linear / sigma. Sets the halo mass function. */
+  nu: number;
+  /** Estimated halo mass, solar masses (Press-Schechter style scaling). */
+  massMsun: number;
+  /** Collapse redshift: when D(a) * lambda3 first reaches the 1.686 threshold. */
+  zCollapse: number;
 }
 
 type Progress = (fraction: number, label: string) => void;
@@ -189,26 +211,19 @@ export function generateCosmicWeb(opts: CosmicWebOptions, onProgress?: Progress)
     for (let p = 0; p < n3; p++) psi[p * 3 + c] = re[p];
   }
 
-  // --- Step 3: Lagrangian coordinates and the deformation tensor.
-  onProgress?.(0.74, 'measuring the tidal field');
-  const q = new Float32Array(n3 * 3);
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      const rowBase = (i * n + j) * n;
-      for (let l = 0; l < n; l++) {
-        const p = (rowBase + l) * 3;
-        q[p] = i * dx;
-        q[p + 1] = j * dx;
-        q[p + 2] = l * dx;
-      }
-    }
-  }
-
-  const lambda = new Float32Array(n3 * 3);
+  // --- Step 3: the deformation tensor on the grid.
+  //
+  //   M_ab = d Psi_a / d q_b
+  //
+  // computed by central differences. Analytically M is the Hessian of the
+  // velocity potential and therefore symmetric, so only six components are
+  // independent; we symmetrise to remove the small asymmetry discretisation
+  // introduces.
+  onProgress?.(0.72, 'measuring the tidal field');
+  const t00 = new Float32Array(n3), t11 = new Float32Array(n3), t22 = new Float32Array(n3);
+  const t01 = new Float32Array(n3), t02 = new Float32Array(n3), t12 = new Float32Array(n3);
   const inv2dx = 1 / (2 * dx);
   const wrap = (v: number) => (v + n) % n;
-  const M = new Float64Array(9);
-  let sumPsi2 = 0;
 
   for (let i = 0; i < n; i++) {
     const ip = wrap(i + 1), imn = wrap(i - 1);
@@ -217,32 +232,129 @@ export function generateCosmicWeb(opts: CosmicWebOptions, onProgress?: Progress)
       for (let l = 0; l < n; l++) {
         const lp = wrap(l + 1), lm = wrap(l - 1);
         const idx = (i * n + j) * n + l;
-        const nb = [
-          [(ip * n + j) * n + l, (imn * n + j) * n + l],
-          [(i * n + jp) * n + l, (i * n + jm) * n + l],
-          [(i * n + j) * n + lp, (i * n + j) * n + lm],
-        ];
-        // M[a*3+b] = d Psi_a / d q_b
-        for (let a = 0; a < 3; a++) {
-          for (let b = 0; b < 3; b++) {
-            M[a * 3 + b] = (psi[nb[b][0] * 3 + a] - psi[nb[b][1] * 3 + a]) * inv2dx;
-          }
-        }
-        // Symmetrise (analytically M is a Hessian; discretisation breaks it slightly)
-        const m01 = 0.5 * (M[1] + M[3]);
-        const m02 = 0.5 * (M[2] + M[6]);
-        const m12 = 0.5 * (M[5] + M[7]);
-        // lambda_i are eigenvalues of -M (the usual Zel'dovich sign convention)
-        const [e1, e2, e3] = symmetricEigenvalues3(-M[0], -m01, -m02, -M[4], -m12, -M[8]);
-        lambda[idx * 3] = e1;
-        lambda[idx * 3 + 1] = e2;
-        lambda[idx * 3 + 2] = e3;
+        const xa = (ip * n + j) * n + l, xb = (imn * n + j) * n + l;
+        const ya = (i * n + jp) * n + l, yb = (i * n + jm) * n + l;
+        const za = (i * n + j) * n + lp, zb = (i * n + j) * n + lm;
+        const dPx_dx = (psi[xa * 3] - psi[xb * 3]) * inv2dx;
+        const dPy_dy = (psi[ya * 3 + 1] - psi[yb * 3 + 1]) * inv2dx;
+        const dPz_dz = (psi[za * 3 + 2] - psi[zb * 3 + 2]) * inv2dx;
+        const dPy_dx = (psi[xa * 3 + 1] - psi[xb * 3 + 1]) * inv2dx;
+        const dPx_dy = (psi[ya * 3] - psi[yb * 3]) * inv2dx;
+        const dPz_dx = (psi[xa * 3 + 2] - psi[xb * 3 + 2]) * inv2dx;
+        const dPx_dz = (psi[za * 3] - psi[zb * 3]) * inv2dx;
+        const dPz_dy = (psi[ya * 3 + 2] - psi[yb * 3 + 2]) * inv2dx;
+        const dPy_dz = (psi[za * 3 + 1] - psi[zb * 3 + 1]) * inv2dx;
+        // lambda are eigenvalues of -M, the Zel'dovich sign convention
+        t00[idx] = -dPx_dx; t11[idx] = -dPy_dy; t22[idx] = -dPz_dz;
+        t01[idx] = -0.5 * (dPy_dx + dPx_dy);
+        t02[idx] = -0.5 * (dPz_dx + dPx_dz);
+        t12[idx] = -0.5 * (dPz_dy + dPy_dz);
+      }
+    }
+    onProgress?.(0.72 + (i / n) * 0.14, 'measuring the tidal field');
+  }
 
-        const px = psi[idx * 3], py = psi[idx * 3 + 1], pz = psi[idx * 3 + 2];
+  // --- Step 3b: stratified (jittered) Lagrangian sampling.
+  //
+  // Sampling the displacement field exactly on its own grid leaves the initial
+  // cubic lattice visible wherever matter has not moved far - the voids come
+  // out looking like graph paper. Real simulations avoid this with "glass" or
+  // random initial conditions. Here each particle is placed uniformly at random
+  // inside its own cell, and both the displacement and the tidal tensor are
+  // trilinearly interpolated to that position. The result is stratified (no
+  // Poisson clumping), unbiased, and the lattice disappears completely.
+  onProgress?.(0.86, 'placing matter');
+  const qOut = new Float32Array(n3 * 3);
+  const psiOut = new Float32Array(n3 * 3);
+  const lambda = new Float32Array(n3 * 3);
+  let sumPsi2 = 0;
+
+  const lerpField = (
+    f: Float32Array, comp: number, stride: number,
+    i0: number, i1: number, j0: number, j1: number, l0: number, l1: number,
+    u: number, v: number, w: number,
+  ): number => {
+    const at = (a: number, b: number, c: number) => f[((a * n + b) * n + c) * stride + comp];
+    const c00 = at(i0, j0, l0) * (1 - u) + at(i1, j0, l0) * u;
+    const c10 = at(i0, j1, l0) * (1 - u) + at(i1, j1, l0) * u;
+    const c01 = at(i0, j0, l1) * (1 - u) + at(i1, j0, l1) * u;
+    const c11 = at(i0, j1, l1) * (1 - u) + at(i1, j1, l1) * u;
+    const c0 = c00 * (1 - v) + c10 * v;
+    const c1 = c01 * (1 - v) + c11 * v;
+    return c0 * (1 - w) + c1 * w;
+  };
+
+  let jst = (seed ^ 0x2545f491) >>> 0;
+  const nextF = () => {
+    jst ^= jst << 13; jst >>>= 0;
+    jst ^= jst >>> 17;
+    jst ^= jst << 5; jst >>>= 0;
+    return jst / 4294967296;
+  };
+
+  for (let i = 0; i < n; i++) {
+    const i1 = wrap(i + 1);
+    for (let j = 0; j < n; j++) {
+      const j1 = wrap(j + 1);
+      for (let l = 0; l < n; l++) {
+        const l1 = wrap(l + 1);
+        const idx = (i * n + j) * n + l;
+        const u = nextF(), v = nextF(), w = nextF();
+
+        const px = lerpField(psi, 0, 3, i, i1, j, j1, l, l1, u, v, w);
+        const py = lerpField(psi, 1, 3, i, i1, j, j1, l, l1, u, v, w);
+        const pz = lerpField(psi, 2, 3, i, i1, j, j1, l, l1, u, v, w);
+
+        const a = lerpField(t00, 0, 1, i, i1, j, j1, l, l1, u, v, w);
+        const d = lerpField(t11, 0, 1, i, i1, j, j1, l, l1, u, v, w);
+        const f6 = lerpField(t22, 0, 1, i, i1, j, j1, l, l1, u, v, w);
+        const b = lerpField(t01, 0, 1, i, i1, j, j1, l, l1, u, v, w);
+        const c = lerpField(t02, 0, 1, i, i1, j, j1, l, l1, u, v, w);
+        const e = lerpField(t12, 0, 1, i, i1, j, j1, l, l1, u, v, w);
+        const [e1, e2, e3] = symmetricEigenvalues3(a, b, c, d, e, f6);
+
+        qOut[idx * 3] = (i + u) * dx;
+        qOut[idx * 3 + 1] = (j + v) * dx;
+        qOut[idx * 3 + 2] = (l + w) * dx;
+        psiOut[idx * 3] = px; psiOut[idx * 3 + 1] = py; psiOut[idx * 3 + 2] = pz;
+        lambda[idx * 3] = e1; lambda[idx * 3 + 1] = e2; lambda[idx * 3 + 2] = e3;
         sumPsi2 += px * px + py * py + pz * pz;
       }
     }
-    onProgress?.(0.74 + (i / n) * 0.24, 'measuring the tidal field');
+    onProgress?.(0.86 + (i / n) * 0.12, 'placing matter');
+  }
+  const q = qOut;
+
+  // --- Step 4: locate collapsed peaks (future clusters and galaxies).
+  onProgress?.(0.985, 'finding collapsed haloes');
+  let s2 = 0;
+  for (let i = 0; i < n3; i++) {
+    const d = lambda[i * 3] + lambda[i * 3 + 1] + lambda[i * 3 + 2];
+    s2 += d * d;
+  }
+  const sigmaGrid = Math.sqrt(s2 / n3);
+  const knots = findKnots(n, dx, q, psiOut, lambda, sigmaGrid, cosmology);
+
+  // --- Step 5: shuffle. Particles are stored in a random order so that drawing
+  // only the first M of them is a uniform subsample of the whole box - which is
+  // how the renderer does level of detail and how the quality slider works,
+  // with no extra buffers and no popping.
+  onProgress?.(0.99, 'shuffling for level of detail');
+  let st = (seed ^ 0x5bf03635) >>> 0;
+  const nextU = () => {
+    st ^= st << 13; st >>>= 0;
+    st ^= st >>> 17;
+    st ^= st << 5; st >>>= 0;
+    return st;
+  };
+  for (let i = n3 - 1; i > 0; i--) {
+    const j = nextU() % (i + 1);
+    if (i === j) continue;
+    for (let c = 0; c < 3; c++) {
+      let t = q[i * 3 + c]; q[i * 3 + c] = q[j * 3 + c]; q[j * 3 + c] = t;
+      t = psiOut[i * 3 + c]; psiOut[i * 3 + c] = psiOut[j * 3 + c]; psiOut[j * 3 + c] = t;
+      t = lambda[i * 3 + c]; lambda[i * 3 + c] = lambda[j * 3 + c]; lambda[j * 3 + c] = t;
+    }
   }
 
   onProgress?.(1, 'universe ready');
@@ -251,11 +363,121 @@ export function generateCosmicWeb(opts: CosmicWebOptions, onProgress?: Progress)
     boxMpc: L,
     count: n3,
     q,
-    psi,
+    psi: psiOut,
     lambda,
     rmsDisplacement: Math.sqrt(sumPsi2 / n3),
     baoScaleMpc: ps.baoScaleMpc,
+    sigmaGrid,
+    knots,
   };
+}
+
+/** Spherical-collapse linear overdensity threshold. */
+export const DELTA_C = 1.686;
+
+/**
+ * Local maxima of lambda3 (the last axis to collapse) with a mutual exclusion
+ * radius, ranked by peak height. Masses use the Lagrangian volume enclosed by
+ * the exclusion radius times the mean matter density - the same logic as
+ * Press-Schechter, applied to the actual realisation instead of an ensemble.
+ */
+function findKnots(
+  n: number, dx: number, q: Float32Array, psi: Float32Array, lambda: Float32Array,
+  sigmaGrid: number, cosmology: Cosmology,
+): Knot[] {
+  const n3 = n * n * n;
+  const cand: { i: number; l3: number }[] = [];
+  const wrap = (v: number) => (v + n) % n;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      for (let l = 0; l < n; l++) {
+        const idx = (i * n + j) * n + l;
+        const v = lambda[idx * 3 + 2];
+        if (v <= 0) continue;
+        let isMax = true;
+        for (let a = -1; a <= 1 && isMax; a++) {
+          for (let b = -1; b <= 1 && isMax; b++) {
+            for (let c = -1; c <= 1; c++) {
+              if (a === 0 && b === 0 && c === 0) continue;
+              const nid = ((wrap(i + a) * n + wrap(j + b)) * n + wrap(l + c)) * 3 + 2;
+              if (lambda[nid] > v) { isMax = false; break; }
+            }
+          }
+        }
+        if (isMax) cand.push({ i: idx, l3: v });
+      }
+    }
+  }
+  cand.sort((a, b) => b.l3 - a.l3);
+
+  // Mean matter density in Msun / Mpc^3 (comoving)
+  const rhoCritMsunMpc3 = 2.7754e11 * hOf(cosmology) * hOf(cosmology);
+  const rhoBar = cosmology.Om * rhoCritMsunMpc3;
+
+  const out: Knot[] = [];
+  const maxKnots = Math.min(6000, Math.max(200, Math.floor(n3 / 400)));
+  const exclusion = dx * 2.0;
+  const excl2 = exclusion * exclusion;
+  // Coarse spatial hash so exclusion testing stays linear
+  const cell = exclusion;
+  const buckets = new Map<string, number[]>();
+  const keyOf = (x: number, y: number, z: number) =>
+    `${Math.floor(x / cell)},${Math.floor(y / cell)},${Math.floor(z / cell)}`;
+
+  for (const c of cand) {
+    if (out.length >= maxKnots) break;
+    const p = c.i * 3;
+    const x = q[p] + psi[p], y = q[p + 1] + psi[p + 1], z = q[p + 2] + psi[p + 2];
+    let clash = false;
+    const bx = Math.floor(x / cell), by = Math.floor(y / cell), bz = Math.floor(z / cell);
+    for (let a = -1; a <= 1 && !clash; a++)
+      for (let b = -1; b <= 1 && !clash; b++)
+        for (let d = -1; d <= 1 && !clash; d++) {
+          const arr = buckets.get(`${bx + a},${by + b},${bz + d}`);
+          if (!arr) continue;
+          for (const oi of arr) {
+            const k = out[oi];
+            const ddx = k.x - x, ddy = k.y - y, ddz = k.z - z;
+            if (ddx * ddx + ddy * ddy + ddz * ddz < excl2) { clash = true; break; }
+          }
+        }
+    if (clash) continue;
+
+    const delta = lambda[p] + lambda[p + 1] + lambda[p + 2];
+    if (delta <= 0) continue;
+    const nu = delta / Math.max(sigmaGrid, 1e-9);
+    // Spherical collapse: a peak virialises when its *linear* overdensity
+    // D(a) * delta reaches delta_c = 1.686. Peaks whose delta is too small
+    // never make it, because D(a) saturates once dark energy takes over -
+    // structure formation in this universe is already almost finished.
+    const Dcoll = DELTA_C / Math.max(delta, 1e-6);
+    const zCollapse = growthRedshift(cosmology, Dcoll);
+    // Mass from the Lagrangian volume of the exclusion sphere
+    const massMsun = ((4 / 3) * Math.PI * Math.pow(exclusion, 3)) * rhoBar *
+      Math.max(0.4, 1 + delta);
+    out.push({ x, y, z, nu, massMsun, zCollapse });
+    const key = keyOf(x, y, z);
+    const arr = buckets.get(key);
+    if (arr) arr.push(out.length - 1); else buckets.set(key, [out.length - 1]);
+  }
+  return out;
+}
+
+/**
+ * Invert D(a) = target to find the redshift at which linear growth reaches a
+ * value. Returns NaN when the target is unreachable: in an accelerating
+ * universe D(a) tends to a finite limit, so low peaks never collapse at all.
+ */
+export function growthRedshift(cosmology: Cosmology, targetD: number): number {
+  if (targetD <= 0) return Infinity;
+  const aMax = 1e4;
+  if (targetD > growthFactor(cosmology, aMax)) return NaN;
+  let lo = 1e-5, hi = aMax;
+  for (let i = 0; i < 60; i++) {
+    const mid = Math.sqrt(lo * hi);
+    if (growthFactor(cosmology, mid) < targetD) lo = mid; else hi = mid;
+  }
+  return 1 / Math.sqrt(lo * hi) - 1;
 }
 
 /**

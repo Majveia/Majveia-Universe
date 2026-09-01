@@ -1,0 +1,431 @@
+/* ---------------------------------------------------------------------------
+   Interface.
+
+   Designed for an OLED panel: the background is #000 with nothing painted over
+   it, so the bezel and the void are the same colour and the image appears to
+   float. Every UI element is a thin, low-alpha overlay that fades away when you
+   stop touching it, because the subject of this screen is the universe.
+   --------------------------------------------------------------------------- */
+
+:root {
+  --ink: 255, 255, 255;
+  --accent: 232, 184, 122;      /* filament gold */
+  --cool: 122, 168, 232;        /* void blue */
+  --hot: 255, 236, 214;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+  --edge: clamp(16px, 2.4vw, 34px);
+  --fade: 620ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #000;
+  color: rgb(var(--ink));
+  font-family: var(--sans);
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  cursor: grab;
+}
+#stage:active { cursor: grabbing; }
+
+#ui {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.055em;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#ui .layer {
+  position: absolute;
+  transition: opacity var(--fade), transform var(--fade);
+}
+
+/* Everything dims when the user stops interacting: immersion over chrome. */
+#ui.idle .dimmable { opacity: 0.16; }
+#ui.hidden .layer { opacity: 0 !important; pointer-events: none !important; }
+
+/* --- Masthead ------------------------------------------------------------ */
+.masthead {
+  top: var(--edge);
+  left: var(--edge);
+}
+.masthead h1 {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  color: rgba(var(--ink), 0.92);
+}
+.masthead .sub {
+  margin-top: 7px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: rgba(var(--ink), 0.34);
+  max-width: 30ch;
+  line-height: 1.55;
+}
+.masthead .seed {
+  margin-top: 10px;
+  font-size: 9.5px;
+  color: rgba(var(--accent), 0.55);
+  letter-spacing: 0.18em;
+}
+
+/* --- Readout ------------------------------------------------------------- */
+.readout {
+  bottom: var(--edge);
+  left: var(--edge);
+  display: grid;
+  gap: 5px;
+  min-width: 232px;
+}
+.row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 12px;
+  align-items: baseline;
+}
+.row .k {
+  color: rgba(var(--ink), 0.3);
+  font-size: 9.5px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+.row .v {
+  color: rgba(var(--ink), 0.86);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+}
+.row .v em {
+  font-style: normal;
+  color: rgba(var(--ink), 0.35);
+  font-size: 10px;
+  margin-left: 4px;
+}
+.row.accent .v { color: rgb(var(--accent)); }
+
+/* --- Timeline ------------------------------------------------------------ */
+.timeline {
+  bottom: calc(var(--edge) - 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(640px, 52vw);
+  pointer-events: auto;
+}
+.timeline .track {
+  position: relative;
+  height: 44px;
+  cursor: ew-resize;
+}
+.timeline .line {
+  position: absolute;
+  left: 0; right: 0; top: 30px;
+  height: 1px;
+  background: linear-gradient(90deg,
+    rgba(var(--cool), 0.05), rgba(var(--cool), 0.3) 22%,
+    rgba(var(--accent), 0.55) 72%, rgba(var(--hot), 0.75) 92%, rgba(var(--hot), 0.12));
+}
+.timeline .fill {
+  position: absolute;
+  top: 28px; left: 0;
+  height: 3px;
+  background: rgba(var(--accent), 0.85);
+  box-shadow: 0 0 14px rgba(var(--accent), 0.5);
+  border-radius: 2px;
+  pointer-events: none;
+}
+.timeline .head {
+  position: absolute;
+  top: 22px;
+  width: 1px; height: 15px;
+  background: rgba(var(--hot), 0.95);
+  box-shadow: 0 0 12px 1px rgba(var(--hot), 0.7);
+  pointer-events: none;
+  transform: translateX(-0.5px);
+}
+.timeline .ticks { position: absolute; inset: 0; pointer-events: none; }
+.timeline .tick {
+  position: absolute;
+  top: 26px;
+  width: 1px; height: 5px;
+  background: rgba(var(--ink), 0.18);
+}
+.timeline .tick span {
+  position: absolute;
+  top: 10px;
+  left: 0;
+  transform: translateX(-50%);
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  color: rgba(var(--ink), 0.24);
+  white-space: nowrap;
+}
+.timeline .epoch {
+  text-align: center;
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(var(--ink), 0.45);
+  margin-bottom: 2px;
+  height: 12px;
+}
+
+/* --- Right rail ---------------------------------------------------------- */
+.rail {
+  top: var(--edge);
+  right: var(--edge);
+  text-align: right;
+  display: grid;
+  gap: 3px;
+  pointer-events: auto;
+}
+.rail button {
+  pointer-events: auto;
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 4px 0 4px 18px;
+  margin: 0;
+  font: inherit;
+  font-size: 9.5px;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: rgba(var(--ink), 0.32);
+  cursor: pointer;
+  transition: color 200ms;
+  text-align: right;
+}
+.rail button:hover { color: rgba(var(--ink), 0.85); }
+.rail button.on { color: rgb(var(--accent)); }
+.rail .divider { height: 10px; }
+
+/* --- Hint ---------------------------------------------------------------- */
+.hint {
+  bottom: var(--edge);
+  right: var(--edge);
+  text-align: right;
+  font-size: 9.5px;
+  line-height: 1.85;
+  color: rgba(var(--ink), 0.26);
+  letter-spacing: 0.12em;
+}
+.hint b {
+  color: rgba(var(--ink), 0.5);
+  font-weight: 400;
+}
+
+/* --- Loading ------------------------------------------------------------- */
+.boot {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 22px;
+  background: #000;
+  z-index: 50;
+  transition: opacity 900ms ease 240ms;
+  font-family: var(--mono);
+}
+.boot.done { opacity: 0; pointer-events: none; }
+.boot .title {
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.55em;
+  text-transform: uppercase;
+  color: rgba(var(--ink), 0.8);
+  padding-left: 0.55em;
+}
+.boot .bar {
+  width: min(320px, 60vw);
+  height: 1px;
+  background: rgba(var(--ink), 0.1);
+  position: relative;
+  overflow: hidden;
+}
+.boot .bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  background: rgba(var(--accent), 0.9);
+  box-shadow: 0 0 16px rgba(var(--accent), 0.7);
+  transition: width 220ms ease-out;
+}
+.boot .label {
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  color: rgba(var(--ink), 0.35);
+  text-transform: lowercase;
+  height: 12px;
+}
+
+/* --- Inspector ------------------------------------------------------------ */
+.inspector {
+  top: 50%;
+  right: var(--edge);
+  transform: translateY(-50%);
+  width: 258px;
+  padding: 16px 0 16px 16px;
+  border-left: 1px solid rgba(var(--ink), 0.1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 380ms ease, transform 380ms ease;
+}
+.inspector.show { opacity: 1; transform: translateY(-50%) translateX(0); }
+.inspector h2 {
+  margin: 0 0 3px;
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: rgba(var(--ink), 0.95);
+}
+.inspector .kind {
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(var(--accent), 0.8);
+  margin-bottom: 14px;
+}
+.inspector .row { grid-template-columns: 86px 1fr; }
+.inspector .note {
+  margin-top: 14px;
+  font-size: 10px;
+  line-height: 1.7;
+  letter-spacing: 0.04em;
+  color: rgba(var(--ink), 0.38);
+  font-family: var(--sans);
+}
+.swatch {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+
+/* --- Help ---------------------------------------------------------------- */
+.help {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.86);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  display: grid;
+  place-content: center;
+  z-index: 40;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 300ms;
+  padding: var(--edge);
+}
+.help.show { opacity: 1; pointer-events: auto; }
+.help .panel {
+  max-width: 760px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 34px 48px;
+}
+.help h3 {
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: rgba(var(--accent), 0.85);
+  margin: 0 0 12px;
+}
+.help dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 7px 16px; }
+.help dt {
+  color: rgba(var(--ink), 0.85);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+.help dd {
+  margin: 0;
+  color: rgba(var(--ink), 0.42);
+  font-size: 10px;
+  font-family: var(--sans);
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+}
+.help .close {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: rgba(var(--ink), 0.3);
+  font-size: 9.5px;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+}
+
+/* --- Scale ladder --------------------------------------------------------- */
+.ladder {
+  left: var(--edge);
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  gap: 0;
+  pointer-events: auto;
+}
+.ladder .step {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  cursor: pointer;
+  color: rgba(var(--ink), 0.22);
+  transition: color 260ms;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  background: none;
+  border: 0;
+  font-family: inherit;
+  text-align: left;
+}
+.ladder .step:hover { color: rgba(var(--ink), 0.7); }
+.ladder .step.on { color: rgba(var(--hot), 0.95); }
+.ladder .step .dot {
+  height: 1px;
+  background: currentColor;
+  width: 8px;
+  transition: width 300ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.ladder .step.on .dot { width: 22px; }
+
+@media (max-width: 820px) {
+  .timeline { width: min(420px, 76vw); left: 50%; }
+  .ladder, .hint { display: none; }
+  .masthead .sub { display: none; }
+  .inspector { width: 210px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 1ms !important; }
+}

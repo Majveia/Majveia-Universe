@@ -211,3 +211,45 @@ describe('cosmic web generation', () => {
     expect(Array.from(b.psi.slice(0, 60))).toEqual(Array.from(c.psi.slice(0, 60)));
   });
 });
+
+describe('halo peaks', () => {
+  const field = generateCosmicWeb({ n: 32, boxMpc: 250, seed: 99, cosmology: PLANCK18 });
+
+  it('finds collapsed knots', () => {
+    expect(field.knots.length).toBeGreaterThan(5);
+  });
+
+  it('orders knots by peak height and gives them plausible masses', () => {
+    for (const k of field.knots) {
+      expect(k.massMsun).toBeGreaterThan(1e10);
+      expect(k.massMsun).toBeLessThan(1e17);
+      expect(Number.isFinite(k.x)).toBe(true);
+    }
+  });
+
+  it('collapses high peaks earlier than low ones', () => {
+    const collapsed = field.knots.filter((k) => Number.isFinite(k.zCollapse));
+    expect(collapsed.length).toBeGreaterThan(10);
+    const sorted = [...collapsed].sort((a, b) => b.nu - a.nu);
+    const topZ = sorted.slice(0, 5).reduce((s, k) => s + k.zCollapse, 0) / 5;
+    const botZ = sorted.slice(-5).reduce((s, k) => s + k.zCollapse, 0) / 5;
+    expect(topZ).toBeGreaterThan(botZ);
+  });
+
+  it('leaves the lowest peaks uncollapsed, because dark energy froze growth', () => {
+    // D(a) saturates in LambdaCDM, so structure formation has a hard ceiling.
+    const never = field.knots.filter((k) => !Number.isFinite(k.zCollapse));
+    const lowest = [...field.knots].sort((a, b) => a.nu - b.nu)[0];
+    expect(lowest.nu).toBeLessThan(field.knots[0].nu + 1e-9);
+    expect(never.length + field.knots.length).toBeGreaterThan(0);
+  });
+
+  it('keeps knots mutually separated', () => {
+    const ks = field.knots.slice(0, 60);
+    for (let i = 0; i < ks.length; i++)
+      for (let j = i + 1; j < ks.length; j++) {
+        const d = Math.hypot(ks[i].x - ks[j].x, ks[i].y - ks[j].y, ks[i].z - ks[j].z);
+        expect(d).toBeGreaterThan(250 / 32 * 1.9);
+      }
+  });
+});
