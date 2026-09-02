@@ -25,6 +25,8 @@ import {
 } from '../cosmology/lcdm';
 import { peculiarVelocityFactor } from '../cosmology/zeldovich';
 import { CosmicWebRenderer } from '../render/cosmicweb';
+import { CmbView } from '../render/cmbview';
+import { peakMultipoles } from '../cosmology/cmb';
 import { GalaxySprites, type GalaxySpriteData } from '../render/galaxysprites';
 import { GalaxyView } from '../render/galaxyview';
 import { SystemView } from '../render/systemview';
@@ -178,6 +180,9 @@ export class CosmosStage extends Stage {
   private nodeCount = 0;
   velocityTint = false;
   brightness = 0.55;
+  private cmb?: CmbView;
+  /** 0 off, 1 as observed with the dipole, 2 with the dipole removed. */
+  private cmbMode: 0 | 1 | 2 = 0;
 
   build(): void {
     const field = this.env.universe.field;
@@ -255,6 +260,44 @@ export class CosmosStage extends Stage {
     this.web.setViewport(this.env.viewport()[1], this.env.engine.camera.fov);
   }
 
+  /**
+   * Show the microwave background around the web.
+   *
+   * They are the same field. The temperature pattern on the last-scattering
+   * surface and the filaments in front of it are one Gaussian random field
+   * with one power spectrum, separated by 13.8 billion years of gravity - so
+   * seeing them in the same frame is the point, and the web is dimmed rather
+   * than hidden.
+   */
+  cycleCmb(): 0 | 1 | 2 {
+    if (!this.cmb) {
+      this.cmb = new CmbView({
+        cosmology: this.env.cosmology,
+        seed: this.env.universe.seed,
+        waves: this.env.quality() > 0.6 ? 640 : 400,
+        resolution: this.env.quality() > 0.6 ? 2560 : 1280,
+      });
+      this.cmb.mesh.scale.setScalar(this.env.universe.field.boxMpc * 40);
+    }
+    this.cmbMode = ((this.cmbMode + 1) % 3) as 0 | 1 | 2;
+    if (this.cmbMode === 0) {
+      this.root.remove(this.cmb.mesh);
+    } else {
+      this.root.add(this.cmb.mesh);
+      // As observed, our own motion through the background is 3.36 mK and the
+      // primordial pattern is 110 microkelvin: a factor of thirty. Every map
+      // ever published has the dipole taken out, and this is why.
+      this.cmb.setDipole(this.cmbMode === 1 ? 3360 : 0);
+      this.cmb.setRange(this.cmbMode === 1 ? 3600 : 340);
+    }
+    return this.cmbMode;
+  }
+
+  /** Scales of the last-scattering surface, for the readout. */
+  get cmbScales(): CmbView['scales'] | null {
+    return this.cmbMode > 0 && this.cmb ? this.cmb.scales : null;
+  }
+
   update(dt: number): void {
     void dt;
     const a = this.env.epoch();
@@ -262,6 +305,10 @@ export class CosmosStage extends Stage {
     const field = this.env.universe.field;
     this.web.setGrowth(D);
     this.web.setCamera(this.env.engine.camera.position);
+    if (this.cmbMode > 0 && this.cmb) {
+      this.cmb.render(this.env.engine.renderer);
+      this.cmb.mesh.position.copy(this.env.engine.camera.position);
+    }
 
     // Bounded sightline with exposure scaled by cell/depth: constant column
     // density per pixel from inside a void to outside the box.
@@ -271,7 +318,7 @@ export class CosmosStage extends Stage {
       nearFade: depth * 0.16,
       fadeStart: depth * 0.30,
       fadeEnd: depth,
-      brightness: this.brightness * (cell / depth),
+      brightness: this.brightness * (cell / depth) * (this.cmbMode > 0 ? 0.75 : 1),
       velocityTint: this.velocityTint ? 1 : 0,
       velocityFactor: this.velocityTint ? peculiarVelocityFactor(this.env.cosmology, a) : 0,
     });
@@ -313,8 +360,23 @@ export class CosmosStage extends Stage {
       { k: 'H(z)', v: Math.round(HofaKmsMpc(c, a)).toString(), u: 'km/s/Mpc' },
       { k: 'CMB', v: Tcmb_a(c, a).toFixed(2), u: 'K' },
       { k: 'growth rate f', v: growthRate(c, a).toFixed(3) },
+      ...this.cmbRows(),
       { k: 'field of view', v: dv, u: du },
       { k: 'particles', v: commas(this.web.drawnParticles) },
+    ];
+  }
+
+  /** What the last-scattering surface is doing, while it is being shown. */
+  private cmbRows(): Row[] {
+    const s = this.cmbScales;
+    if (!s) return [];
+    const peaks = peakMultipoles(s, 3);
+    return [
+      { k: 'last scattering', v: `z = ${s.zStar.toFixed(0)}`, accent: true },
+      { k: 'sound horizon', v: s.soundHorizonMpc.toFixed(0), u: 'Mpc' },
+      { k: 'subtends', v: s.acousticAngleDeg.toFixed(2), u: '°' },
+      { k: 'acoustic peaks', v: `ℓ = ${peaks.map((p) => p.toFixed(0)).join(', ')}` },
+      { k: 'showing', v: this.cmbMode === 1 ? 'as observed · ±3.4 mK' : 'dipole removed · ±340 µK' },
     ];
   }
 

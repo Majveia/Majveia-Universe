@@ -75,6 +75,7 @@ export class App {
   stage: Stage | null = null;
   private stack: { id: ScaleId; ctx: StageCtx; label: string }[] = [];
   private readout: Rows;
+  private readoutKeys = '';
   private timeline: Timeline;
   private inspector: HTMLDivElement;
   private inspectorBody: HTMLDivElement;
@@ -417,11 +418,14 @@ export class App {
 
   private rebuildReadout(): void {
     this.readout.clear();
+    this.readoutKeys = '';
     if (!this.stage) return;
-    for (const r of this.stage.rows()) {
+    const rows = this.stage.rows();
+    for (const r of rows) {
       this.readout.add({ key: r.k, label: r.k, accent: r.accent });
     }
     this.readout.add({ key: '__fps', label: 'frame' });
+    this.readoutKeys = rows.map((r) => r.k).join('\u0000');
   }
 
   // -------------------------------------------------------------------------
@@ -529,6 +533,19 @@ export class App {
             if (on && !this.playing) this.togglePlay();
           } else {
             this.flash('encounters need a galaxy');
+          }
+          break;
+        }
+        case 'KeyB': {
+          if (this.stage instanceof CosmosStage) {
+            const mode = this.stage.cycleCmb();
+            this.flash(mode === 1
+              ? 'the microwave sky as observed — almost all of it is our own motion'
+              : mode === 2
+                ? 'dipole removed: 110 µK of sound waves from before there were atoms'
+                : 'back to the present');
+          } else {
+            this.flash('the background is only visible from the cosmic scale');
           }
           break;
         }
@@ -747,7 +764,13 @@ export class App {
 
     if (this.frame % 6 === 0 && this.stage) {
       this.fps += (1 / Math.max(dt, 1e-4) - this.fps) * 0.15;
-      for (const r of this.stage.rows()) this.readout.set(r.k, r.v, r.u);
+      const rows = this.stage.rows();
+      // Stages add and drop rows as things happen - a comet switches on, an
+      // eclipse starts, the microwave background is turned on - so the set has
+      // to be rebuilt when it changes, not only when the scale does.
+      const keys = rows.map((r) => r.k).join('\u0000');
+      if (keys !== this.readoutKeys) this.rebuildReadout();
+      for (const r of rows) this.readout.set(r.k, r.v, r.u);
       this.readout.set('__fps', this.fps.toFixed(0), 'fps');
     }
   }
@@ -786,6 +809,7 @@ const HELP_HTML = `
       <dt>[ &nbsp; ]</dt><dd>epoch, or time warp</dd>
       <dt>drag timeline</dt><dd>scrub 13.8 billion years</dd>
       <dt>R</dt><dd>rewind to the dark ages</dd>
+      <dt>B</dt><dd>show the microwave background</dd>
     </dl>
   </div>
   <div>
