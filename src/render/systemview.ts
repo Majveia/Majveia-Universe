@@ -21,6 +21,7 @@ import { PlanetView } from './planet';
 import { StarView } from './star';
 import { RNG } from '../core/rng';
 import { habitableZone } from '../astro/stellar';
+import { CometView } from './cometview';
 
 const ORBIT_VERT = /* glsl */ `
 in float aT;
@@ -150,6 +151,8 @@ export class SystemView {
   private primaryPos = new THREE.Vector3();
   readonly slots: PlanetSlot[] = [];
   private beltMats: THREE.RawShaderMaterial[] = [];
+  readonly comets: CometView[] = [];
+  private lastTime = 0;
   private zoneMat?: THREE.ShaderMaterial;
   minAngularRadius: number;
   /** Largest magnification currently applied to any body, for the readout. */
@@ -206,6 +209,13 @@ export class SystemView {
     for (const p of system.planets) {
       const slot = this.makeSlot(p, muStar, opts.detailed ?? true);
       this.slots.push(slot);
+    }
+
+    // --- Comets
+    for (const c of system.comets) {
+      const cv = new CometView(c, muStar, { dust: 9000, ions: 520 });
+      this.comets.push(cv);
+      this.group.add(cv.group);
     }
 
     // --- Asteroid belts
@@ -312,7 +322,11 @@ export class SystemView {
       uniforms: {
         uTime: { value: 0 },
         uGM: { value: muStar / (AU * AU * AU) },
-        uPointScale: { value: 18 },
+        // The splat scale has to be tied to the belt's own radius, not fixed:
+        // gl_PointSize divides by the view distance in AU, so a fixed value
+        // turns a belt around an M dwarf - where everything sits inside a tenth
+        // of an AU - into a wall of maximum-size dots.
+        uPointScale: { value: Math.max(belt.outerAu, 1e-4) * 3.0 },
         uColor: { value: new THREE.Vector3(...color) },
         uOpacity: { value: opacity },
       },
@@ -325,12 +339,15 @@ export class SystemView {
 
   /** Advance to a simulation time and reposition everything. */
   update(timeS: number, camera: THREE.Camera): void {
+    const dtS = Math.max(0, timeS - this.lastTime);
+    this.lastTime = timeS;
     this.timeS = timeS;
     const st = this.system.star;
     const muStar = G * st.currentMassMsun * M_SUN;
     this.starView.update(timeS, this.primaryPos);
 
     for (const m of this.beltMats) m.uniforms.uTime.value = timeS;
+    for (const c of this.comets) c.update(timeS, dtS);
 
     const camPos = camera.getWorldPosition(this.tmp.set(0, 0, 0)).clone();
     this.magnification = 1;
@@ -412,6 +429,7 @@ export class SystemView {
   dispose(): void {
     this.starView.dispose();
     this.companionView?.dispose();
+    for (const c of this.comets) c.dispose();
     for (const s of this.slots) { s.view?.dispose(); s.orbit.geometry.dispose(); s.orbitMat.dispose(); }
   }
 }

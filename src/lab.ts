@@ -24,6 +24,8 @@ engine.bloomStrength = Number(params.get('bloom') ?? 0.8);
 engine.bloomThreshold = Number(params.get('thr') ?? 0.8);
 engine.vignette = 0.45;
 engine.saturation = 1.12;
+// Reachable from the console for every mode, not just the galaxy one.
+(window as unknown as Record<string, unknown>).labEngine = engine;
 
 function resize() {
   engine.setSize(window.innerWidth, window.innerHeight, Math.min(devicePixelRatio || 1, 2));
@@ -115,10 +117,29 @@ if (params.get('mode') === 'system') {
   engine.camera.updateProjectionMatrix();
   let t = Number(params.get('t0') ?? 0);
   const rate = Number(params.get('rate') ?? 3e6);
+  const followComet = params.get('comet') === '1';
+  // Freezing the clock at a chosen epoch makes a still frame reproducible: a
+  // comet's whole apparition lasts months, which is a fraction of a second at
+  // orrery speed.
+  const tstop = params.has('tstop') ? Number(params.get('tstop')) : Infinity;
+  let cometIdx = -1;
   const step = () => {
     requestAnimationFrame(step);
-    t += rate / 60;
+    if (t < tstop) t = Math.min(tstop, t + rate / 60);
     sv.update(t, engine.camera);
+    if (followComet && sv.comets.length) {
+      // Lock onto one comet for the whole run - switching between them mid-shot
+      // just teleports the camera. Default to whichever is brightest on the
+      // first frame, which is the one worth watching.
+      if (cometIdx < 0) {
+        cometIdx = params.has('ci') ? Number(params.get('ci')) % sv.comets.length
+          : sv.comets.reduce((bi, c, i, arr) => (c.activityNow > arr[bi].activityNow ? i : bi), 0);
+      }
+      const best = sv.comets[cometIdx];
+      const [x, y, z] = best.position;
+      controls.snapTo(new THREE.Vector3(x, y, z),
+        Number(params.get('cd') ?? 0.55), controls.theta, controls.phi);
+    }
   };
   requestAnimationFrame(step);
   // eslint-disable-next-line no-console

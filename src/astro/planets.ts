@@ -22,6 +22,7 @@ import { RNG, derive } from '../core/rng';
 import type { Star } from './stellar';
 import { hillRadius, period, tidalLockingTimeYears, type OrbitalElements } from '../physics/kepler';
 import { planetRegion, combinedLuminosity, type Companion, type PlanetHost } from './binary';
+import { makeComet, type Comet } from './comet';
 
 export type PlanetClass =
   | 'iron' | 'rocky' | 'desert' | 'ocean' | 'terrestrial' | 'lava' | 'carbon'
@@ -123,6 +124,8 @@ export interface PlanetarySystem {
   /** Kuiper-analogue outer debris belt. */
   outerBeltAu: [number, number];
   cometCount: number;
+  /** Comets on eccentric orbits, active near perihelion. */
+  comets: Comet[];
 }
 
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV'];
@@ -236,7 +239,7 @@ export function buildSystem(
     return {
       star, companion, host: region.host, effectiveLuminosity: L,
       planets, snowLineAu: snow, sublimationAu: subl, discSolidsMe: 0,
-      asteroidBelts: [], outerBeltAu: [0, 0], cometCount: 0,
+      asteroidBelts: [], outerBeltAu: [0, 0], cometCount: 0, comets: [],
     };
   }
 
@@ -324,6 +327,10 @@ export function buildSystem(
     asteroidBelts: belts,
     outerBeltAu: [outer * 1.3, outer * 3.2],
     cometCount: rng.int(400, 1800),
+    // A handful of comets currently on their way in. There are billions more
+    // out in the cloud; these are the ones close enough to have turned on.
+    comets: Array.from({ length: rng.int(2, 5) },
+      (_, i) => makeComet(rng, i, starName, outer, snow)),
   };
 }
 

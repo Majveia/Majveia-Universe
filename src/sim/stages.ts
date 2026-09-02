@@ -1096,8 +1096,15 @@ export class SystemStage extends Stage {
         `separation ${sig(comp.aM / AU, 2)} AU`
       : `${starLabel(st)} · ${system.planets.length} planets · ` +
         `${st.massMsun.toFixed(2)} M☉ · ${sig(st.luminosityLsun, 2)} L☉`;
-    // A year per second at the default warp.
-    this.timeScale = YEAR;
+    // Pace the clock by the system's own outermost orbit rather than by a
+    // fixed year per second. Around an M dwarf every planet is inside a tenth
+    // of an AU and orbits in weeks, so a year a second is nine laps a second -
+    // a blur, with a comet's entire apparition gone between two frames.
+    const outerAuForClock = system.planets.length
+      ? system.planets[system.planets.length - 1].au : 5;
+    const outerPeriod = 2 * Math.PI * Math.sqrt(
+      Math.pow(outerAuForClock * AU, 3) / (G * st.currentMassMsun * M_SUN));
+    this.timeScale = Math.min(YEAR * 40, Math.max(YEAR * 0.02, outerPeriod / 8));
 
     this.sky = new SkyDome({ brightness: 0.6, bandStrength: 0.009, seed, nebula: 0.005 });
     this.sky.mesh.scale.setScalar(1e6);
@@ -1162,8 +1169,27 @@ export class SystemStage extends Stage {
       { k: 'snow line', v: sys.snowLineAu.toFixed(2), u: 'AU' },
       { k: 'planets', v: sys.planets.length.toString() },
       { k: 'body scale', v: this.minAngular === 0 ? 'true' : `×${sig(this.view.magnification, 2)}` },
+      ...this.cometRows(),
       { k: 'elapsed', v: tv, u: tu },
       { k: 'field of view', v: dv, u: du },
+    ];
+  }
+
+  /**
+   * The brightest comet currently switched on, if any. A comet is inert for
+   * almost all of its orbit, so this row appears only while one is inside its
+   * own ice line - which is exactly when there is something to look at.
+   */
+  private cometRows(): Row[] {
+    let best: (typeof this.view.comets)[number] | null = null;
+    for (const c of this.view.comets) {
+      if (c.activityNow > 0.004 && (!best || c.activityNow > best.activityNow)) best = c;
+    }
+    if (!best) return [];
+    return [
+      { k: 'comet', v: best.comet.name, accent: true },
+      { k: 'distance', v: sig(best.heliocentricAu, 2), u: 'AU' },
+      { k: 'tails', v: `${sig(best.dustTailAu, 2)} AU dust · ${sig(best.ionTailAu, 2)} AU ion` },
     ];
   }
 
