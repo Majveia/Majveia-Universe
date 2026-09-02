@@ -31,7 +31,10 @@ out vec3 vNormal;
 out vec3 vWorld;
 void main() {
   vObj = position;
-  vNormal = normalize(normalMatrix * normal);
+  // World-space normal. three's normalMatrix is the inverse transpose of the
+  // *modelView* matrix, so using it here would give a view-space normal, and
+  // the terminator would follow the camera instead of the star.
+  vNormal = normalize(mat3(modelMatrix) * normal);
   vec4 w = modelMatrix * vec4(position, 1.0);
   vWorld = w.xyz;
   gl_Position = projectionMatrix * viewMatrix * w;
@@ -59,6 +62,7 @@ uniform float uCloud;        // cloud cover 0..1
 uniform float uType;         // 0 rocky, 1 gas giant, 2 ice, 3 lava, 4 living
 uniform float uRoughness;
 uniform float uAtmoDensity;
+uniform float uAtmoBar;
 uniform vec3 uAtmoColor;
 uniform float uNightLights;
 uniform float uRadius;
@@ -193,7 +197,7 @@ void main() {
     float icy = smoothstep(1.0 - uIce - 0.12, 1.0 - uIce + 0.06, abs(lat) + capNoise)
               + smoothstep(sea + 0.42, sea + 0.62, elev) * 0.8 * step(0.02, uIce);
     icy = clamp(icy, 0.0, 1.0);
-    albedo = mix(albedo, vec3(0.86, 0.90, 0.95), icy);
+    albedo = mix(albedo, vec3(0.70, 0.75, 0.82), icy);
     spec = mix(spec, 0.25, icy);
   }
 
@@ -204,7 +208,7 @@ void main() {
   // scatters light around the limb.
   // Terminator width. An airless world has a knife edge; a thick atmosphere
   // scatters light past the geometric terminator and softens it over degrees.
-  float soft = 0.04 + 0.26 * clamp(uAtmoDensity, 0.0, 1.0);
+  float soft = 0.045 + 0.22 * clamp(log(1.0 + uAtmoBar) / 2.4, 0.0, 1.0);
   float diffuse = smoothstep(-soft, soft * 1.6, ndl);
   float shadow = ringShadow(vObj, sun);
 
@@ -421,10 +425,16 @@ export class PlanetView {
   private surfMat: THREE.ShaderMaterial;
   private atmoMat?: THREE.ShaderMaterial;
   private ringMat?: THREE.ShaderMaterial;
-  readonly worldRadius: number;
+  /** Radius the geometry was built at. */
+  readonly baseRadius: number;
+  /** Radius currently drawn at, after any minimum-angular-size scaling. */
+  worldRadius: number;
+  private atmoRatio = 1;
+  private ringRatio: [number, number] = [0, 0];
 
   constructor(readonly planet: Planet, opts: PlanetVisualOptions) {
     const R = opts.radius;
+    this.baseRadius = R;
     this.worldRadius = R;
     const seg = opts.segments ?? 96;
 
@@ -453,6 +463,7 @@ export class PlanetView {
         uType: { value: typeCode },
         uRoughness: { value: 0.8 },
         uAtmoDensity: { value: Math.min(1, planet.pressureBar) },
+        uAtmoBar: { value: planet.pressureBar },
         uAtmoColor: { value: new THREE.Vector3(0.3, 0.5, 1) },
         uNightLights: { value: planet.biosphere > 0.62 ? (planet.biosphere - 0.62) * 2.6 : 0 },
         uRadius: { value: R },
@@ -504,6 +515,7 @@ export class PlanetView {
         },
       });
       this.atmosphere = new THREE.Mesh(new THREE.SphereGeometry(atmoR, 64, 32), this.atmoMat);
+      this.atmoRatio = atmoR / R;
       this.group.add(this.atmosphere);
     }
 
@@ -540,10 +552,37 @@ export class PlanetView {
       this.surfMat.uniforms.uRingInner.value = inner;
       this.surfMat.uniforms.uRingOuter.value = outer;
       this.surfMat.uniforms.uRingOpacity.value = ring.opacity;
+      this.ringRatio = [inner / R, outer / R];
     }
 
     // Axial tilt
     this.group.rotation.z = planet.obliquity;
+  }
+
+  /**
+   * Draw the planet at a different world radius.
+   *
+   * At true scale a planet is invisible from anywhere useful - the Earth is one
+   * part in twenty-three thousand of its own orbit - so bodies are given a
+   * floor on their apparent size and drawn at true scale as soon as they exceed
+   * it. Scaling the group alone would desynchronise the atmosphere and ring
+   * shaders, which do their chord arithmetic in world space, so their radii are
+   * scaled with it.
+   */
+  setWorldRadius(r: number): void {
+    if (Math.abs(r - this.worldRadius) < 1e-12) return;
+    this.worldRadius = r;
+    this.group.scale.setScalar(r / this.baseRadius);
+    this.surfMat.uniforms.uRadius.value = r;
+    if (this.atmoMat) {
+      this.atmoMat.uniforms.uPlanetRadius.value = r;
+      this.atmoMat.uniforms.uAtmoRadius.value = r * this.atmoRatio;
+    }
+    if (this.ringMat) {
+      this.ringMat.uniforms.uPlanetRadius.value = r;
+      this.ringMat.uniforms.uInner.value = r * this.ringRatio[0];
+      this.ringMat.uniforms.uOuter.value = r * this.ringRatio[1];
+    }
   }
 
   /** @param sunDir unit vector from the planet toward its star, in world space. */

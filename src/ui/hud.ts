@@ -54,6 +54,12 @@ export class Rows {
   }
 
   has(key: string): boolean { return this.vals.has(key); }
+
+  /** Drop every row. Used when the scale changes and the readout is rebuilt. */
+  clear(): void {
+    this.el.innerHTML = '';
+    this.vals.clear();
+  }
 }
 
 /** Number formatting that stays readable across forty orders of magnitude. */

@@ -429,3 +429,14 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 1ms !important; }
 }
+
+/* --- Scale-transition and stage chrome ------------------------------------ */
+.warp {
+  font-variant-numeric: tabular-nums;
+}
+.ladder .step span:last-child { white-space: nowrap; }
+.inspector .descend:hover { color: rgba(255, 236, 214, 1); }
+.masthead .seed {
+  max-width: 44ch;
+  line-height: 1.7;
+}

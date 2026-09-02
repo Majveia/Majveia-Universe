@@ -139,7 +139,12 @@ export class StarView {
   private mat: THREE.ShaderMaterial;
   private coronaMat: THREE.ShaderMaterial;
 
+  readonly baseRadius: number;
+  worldRadius: number;
+
   constructor(readonly star: Star, radius: number, seed = 0, intensity = 1) {
+    this.baseRadius = radius;
+    this.worldRadius = radius;
     const c = star.color;
     const hot = blackbodyRGB(star.teff * 1.06);
     const cool = blackbodyRGB(star.teff * 0.86);
@@ -182,6 +187,14 @@ export class StarView {
     });
     this.corona = new THREE.Mesh(new THREE.SphereGeometry(radius * 4.0, 32, 16), this.coronaMat);
     this.group.add(this.corona);
+  }
+
+  /** Draw the star at a different world radius; see PlanetView.setWorldRadius. */
+  setWorldRadius(r: number): void {
+    if (Math.abs(r - this.worldRadius) < 1e-14) return;
+    this.worldRadius = r;
+    this.group.scale.setScalar(r / this.baseRadius);
+    this.coronaMat.uniforms.uRadius.value = r;
   }
 
   update(timeS: number, worldPos: THREE.Vector3): void {

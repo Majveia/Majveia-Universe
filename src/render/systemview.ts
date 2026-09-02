@@ -120,10 +120,12 @@ void main() {
 `;
 
 export interface SystemViewOptions {
-  /** Magnification applied to planet and moon radii. */
-  bodyScale?: number;
-  /** Magnification applied to the star's radius. */
-  starScale?: number;
+  /**
+   * Minimum apparent radius, in radians, that a body is drawn at. Below this
+   * it would be sub-pixel and invisible; above it, the body is drawn at true
+   * scale. 0 gives strict true scale everywhere.
+   */
+  minAngularRadius?: number;
   /** Whether to build full planet meshes (expensive) or markers only. */
   detailed?: boolean;
 }
@@ -144,21 +146,21 @@ export class SystemView {
   readonly slots: PlanetSlot[] = [];
   private beltMats: THREE.RawShaderMaterial[] = [];
   private zoneMat?: THREE.ShaderMaterial;
-  private bodyScale: number;
-  private starScale: number;
+  minAngularRadius: number;
+  /** Largest magnification currently applied to any body, for the readout. */
+  magnification = 1;
   /** Simulation time, seconds. */
   timeS = 0;
   private sunColor = new THREE.Color();
   private tmp = new THREE.Vector3();
 
   constructor(readonly system: PlanetarySystem, seed: number, opts: SystemViewOptions = {}) {
-    this.bodyScale = opts.bodyScale ?? 900;
-    this.starScale = opts.starScale ?? 14;
+    this.minAngularRadius = opts.minAngularRadius ?? 0.0045;
     const st = system.star;
     const c = st.color;
     this.sunColor.setRGB(c[0], c[1], c[2]);
 
-    const starR = Math.max((st.radiusRsun * R_SUN * this.starScale) / AU, 1e-4);
+    const starR = Math.max((st.radiusRsun * R_SUN) / AU, 1e-9);
     this.starView = new StarView(st, starR, seed, 1.6);
     this.group.add(this.starView.group);
 
@@ -176,7 +178,7 @@ export class SystemView {
         uniforms: {
           uInner: { value: hzIn }, uOuter: { value: hzOut },
           uColor: { value: new THREE.Vector3(0.22, 0.85, 0.62) },
-          uOpacity: { value: 0.009 },
+          uOpacity: { value: 0.0055 },
         },
       });
       const g = new THREE.RingGeometry(hzIn, hzOut, 192, 1);
@@ -248,8 +250,7 @@ export class SystemView {
 
     let view: PlanetView | undefined;
     if (detailed) {
-      const r = Math.max((p.radiusM * this.bodyScale) / AU, 2e-5);
-      view = new PlanetView(p, { radius: r, segments: 72 });
+      view = new PlanetView(p, { radius: p.radiusM / AU, segments: 72 });
       this.group.add(view.group);
     }
 
@@ -317,6 +318,14 @@ export class SystemView {
     for (const m of this.beltMats) m.uniforms.uTime.value = timeS;
 
     const camPos = camera.getWorldPosition(this.tmp.set(0, 0, 0)).clone();
+    this.magnification = 1;
+
+    // The star gets the same treatment as the planets.
+    {
+      const d = Math.max(camPos.length(), 1e-12);
+      const trueR = (st.radiusRsun * R_SUN) / AU;
+      this.starView.setWorldRadius(Math.max(trueR, this.minAngularRadius * 2.2 * d));
+    }
 
     for (const slot of this.slots) {
       const el = slot.planet.elements;
@@ -332,6 +341,13 @@ export class SystemView {
 
       if (slot.view) {
         slot.view.group.position.copy(slot.worldPos);
+        // Apparent-size floor: draw at true scale once the disc is resolvable,
+        // and no smaller than a few pixels before that.
+        const camDist = Math.max(camPos.distanceTo(slot.worldPos), 1e-12);
+        const trueR = slot.planet.radiusM / AU;
+        const shown = Math.max(trueR, this.minAngularRadius * camDist);
+        slot.view.setWorldRadius(shown);
+        this.magnification = Math.max(this.magnification, shown / trueR);
         const sunDir = slot.worldPos.clone().negate().normalize();
         // Inverse-square illumination, in units where 1 AU is unity
         const d2 = Math.max(slot.worldPos.lengthSq(), 1e-8);
@@ -343,34 +359,14 @@ export class SystemView {
         const col = this.sunColor.clone().multiplyScalar(irr);
         slot.view.update(sunDir, col, timeS, slot.view.group.position);
 
-        // Swap between the marker and the mesh at the point where the disc
-        // becomes resolvable - the same criterion an observer would use.
-        const dist = camPos.distanceTo(slot.worldPos);
-        const angular = slot.view.worldRadius / Math.max(dist, 1e-9);
-        const resolved = angular > 0.0016;
-        slot.view.group.visible = resolved;
-        slot.marker.visible = !resolved;
+        slot.view.group.visible = true;
+        slot.marker.visible = false;
       }
     }
   }
 
-  setBodyScale(v: number): void {
-    this.bodyScale = v;
-    for (const slot of this.slots) {
-      if (!slot.view) continue;
-      const r = Math.max((slot.planet.radiusM * v) / AU, 2e-5);
-      const s = r / slot.view.worldRadius;
-      slot.view.group.scale.setScalar(s);
-    }
-  }
-
-  setStarScale(v: number): void {
-    const st = this.system.star;
-    const r = Math.max((st.radiusRsun * R_SUN * v) / AU, 1e-4);
-    this.starView.group.scale.setScalar(r / ((st.radiusRsun * R_SUN * this.starScale) / AU));
-  }
-
-  get magnification(): [number, number] { return [this.bodyScale, this.starScale]; }
+  /** 0 for strict true scale; a few milliradians for a legible orrery. */
+  setMinAngularRadius(v: number): void { this.minAngularRadius = Math.max(0, v); }
 
   dispose(): void {
     this.starView.dispose();

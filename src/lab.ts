@@ -94,8 +94,7 @@ if (params.get('mode') === 'system') {
   const st = makeStar(Number(params.get('mass') ?? 1), Number(params.get('age') ?? 4.6), 0);
   const sys = buildSystem(st, seed, params.get('star') ?? 'Kestrel');
   const sv = new SystemView(sys, seed, {
-    bodyScale: Number(params.get('bodyscale') ?? 700),
-    starScale: Number(params.get('starscale') ?? 14),
+    minAngularRadius: Number(params.get('minang') ?? 0.0045),
   });
   engine.scene.add(sv.group);
   const span = sys.planets.length ? sys.planets[sys.planets.length - 1].au : 5;
@@ -161,6 +160,47 @@ if (params.get('mode') === 'blackhole') {
     setTemp: (v: number) => bh.setTemperature(v),
     setSky: (v: number) => bh.setSkyBrightness(v),
     setSteps: (v: number) => bh.setSteps(v),
+  });
+}
+
+// --- Optional subsystem: a nebula.
+if (params.get('mode') === 'nebula') {
+  const { NebulaView } = await import('./render/nebula');
+  const { SkyDome } = await import('./render/skydome');
+  engine.scene.remove(view.group);
+  const dome = new SkyDome({ brightness: 0.9, bandStrength: 0.012, seed, nebula: 0.006 });
+  dome.mesh.scale.setScalar(1e5);
+  engine.scene.add(dome.mesh);
+  const neb = new NebulaView({
+    radius: 10,
+    seed,
+    shape: Number(params.get('shape') ?? 1) as 0 | 1 | 2 | 3,
+    density: Number(params.get('dens') ?? 1.4),
+    dust: Number(params.get('dust') ?? 0.4),
+    emission: Number(params.get('emis') ?? 1.6),
+    steps: Number(params.get('steps') ?? 72),
+    sources: [
+      { x: 0.1, y: 0.55, z: 0.05, strength: 0.12, color: [0.75, 0.85, 1.0] },
+      { x: -0.35, y: 0.4, z: -0.2, strength: 0.05, color: [0.85, 0.9, 1.0] },
+    ],
+  });
+  engine.scene.add(neb.mesh);
+  controls.snapTo(new THREE.Vector3(), Number(params.get('d') ?? 26),
+    Number(params.get('theta') ?? 0.4), Number(params.get('phi') ?? 1.3));
+  controls.minDistance = 0.5;
+  controls.maxDistance = 200;
+  engine.camera.near = 0.05;
+  engine.camera.far = 1e6;
+  engine.camera.updateProjectionMatrix();
+  let t = 0;
+  const step = () => {
+    requestAnimationFrame(step);
+    t += 0.016;
+    neb.update(engine.camera.position, t);
+  };
+  requestAnimationFrame(step);
+  Object.assign((window as unknown as Record<string, Record<string, unknown>>).lab, {
+    neb, setEmis: (v: number) => neb.setEmission(v), setDens: (v: number) => neb.setDensity(v),
   });
 }
 

@@ -162,7 +162,7 @@ export class GalaxyView {
   timeMyr = 0;
   private baseFlux = 1;
   /** Global exposure constant, in arbitrary but consistent units. */
-  static EXPOSURE = 900;
+  static EXPOSURE = 2100;
 
   constructor(readonly buffers: GalaxyBuffers) {
     const p = buffers.params;

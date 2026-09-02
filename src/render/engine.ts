@@ -121,6 +121,7 @@ uniform vec2 uResolution;
 uniform float uSaturation;
 uniform float uAberration;
 uniform float uBlackPoint;
+uniform float uLookPower;
 
 // ---- AgX tone mapping (Blender/Filament formulation).
 // Highlights desaturate toward white along a perceptual path instead of
@@ -160,6 +161,16 @@ vec3 agx(vec3 col) {
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
+// AgX ships as a base transform plus a "look": a slope/offset/power grade and a
+// saturation term applied in display space. Without it AgX is deliberately
+// flat, and its highlight desaturation turns a red dwarf's light on a rocky
+// surface into cream. This is the standard punchy look, exposed as uniforms.
+vec3 agxLook(vec3 val, float power, float sat) {
+  float l = luma(val);
+  val = pow(max(val, vec3(0.0)), vec3(power));
+  return max(l + sat * (val - l), vec3(0.0));
+}
+
 // Interleaved gradient noise: cheap, temporally stable, no texture fetch.
 float ign(vec2 p) {
   return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
@@ -186,15 +197,13 @@ void main() {
   col *= uExposure;
 
   col = agx(col);
+  col = agxLook(col, uLookPower, uSaturation);
 
   // AgX has a long toe by design, which lifts the darkest values into a
   // visible grey. On a panel with true blacks that reads as a grey wash across
   // what should be empty space, so a black point is subtracted and the range
   // renormalised - the display equivalent of setting the pedestal.
   col = max(col - uBlackPoint, vec3(0.0)) / max(1.0 - uBlackPoint, 1e-4);
-
-  float l = luma(col);
-  col = mix(vec3(l), col, uSaturation);
 
   // Gentle vignette; never crushes to a hard ring
   col *= mix(1.0, smoothstep(0.95, 0.15, r2), uVignette);
@@ -252,10 +261,12 @@ export class Engine {
   bloomThreshold = 0.65;
   bloomRadius = 1.15;
   vignette = 0.5;
-  saturation = 1.06;
+  saturation = 1.32;
   aberration = 0.0018;
   /** Pedestal subtracted after tone mapping so empty space is truly black. */
   blackPoint = 0.014;
+  /** Contrast power of the AgX look grade. */
+  lookPower = 1.12;
 
   private hdr!: THREE.WebGLRenderTarget;
   private mips: THREE.WebGLRenderTarget[] = [];
@@ -307,6 +318,7 @@ export class Engine {
       uResolution: { value: new THREE.Vector2() },
       uSaturation: { value: 1 }, uAberration: { value: 0 },
       uBlackPoint: { value: 0.014 },
+      uLookPower: { value: 1.12 },
     });
   }
 
@@ -394,6 +406,7 @@ export class Engine {
     cu.uSaturation.value = this.saturation;
     cu.uAberration.value = this.aberration;
     cu.uBlackPoint.value = this.blackPoint;
+    cu.uLookPower.value = this.lookPower;
     cu.uTime.value = this.clock;
     (cu.uResolution.value as THREE.Vector2).set(this.width, this.height);
     r.setRenderTarget(null);
