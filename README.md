@@ -8,7 +8,7 @@ without a loading screen in between.
 ```
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 326 tests, mostly checking physics against measurement
+npm test             # 330 tests, mostly checking physics against measurement
 npm run bundle:single # one self-contained HTML file, no network dependencies
 ```
 
@@ -142,6 +142,11 @@ in February 2016, drawn from the same waveform as the field. Its window is
 measured in cycles rather than seconds, because a fixed window in time shows a
 lazy sine early on and a block of ink at the end.
 
+**N** turns it into sound. Nothing is transposed: a stellar-mass binary sweeps
+from tens of hertz to a few hundred in its last fraction of a second, which —
+by a coincidence with no deeper meaning than the mass of a dead star and the
+range of a human ear — is exactly the audio band.
+
 Checked against GW150914 throughout: chirp mass 28 M☉, ISCO at 576 km, peak
 strain 1e-21 at 410 Mpc, three solar masses radiated, final mass 62, final spin
 0.68, ringdown near 250 Hz, and a peak power of a thousandth of `c⁵/G` — which
@@ -203,6 +208,28 @@ and the Balmer series starts from the first excited one, which at 3000 K is
 empty. Only near 9500 K is the balance right. Below about 4000 K molecules
 survive and TiO takes over the optical entirely, which is why an M dwarf's
 spectrum is a comb.
+
+### A star's whole life
+
+**Y** at the system scale ages the star. A star's structure is a function of its
+mass and its age and almost nothing else, so this is the same model re-evaluated
+at a later time, and everything downstream follows without being told to: the
+luminosity climbing by a third across the main sequence (which it has — the
+faint young Sun is a real problem in palaeoclimate), the swell onto the giant
+branch, the surface cooling from yellow to red because the radius runs away
+faster than the luminosity, the habitable zone sweeping outward past one world
+after another, and the inner planets going inside the photosphere.
+
+Time runs in age over main-sequence lifetime rather than in years, so the same
+run works for an O star that lives three million years and an M dwarf that
+lives six trillion — five hundred times the present age of the universe — and
+the readout says which. The HR diagram draws the track as it goes.
+
+The red giant branch is exponential rather than linear in the overshoot,
+because the luminosity there goes as a high power of the inert helium core's
+mass. Interpolating in log to the tip the models predict — 2600 L☉ and 170 R☉ —
+puts the Sun's surface at `5772·(L/R²)^¼ = 3160 K`, which is the observed tip
+temperature, and its photosphere at 0.79 AU: past Mercury and Venus.
 
 ### The Hertzsprung-Russell diagram
 
@@ -432,6 +459,8 @@ looking at the output:
 | J | fly at a fraction of light speed |
 | G | merge two black holes |
 | D | Hertzsprung-Russell diagram |
+| N | hear the merger |
+| Y | run the star's whole life |
 | O | go to the Solar System |
 | T | true scale in a system |
 | U | hide the interface |
@@ -488,7 +517,7 @@ src/
   render/       the HDR engine and every shader
   sim/          the universe object graph and the scale ladder
   ui/           the interface
-tests/          326 tests against published measurements
+tests/          330 tests against published measurements
 ```
 
 ## Accuracy
