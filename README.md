@@ -8,7 +8,7 @@ without a loading screen in between.
 ```
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 88 tests, mostly checking physics against measurement
+npm test             # 249 tests, mostly checking physics against measurement
 npm run bundle:single # one self-contained HTML file, no network dependencies
 ```
 
@@ -60,6 +60,59 @@ once dark energy takes over, so low-amplitude peaks in the density field never
 collapse at all - structure formation in this universe is already nearly
 finished, and the simulation says so.
 
+### The microwave background
+
+Press **B** at the cosmic scale and the sky behind the filaments becomes the
+surface of last scattering. It is the same construction as the web - one
+Gaussian random field, one primordial power spectrum - evaluated 13.8 billion
+years earlier, which is the point of showing them in the same frame.
+
+Before recombination the photons and baryons are one fluid, driven into
+standing sound waves in the potential wells the dark matter has already made.
+Every mode has been oscillating for the same conformal time, so its phase at
+last scattering is `k·r_s`, and the modes caught at maximum compression or
+rarefaction leave the acoustic peaks. The sound horizon and Silk scale come
+from Eisenstein & Hu, the redshift of last scattering from Hu & Sugiyama
+(1092, against the measured 1090), and the `π/4` phase shift from radiation
+driving is what puts the first peak at ℓ = 216 rather than at the `πD/r_s ≈ 300`
+the naive count gives. The model lands the first three peaks at 216, 504 and
+792 against the observed 220, 537 and 810. Baryon loading offsets the
+oscillation's zero point, so odd peaks beat even ones - the ratio of the first
+two is how the baryon density was first measured, and taking the baryons out of
+this model takes the asymmetry out with them.
+
+The map is a few hundred plane waves drawn from that spectrum, each restricted
+to the sphere of last scattering, where a plane wave becomes a set of bands at
+one multipole `ℓ = kD`. Their sum is a Gaussian random field with the right
+angular power spectrum, synthesised once on the GPU.
+
+**B** cycles three ways, because the first thing to know about the microwave
+sky is that almost none of what you see is primordial. As observed, it is a
+3.4 mK dipole from our own motion and nothing else; take the dipole out and the
+110 µK of sound waves from before there were atoms appear underneath it.
+
+### Relativistic flight
+
+**J** puts the observer in motion, and the sky stops being a backdrop. Three
+effects, one Lorentz transformation, none of them available without the others:
+
+- **Aberration.** `cos θ' = (cos θ + β)/(1 + β cos θ)`, run backwards from the
+  pixel to the source. At β = 0.9 the entire sky behind you has been squeezed
+  into a patch ahead 26° across.
+- **Doppler.** Every frequency shifts by `D = 1/[γ(1 − β cos θ')]`. A blackbody
+  stays a blackbody, so the stars slide along the Planckian locus - and light
+  arriving exactly sideways is still redshifted by `1/γ`, which is time
+  dilation and has no classical counterpart.
+- **Beaming.** `Iν/ν³` is invariant, so surface brightness goes as `D⁴`: the sky
+  ahead blazes and the sky behind goes out.
+
+And then the background. The CMB is a 2.7 K blackbody until `D` reaches a few
+hundred, and the fraction of a Planck curve landing in the visible is the Wien
+tail `exp(−hc/λkT)` - so the switch-on is violent. Nothing at all at γ = 100, a
+dull red glow at γ = 224, a wall of light at γ = 700. The presets climb by about
+a factor of ten in γ each step, because 0.99 and 0.9999995 look alike written
+down and differ by a factor of 140 in everything that matters.
+
 ### Galaxies
 
 Spiral arms are **Lindblad kinematic density waves**. Every star sits on a
@@ -102,6 +155,19 @@ sit on the Planckian locus.
 Up close a star is limb-darkened, granulated by convection, and spotted - and
 its spots are *redder* than the surface around them, because they are cooler.
 
+Click one and you get its spectrum: a Planck continuum painted in the colours
+of its own wavelengths, with the absorption lines that survive at that
+temperature cut into it. The panel exists to show the thing Cecilia Payne
+worked out in 1925 against her examiners' advice - **line strength measures
+excitation and ionisation, not abundance**. Hydrogen is the commonest element
+in every star here, and the Balmer lines are strongest in A stars and weak in
+both O stars and M dwarfs: in an O star hydrogen is ionised and has no electron
+left to make a line with; in an M dwarf it is neutral but in the ground state,
+and the Balmer series starts from the first excited one, which at 3000 K is
+empty. Only near 9500 K is the balance right. Below about 4000 K molecules
+survive and TiO takes over the optical entirely, which is why an M dwarf's
+spectrum is a comb.
+
 ### Planets
 
 Formation runs the physical sequence: a protoplanetary disc whose mass scales
@@ -129,7 +195,58 @@ descending air, and craters only where there is no atmosphere to burn up
 impactors and no weather to erode the scars.
 
 Atmospheres use single-scattering Rayleigh extinction with `β ~ λ⁻⁴`, so limbs
-go blue and terminators redden because the path length says they should.
+go blue and terminators redden because the path length says they should. Water
+is a smooth dielectric, so sunlight glints off an ocean in a narrow GGX lobe
+with a Fresnel weight - dark looking straight down, a mirror at grazing angles.
+
+### Aurorae and eclipses
+
+Neither is drawn. An aurora is the footprint of a magnetic field: the
+magnetopause sits where `B²/2μ₀` balances the stellar wind's ram pressure, and
+the last closed field line - the one crossing the equator at `L` planetary
+radii - lands at a colatitude `θ` with `sin²θ = 1/L`. That ring is the auroral
+oval, and for an Earth in the solar wind the model puts it 19° from the
+magnetic pole, where it is. A stronger field pushes the oval poleward; a storm
+that compresses the magnetosphere drags it toward the equator. Same expression,
+evaluated twice.
+
+The colours are line emission stacked by altitude, the way the real ones are:
+N₂⁺ at 427.8 nm in the violet fringe at the bottom, the forbidden [O I] line at
+557.7 nm for the green through the middle, and [O I] at 630.0 nm above - also
+forbidden, with a 110-second lifetime, so it can only radiate where collisions
+are rare enough to leave the atom alone that long. Which is why the red is
+always on top. Whether a world gets one at all is decided by the dynamo: Venus
+turns once in 243 days and gets nothing, a small world that cooled early gets
+nothing, and a magnetised airless rock gets nothing because there is no air for
+the particles to hit.
+
+An eclipse is two circles overlapping. A star is a disc, not a point, so a body
+in front of it covers a *fraction* of that disc, and umbra, penumbra and the
+grey edge between them all come out of the one expression - as does the fact
+that a small or distant moon can only ever manage an annular eclipse, because
+its disc never covers the star's however well aligned. The same arithmetic runs
+with the roles swapped to put a planet's shadow on its moons.
+
+### Comets
+
+Dust grains are not animated along a painted curve. Each is released from the
+nucleus with an ejection velocity from gas drag, given a radiation-pressure to
+gravity ratio `β = 5.7e-4 Q/(ρa)` drawn from the grain size distribution, and
+then put on its own Kepler orbit around a star whose gravity is reduced to
+`(1 − β)GM`. After that its position is analytic. The broad curved dust tail is
+what a few thousand such grains look like drawn at once: a family of syndynes,
+with nobody drawing a syndyne.
+
+Ions get their own treatment, because they behave differently. Picked up by the
+stellar wind at hundreds of kilometres a second, they leave in an almost
+straight ray away from the star, swept back only by the aberration from the
+comet's own transverse motion. So the two tails point in different directions,
+and the angle between them is a measurement rather than a styling choice.
+
+Everything is measured against the star rather than against the Sun: water ice
+sublimates where the equilibrium temperature reaches about 170 K, which is 3 AU
+for the Sun and under a tenth of that for an M dwarf, so perihelia, tail
+lengths and grain lifetimes all scale with the ice line.
 
 ### Black holes
 
@@ -221,6 +338,8 @@ looking at the output:
 | `[` `]` | epoch, or time warp |
 | C | change the cosmology |
 | V | tint the web by peculiar velocity |
+| B | show the microwave background |
+| J | fly at a fraction of light speed |
 | T | true scale in a system |
 | U | hide the interface |
 | P | save a frame |
@@ -268,13 +387,15 @@ tuned.
 src/
   core/         constants, deterministic RNG
   cosmology/    LambdaCDM, the power spectrum, FFT, Zel'dovich, the worker
-  physics/      Kepler solvers, orbital elements, relativistic corrections
-  astro/        blackbody colour, stellar evolution, planet formation
+  physics/      Kepler solvers, orbital elements, relativity, N-body,
+                lensing, eclipses, magnetospheres
+  astro/        blackbody colour, stellar evolution, planet formation,
+                spectra, supernovae, binaries, comets
   galaxy/       kinematic density waves, population synthesis
   render/       the HDR engine and every shader
   sim/          the universe object graph and the scale ladder
   ui/           the interface
-tests/          88 tests against published measurements
+tests/          249 tests against published measurements
 ```
 
 ## Accuracy
@@ -284,7 +405,11 @@ itself - the age of the universe (13.79 Gyr), σ₈ recovery, the BAO sound
 horizon (147 Mpc), Earth's orbital speed (29.8 km/s), Mercury's
 43″/century relativistic precession, the Sun's habitable zone, Earth's
 equilibrium temperature (255 K), the ISCO of a solar-mass black hole (8.9 km),
-κ = √2 Ω for a flat rotation curve.
+κ = √2 Ω for a flat rotation curve, the Sun and Moon coming out the same
+apparent size (which is why eclipses happen at all), Earth's magnetopause at
+ten radii and its auroral oval 19° from the pole, the solar CMB dipole at
+3.36 mK, the acoustic peaks at ℓ = 216, 504, 792, and Ca II K coming out as the
+deepest line in a solar spectrum.
 
 Where the model is an approximation, it is one with a name and a range of
 validity. Zel'dovich is first-order Lagrangian perturbation theory: exact until
