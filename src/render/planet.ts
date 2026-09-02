@@ -163,7 +163,9 @@ void main() {
     n = normalize(n - (tang * (ea - elev) + bitan * (eb - elev)) * relief / eps * 0.0016);
 
     // Sea level chosen so that the requested fraction of the surface floods.
-    float sea = mix(0.62, -0.62, clamp(uOcean, 0.0, 1.0));
+    // The sign matters and was the wrong way round: a high sea level drowns
+    // more land, so an ocean fraction of one has to raise it, not lower it.
+    float sea = mix(-0.62, 0.62, clamp(uOcean, 0.0, 1.0));
     float land = smoothstep(sea - 0.015, sea + 0.015, elev);
 
     // Deep water is nearly black: it absorbs red first, then green, and what
@@ -243,14 +245,17 @@ void main() {
     vec3 cq = warp(p * 2.6 + vec3(uSeed * 0.37) + vec3(uTime * 0.012, 0.0, 0.0), 0.5, 1.4);
     float c = fbm(cq * 1.8, 6, 2.1, 0.55) * 0.5 + 0.5;
     // Cloud bands follow the general circulation: two mid-latitude storm
-    // tracks, a wet equator and dry subtropics.
+    // tracks, a wet equator and dry subtropics. Latitude moves the *threshold*
+    // rather than the field, so the requested cover is roughly what comes out -
+    // scaling the field instead put Earth's 67% under total overcast.
     float belt = 0.55 + 0.45 * cos(lat * 9.0);
-    float cover = smoothstep(1.0 - uCloud * 0.9, 1.0 - uCloud * 0.9 + 0.22, c * belt + uCloud * 0.35);
+    float thresh = 0.86 - 0.44 * uCloud * belt;
+    float cover = smoothstep(thresh - 0.06, thresh + 0.06, c);
     // Cloud tops are lit by the star and by nothing else worth speaking of: the
     // ambient term has to be no brighter than the ground's, or the night side
     // fills with grey cloud that is brighter than the dark surface under it.
     vec3 cloudCol = vec3(1.0) * uSunColor * (diffuse * sunlight * 0.95 + 0.006);
-    col = mix(col, cloudCol, cover * 0.85);
+    col = mix(col, cloudCol, cover * 0.92);
   }
 
   // --- Night side
@@ -265,7 +270,7 @@ void main() {
     float cities = region * belt * town * (1.0 - smoothstep(0.55, 0.92, abs(lat)));
     // Settlements cluster on coasts, and there are none at sea.
     float shore = fbm(warp(p * 1.15 + vec3(uSeed), 0.35, 1.1) * 1.15, 7, 2.05, 0.52)
-                - mix(0.62, -0.62, clamp(uOcean, 0.0, 1.0));
+                - mix(-0.62, 0.62, clamp(uOcean, 0.0, 1.0));
     cities *= step(0.0, shore) * clamp(1.0 - shore * 2.6, 0.0, 1.0);
     // And they are under the weather like everything else.
     cities *= 1.0 - uCloud * 0.45;

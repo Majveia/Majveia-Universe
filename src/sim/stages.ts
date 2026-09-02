@@ -52,7 +52,8 @@ import {
   type SupernovaType,
 } from '../astro/supernova';
 import { starLabel, type Star } from '../astro/stellar';
-import { CLASS_LABEL, type Planet } from '../astro/planets';
+import { CLASS_LABEL, type Planet, type PlanetarySystem } from '../astro/planets';
+import { solarSystem } from '../astro/solsystem';
 import { blackbodyRGB } from '../astro/blackbody';
 import { RNG, hash3 } from '../core/rng';
 import { AU, GYR, MPC, M_EARTH, M_JUPITER, MYR, R_EARTH, R_SUN, YEAR, DAY, G, M_SUN } from '../core/constants';
@@ -67,6 +68,12 @@ export interface StageCtx {
   member?: number;
   star?: number;
   planet?: number;
+  /**
+   * 1 for the real Solar System rather than a generated one. It travels down
+   * the ladder with everything else, so descending from it lands on the real
+   * Earth and climbing back returns to the real Sun.
+   */
+  real?: number;
 }
 
 export interface Target {
@@ -1161,6 +1168,7 @@ export class SystemStage extends Stage {
   private view!: SystemView;
   private sky!: SkyDome;
   private starName = '';
+  private builtSystem!: PlanetarySystem;
   /** Minimum apparent radius for bodies; 0 is strict true scale. */
   minAngular = 0.0045;
 
@@ -1168,7 +1176,10 @@ export class SystemStage extends Stage {
     const u = this.env.universe;
     const g = u.galaxy(this.ctx.cluster ?? 0, this.ctx.member ?? 0);
     const si = this.ctx.star ?? 0;
-    const { system, name, seed } = u.system(g, si);
+    const { system, name, seed } = this.ctx.real
+      ? { system: solarSystem(), name: 'Sol', seed: 0x50143 }
+      : u.system(g, si);
+    this.builtSystem = system;
     this.starName = name;
     this.title = name;
     const st = system.star;
@@ -1217,7 +1228,8 @@ export class SystemStage extends Stage {
     this.sky.mesh.position.copy(this.env.engine.camera.position);
   }
 
-  get system() {
+  get system(): PlanetarySystem {
+    if (this.ctx.real) return this.builtSystem;
     const g = this.env.universe.galaxy(this.ctx.cluster ?? 0, this.ctx.member ?? 0);
     return this.env.universe.system(g, this.ctx.star ?? 0).system;
   }
@@ -1401,7 +1413,9 @@ export class WorldStage extends Stage {
   build(): void {
     const u = this.env.universe;
     const g = u.galaxy(this.ctx.cluster ?? 0, this.ctx.member ?? 0);
-    const { system, seed } = u.system(g, this.ctx.star ?? 0);
+    const { system, seed } = this.ctx.real
+      ? { system: solarSystem(), seed: 0x50143 }
+      : u.system(g, this.ctx.star ?? 0);
     const p = system.planets[this.ctx.planet ?? 0];
     this.planet = p;
     this.title = p.name;

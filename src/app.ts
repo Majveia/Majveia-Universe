@@ -536,6 +536,17 @@ export class App {
           }
           break;
         }
+        case 'KeyO': {
+          // The one system in here that is not generated. Every number in it is
+          // measured, which makes it the check on all the others.
+          this.travel({
+            id: 'system',
+            ctx: { cluster: 0, member: 0, star: 0, real: 1 },
+            label: 'the Solar System',
+          });
+          this.flash('the Solar System — measured, not generated');
+          break;
+        }
         case 'KeyB': {
           if (this.stage instanceof CosmosStage) {
             const mode = this.stage.cycleCmb();
@@ -824,6 +835,7 @@ const HELP_HTML = `
       <dt>F</dt><dd>fullscreen</dd>
       <dt>T</dt><dd>true scale in a system</dd>
       <dt>J</dt><dd>fly at a fraction of light speed</dd>
+      <dt>O</dt><dd>go to the Solar System</dd>
       <dt>P</dt><dd>save a frame</dd>
     </dl>
   </div>

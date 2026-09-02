@@ -8,7 +8,7 @@ without a loading screen in between.
 ```
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 249 tests, mostly checking physics against measurement
+npm test             # 268 tests, mostly checking physics against measurement
 npm run bundle:single # one self-contained HTML file, no network dependencies
 ```
 
@@ -227,6 +227,22 @@ that a small or distant moon can only ever manage an annular eclipse, because
 its disc never covers the star's however well aligned. The same arithmetic runs
 with the roles swapped to put a planet's shadow on its moons.
 
+### The Solar System
+
+**O** goes to the one system in here that is not generated. Every number in it
+is measured — masses from the IAU and JPL, radii from the IAU 2015 nominal
+values, orbital elements from the J2000 mean ephemerides, temperatures and
+pressures and albedos from the NASA fact sheets — assembled into exactly the
+same structures the generator produces, so every renderer and inspector works
+on it unchanged. It is there to be visited, and it is there as the check on
+everything else: Earth comes out at 1.000 M⊕, 1.00 g, 288 K, a 365-day year, a
+23.9-hour day, a magnetopause at 9.4 Earth radii and an aurora of exactly ×1.00,
+because Earth is what the aurora model is normalised to.
+
+Using measured values rather than derived ones also states some things as
+numbers. Venus sits 500 K above its equilibrium temperature and Mars sits at
+it: that difference is the greenhouse effect, and the tests assert it.
+
 ### Comets
 
 Dust grains are not animated along a painted curve. Each is released from the
@@ -340,6 +356,7 @@ looking at the output:
 | V | tint the web by peculiar velocity |
 | B | show the microwave background |
 | J | fly at a fraction of light speed |
+| O | go to the Solar System |
 | T | true scale in a system |
 | U | hide the interface |
 | P | save a frame |
@@ -395,7 +412,7 @@ src/
   render/       the HDR engine and every shader
   sim/          the universe object graph and the scale ladder
   ui/           the interface
-tests/          249 tests against published measurements
+tests/          268 tests against published measurements
 ```
 
 ## Accuracy
