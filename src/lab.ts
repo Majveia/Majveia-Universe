@@ -290,10 +290,14 @@ if (params.get('mode') === 'planet') {
   engine.scene.remove(view.group);
   const st = makeStar(Number(params.get('mass') ?? 1), Number(params.get('age') ?? 4.6), 0);
   const which = params.get('planet') ?? 'habitable';
-  const match = (pl: { habitable: boolean; massKg: number; rings: unknown[]; cls: string }) =>
+  const match = (pl: {
+    habitable: boolean; massKg: number; rings: unknown[]; moons: unknown[]; cls: string;
+  }) =>
     which === 'habitable' ? pl.habitable
     : which === 'giant' ? pl.massKg > 60 * 5.97e24
     : which === 'ring' ? pl.rings.length > 0
+    : which === 'moons' ? pl.moons.length > 0
+    : which === 'wet' ? pl.habitable && pl.moons.length > 0
     : pl.cls === which;
   // Scan seeds until the requested kind of world turns up, so any planet class
   // can be inspected without hunting for a seed by hand.
@@ -317,11 +321,86 @@ if (params.get('mode') === 'planet') {
   const sunDir = new THREE.Vector3(Math.cos(sunAngle), 0.25, Math.sin(sunAngle)).normalize();
   const sunCol = new THREE.Color(st.color[0], st.color[1], st.color[2])
     .multiplyScalar(Number(params.get('irr') ?? 1.0));
+  // Angular radius of the star from here: what sets terminator width and the
+  // size of an umbra. Default to the Sun seen from 1 AU.
+  const starAng = Number(params.get('starang') ?? 0.00465);
+  pv.setSunAngularRadius(starAng);
+  let auroraView: import('./render/aurora').AuroraView | undefined;
+
+  // Aurora, from this world's own magnetosphere.
+  {
+    const { AuroraView } = await import('./render/aurora');
+    const mg = await import('./physics/magnetosphere');
+    const mag = {
+      massKg: target.massKg, radiusM: target.radiusM, dayS: target.dayS,
+      ageGyr: st.ageGyr, surfaceK: target.surfaceK,
+    };
+    const wind = mg.windPressure(target.au, st.luminosityLsun)
+      * Number(params.get('storm') ?? 1);
+    const L = mg.standoffRadii(mag, wind);
+    const pw = mg.auroralPower(mag, wind);
+    // eslint-disable-next-line no-console
+    console.info('[lab:aurora]', `B=${(mg.surfaceField(mag) / 3.05e-5).toFixed(3)} B_E`,
+      `L=${L.toFixed(2)} R`, `oval=${(mg.ovalColatitude(L) * 57.2958).toFixed(1)} deg`,
+      `power=${pw.toExponential(2)} x Earth`);
+    if (params.get('aurora') !== '0' && L > 1.4) {
+      const av = new AuroraView({
+        radius: 1,
+        height: Math.min(0.16, Math.max(0.022, 400e3 / target.radiusM)),
+        ovalColatitude: mg.ovalColatitude(L),
+        power: Number(params.get('apow')
+          ?? Math.min(3.2, 0.55 * Math.pow(Math.max(pw, 1e-6), 0.32))),
+        tilt: mg.dipoleTilt(target.surfaceSeed),
+        tiltAzimuth: ((target.surfaceSeed % 997) / 997) * Math.PI * 2,
+      });
+      pv.group.add(av.mesh);
+      auroraView = av;
+      (window as unknown as Record<string, unknown>).labAurora = av;
+    }
+  }
+
+  // Moons, so eclipses and phases can be looked at directly.
+  const { MoonView } = await import('./render/moon');
+  const scaleM = 1 / target.radiusM;
+  const moonViews = target.moons.map((m, i) => {
+    const r = Math.max(m.radiusM * scaleM, 0.02);
+    const mv = new MoonView(r, { color: m.color, seed: target.surfaceSeed + i * 7919 }, 64);
+    mv.setSunAngularRadius(starAng);
+    engine.scene.add(mv.mesh);
+    return { mv, r, a: Math.max(m.a * scaleM, 3), phase: m.phase, inc: m.i };
+  });
+  // Park a moon exactly between the world and its star, which is the one
+  // configuration worth being able to ask for on purpose.
+  const eclipse = Number(params.get('eclipse') ?? 0);
+  const moonSpin = Number(params.get('mspin') ?? 0);
+  void auroraView;
+
   let t = 0;
   const step = () => {
     requestAnimationFrame(step);
     t += Number(params.get('rate') ?? 60);
     pv.update(sunDir, sunCol, t, pv.group.position);
+    auroraView?.update(engine.camera, sunDir, t, pv.surface.rotation.y);
+    moonViews.forEach((m, i) => {
+      if (eclipse > 0 && i === 0) {
+        // Drift it across the line so the penumbra sweeps past.
+        const off = new THREE.Vector3(-sunDir.z, 0, sunDir.x)
+          .multiplyScalar((eclipse - 1) * m.r * 1.6);
+        m.mv.mesh.position.copy(sunDir).multiplyScalar(m.a).add(off);
+      } else {
+        const th = m.phase + moonSpin * t * 1e-4 + i * 1.7;
+        m.mv.mesh.position.set(
+          m.a * Math.cos(th), m.a * Math.sin(th) * Math.sin(m.inc),
+          m.a * Math.sin(th) * Math.cos(m.inc));
+      }
+      m.mv.update(sunDir, sunCol);
+    });
+    const occ = moonViews.map((m) => ({ pos: m.mv.mesh.position, radius: m.r }));
+    pv.setOccluders(occ);
+    moonViews.forEach((m, i) => m.mv.setOccluders([
+      { pos: pv.group.position, radius: 1 },
+      ...occ.filter((_, j) => j !== i),
+    ]));
   };
   requestAnimationFrame(step);
   // eslint-disable-next-line no-console

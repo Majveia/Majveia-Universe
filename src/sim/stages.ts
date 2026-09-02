@@ -29,6 +29,14 @@ import { GalaxySprites, type GalaxySpriteData } from '../render/galaxysprites';
 import { GalaxyView } from '../render/galaxyview';
 import { SystemView } from '../render/systemview';
 import { PlanetView } from '../render/planet';
+import { MoonView } from '../render/moon';
+import { AuroraView } from '../render/aurora';
+import {
+  windPressure, standoffRadii, ovalColatitude, auroralPower, dipoleTilt,
+} from '../physics/magnetosphere';
+import {
+  discOverlapFraction, angularRadius, canBeTotal, eclipseLabel,
+} from '../physics/eclipse';
 import { StarView } from '../render/star';
 import { SkyDome } from '../render/skydome';
 import { LensedField, einsteinMass } from '../render/lensedfield';
@@ -1259,10 +1267,20 @@ export class WorldStage extends Stage {
   private view!: PlanetView;
   private sky!: SkyDome;
   private starView!: StarView;
-  private moons: { mesh: THREE.Mesh; a: number; omega: number; phase: number; inc: number }[] = [];
+  private moons: {
+    view: MoonView; a: number; omega: number; phase: number; inc: number; radius: number;
+  }[] = [];
   private sunDir = new THREE.Vector3(1, 0, 0);
   private sunColor = new THREE.Color(1, 1, 1);
   private starDist = 1;
+  private starAngRad = 0.00465;
+  private planetRadius = 1;
+  private aurora?: AuroraView;
+  /** Magnetopause standoff in planetary radii, and auroral power vs Earth. */
+  private standoff = 1;
+  private auroraPower = 0;
+  /** Fraction of the star's light reaching the sub-solar point, 0 to 1. */
+  private eclipseDepth = 1;
 
   build(): void {
     const u = this.env.universe;
@@ -1297,22 +1315,60 @@ export class WorldStage extends Stage {
     const irr = Math.max(0.03, Math.min(1.9, st.luminosityLsun / (p.au * p.au)));
     this.sunColor.multiplyScalar(irr);
 
+    // The star is a disc, not a point, and its angular radius is what sets the
+    // width of every terminator and the size of every umbra here.
+    this.starAngRad = Math.atan2(starR, Math.max(this.starDist, 1e-9));
+    this.view.setSunAngularRadius(this.starAngRad);
+
     // Moons
-    const rng = new RNG(p.surfaceSeed);
+    let mi = 0;
     for (const m of p.moons) {
       const r = Math.max(m.radiusM * scale, 0.004);
-      const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(...m.color) });
-      const mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 24, 12), mat);
+      const view = new MoonView(r, {
+        color: m.color, seed: p.surfaceSeed + mi * 7919,
+        icy: p.surfaceK < 200 ? 1 : 0,
+      }, this.env.quality() > 0.6 ? 48 : 28);
+      view.setSunAngularRadius(this.starAngRad);
       const mu = G * (p.massKg + m.massKg);
       this.moons.push({
-        mesh,
+        view,
         a: m.a * scale,
         omega: Math.sqrt(mu / (m.a ** 3)),
         phase: m.phase,
         inc: m.i,
+        radius: r,
       });
-      this.root.add(mesh);
-      void rng;
+      this.root.add(view.mesh);
+      mi++;
+    }
+    this.planetRadius = 1;
+
+    // --- Aurora, if this world has a magnetosphere for one to land in.
+    const mag = {
+      massKg: p.massKg, radiusM: p.radiusM, dayS: p.dayS, ageGyr: st.ageGyr,
+      surfaceK: p.surfaceK,
+      gasGiant: p.cls === 'gas-giant' || p.cls === 'hot-jupiter'
+        || p.cls === 'ice-giant' || p.cls === 'mini-neptune' || p.cls === 'puffy',
+    };
+    const wind = windPressure(p.au, system.effectiveLuminosity);
+    this.standoff = standoffRadii(mag, wind);
+    this.auroraPower = auroralPower(mag, wind);
+    // It takes both a field to steer the particles and an atmosphere for them
+    // to hit. A magnetised airless rock precipitates into bare regolith and
+    // nothing lights up.
+    if (this.auroraPower > 0.02 && p.pressureBar > 0.004 && this.standoff > 1.4) {
+      this.aurora = new AuroraView({
+        radius: 1,
+        height: Math.min(0.16, Math.max(0.022, 400e3 / p.radiusM)),
+        ovalColatitude: ovalColatitude(this.standoff),
+        // Earth's aurora is faint in absolute terms and the range across worlds
+        // spans four orders of magnitude, so what is drawn is a compressed
+        // version of the real ratio rather than the ratio itself.
+        power: Math.min(3.2, 0.55 * Math.pow(this.auroraPower, 0.32)),
+        tilt: dipoleTilt(p.surfaceSeed),
+        tiltAzimuth: (p.surfaceSeed % 997) / 997 * Math.PI * 2,
+      });
+      this.view.group.add(this.aurora.mesh);
     }
 
     // Frame the planet at a crescent-to-gibbous phase: a fully lit disc hides
@@ -1342,11 +1398,52 @@ export class WorldStage extends Stage {
 
     for (const m of this.moons) {
       const th = m.phase + m.omega * this.simTime;
-      m.mesh.position.set(
+      m.view.mesh.position.set(
         m.a * Math.cos(th),
         m.a * Math.sin(th) * Math.sin(m.inc),
         m.a * Math.sin(th) * Math.cos(m.inc));
+      m.view.update(this.sunDir, this.sunColor);
     }
+
+    // Who can get between what and the star. The moons can shadow the planet;
+    // the planet - much the larger disc - can shadow the moons, which is the
+    // same eclipse seen from the other side.
+    const moonOccluders = this.moons.map((m) => ({
+      pos: m.view.mesh.position, radius: m.radius,
+    }));
+    this.view.setOccluders(moonOccluders);
+    const planetOccluder = { pos: this.view.group.position, radius: this.planetRadius };
+    for (let i = 0; i < this.moons.length; i++) {
+      const others = moonOccluders.filter((_, j) => j !== i);
+      this.moons[i].view.setOccluders([planetOccluder, ...others]);
+    }
+
+    // Depth of any eclipse now in progress, sampled at the sub-solar point.
+    this.eclipseDepth = this.lightAtSubsolar(moonOccluders);
+
+    this.aurora?.update(this.env.engine.camera, this.sunDir, this.simTime,
+      this.view.surface.rotation.y);
+  }
+
+  /**
+   * Fraction of the star's light reaching the point on the surface directly
+   * under it - the same disc-overlap arithmetic the shader runs, evaluated once
+   * on the CPU so the readout can say whether an eclipse is happening.
+   */
+  private lightAtSubsolar(occ: { pos: THREE.Vector3; radius: number }[]): number {
+    const p = this.sunDir.clone().multiplyScalar(this.planetRadius);
+    let lit = 1;
+    for (const o of occ) {
+      const v = o.pos.clone().sub(p);
+      const d = v.length();
+      if (d < 1e-9) continue;
+      v.divideScalar(d);
+      const cosSep = v.dot(this.sunDir);
+      if (cosSep <= 0) continue;
+      const ro = Math.asin(Math.min(1, o.radius / d));
+      lit *= 1 - discOverlapFraction(this.starAngRad, ro, Math.acos(Math.min(1, cosSep)));
+    }
+    return lit;
   }
 
   rows(): Row[] {
@@ -1363,9 +1460,26 @@ export class WorldStage extends Stage {
       { k: 'atmosphere', v: p.pressureBar < 1e-3 ? 'none' : `${sig(p.pressureBar, 2)} bar` },
       { k: 'day', v: p.tidallyLocked ? 'locked' : formatTime(Math.abs(p.dayS)).join(' ') },
       { k: 'year', v: formatTime(p.periodS).join(' ') },
+      { k: 'moons', v: p.moons.length ? `${p.moons.length}${this.eclipseNote()}` : 'none' },
+      { k: 'magnetosphere', v: this.standoff > 1.4
+        ? `${this.standoff.toFixed(1)} R · aurora ×${sig(this.auroraPower, 2)}`
+        : 'none — stripped' },
       { k: 'elapsed', v: tv, u: tu },
       { k: 'altitude', v: dv, u: du },
     ];
+  }
+
+  /** " · total eclipse" and the like, when one is under way. */
+  private eclipseNote(): string {
+    if (this.eclipseDepth > 0.999) return '';
+    let total = false;
+    for (const m of this.moons) {
+      const d = m.view.mesh.position.distanceTo(
+        this.sunDir.clone().multiplyScalar(this.planetRadius));
+      if (canBeTotal(this.starAngRad, angularRadius(m.radius, d))) total = true;
+    }
+    const label = eclipseLabel(this.eclipseDepth, total);
+    return label ? ` · ${label}` : '';
   }
 
   scaleLabel(): string {

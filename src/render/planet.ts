@@ -22,6 +22,7 @@
 
 import * as THREE from 'three';
 import { NOISE_GLSL } from './shaders/noise';
+import { ECLIPSE_GLSL } from './shaders/eclipse';
 import type { Planet } from '../astro/planets';
 import { R_EARTH } from '../core/constants';
 
@@ -44,6 +45,7 @@ void main() {
 const SURFACE_FRAG = /* glsl */ `
 precision highp float;
 ${NOISE_GLSL}
+${ECLIPSE_GLSL}
 
 in vec3 vObj;
 in vec3 vNormal;
@@ -212,12 +214,28 @@ void main() {
   float diffuse = smoothstep(-soft, soft * 1.6, ndl);
   float shadow = ringShadow(vObj, sun);
 
+  // A moon in the way does not switch the light off; it covers a fraction of
+  // the star's disc, and that fraction is what dims the ground.
+  float sunlight = eclipseLight(vWorld, sun);
+
+  // Sun glint. Water is a smooth dielectric, so its reflection is a narrow GGX
+  // lobe with a Fresnel weight - which is why the sea is dark looking straight
+  // down and a mirror at grazing angles, and why the reflected star smears into
+  // a streak instead of staying a point.
   vec3 viewDir = normalize(cameraPosition - vWorld);
   vec3 h = normalize(sun + viewDir);
-  float gloss = pow(max(dot(n, h), 0.0), mix(24.0, 220.0, spec)) * spec * diffuse;
+  float nh = max(dot(n, h), 0.0);
+  float cosV = clamp(dot(n, viewDir), 0.0, 1.0);
+  float fres = 0.02 + 0.98 * pow(1.0 - cosV, 5.0);
+  // Wind roughens the sea; a mirror-flat ocean would give a point, not a glint.
+  float rough = mix(0.30, 0.055, spec);
+  float a2 = max(rough * rough, 1e-4);
+  float den = nh * nh * (a2 - 1.0) + 1.0;
+  float ggx = a2 / (PI * den * den);
+  float gloss = min(ggx * fres * spec, 22.0) * diffuse;
 
-  vec3 col = albedo * uSunColor * diffuse * shadow;
-  col += uSunColor * gloss * shadow * 0.9;
+  vec3 col = albedo * uSunColor * diffuse * shadow * sunlight;
+  col += uSunColor * gloss * shadow * sunlight * 0.85;
   col += emissive;
 
   // --- Cloud deck
@@ -228,21 +246,30 @@ void main() {
     // tracks, a wet equator and dry subtropics.
     float belt = 0.55 + 0.45 * cos(lat * 9.0);
     float cover = smoothstep(1.0 - uCloud * 0.9, 1.0 - uCloud * 0.9 + 0.22, c * belt + uCloud * 0.35);
-    vec3 cloudCol = vec3(1.0) * uSunColor * (diffuse * 0.95 + 0.05);
+    // Cloud tops are lit by the star and by nothing else worth speaking of: the
+    // ambient term has to be no brighter than the ground's, or the night side
+    // fills with grey cloud that is brighter than the dark surface under it.
+    vec3 cloudCol = vec3(1.0) * uSunColor * (diffuse * sunlight * 0.95 + 0.006);
     col = mix(col, cloudCol, cover * 0.85);
   }
 
   // --- Night side
   float night = 1.0 - diffuse;
   if (uNightLights > 0.001 && uType < 0.5) {
-    vec3 lq = p * 6.0 + vec3(uSeed * 1.7);
-    float pop = fbm(lq, 5, 2.3, 0.5);
-    float cities = smoothstep(0.34, 0.52, pop) * (1.0 - smoothstep(0.55, 0.9, abs(lat)));
-    // Settlements cluster on coasts
-    float coast = 1.0 - abs(fbm(warp(p * 1.15 + vec3(uSeed), 0.35, 1.1) * 1.15, 7, 2.05, 0.52)
-                            - mix(0.62, -0.62, clamp(uOcean, 0.0, 1.0))) * 3.0;
-    cities *= clamp(coast, 0.0, 1.0);
-    col += vec3(1.0, 0.72, 0.35) * cities * night * uNightLights * 0.55;
+    // Lit settlement is hierarchical: a few inhabited regions, conurbations
+    // inside them, and individual towns inside those. One octave of noise gives
+    // continent-sized blobs of light, which is why this is three scales.
+    float region = smoothstep(0.44, 0.70, fbm(p * 2.6 + vec3(uSeed * 1.7), 4, 2.1, 0.55) * 0.5 + 0.5);
+    float belt = smoothstep(0.38, 0.66, fbm(p * 11.0 + vec3(uSeed * 0.9), 4, 2.2, 0.5) * 0.5 + 0.5);
+    float town = smoothstep(0.52, 0.84, fbm(p * 41.0 + vec3(uSeed * 2.3), 3, 2.4, 0.5) * 0.5 + 0.5);
+    float cities = region * belt * town * (1.0 - smoothstep(0.55, 0.92, abs(lat)));
+    // Settlements cluster on coasts, and there are none at sea.
+    float shore = fbm(warp(p * 1.15 + vec3(uSeed), 0.35, 1.1) * 1.15, 7, 2.05, 0.52)
+                - mix(0.62, -0.62, clamp(uOcean, 0.0, 1.0));
+    cities *= step(0.0, shore) * clamp(1.0 - shore * 2.6, 0.0, 1.0);
+    // And they are under the weather like everything else.
+    cities *= 1.0 - uCloud * 0.45;
+    col += vec3(1.0, 0.74, 0.38) * cities * night * uNightLights * 1.6;
   }
 
   // Ambient starlight, so the night side is not perfectly black
@@ -472,6 +499,9 @@ export class PlanetView {
         uRingInner: { value: 0 },
         uRingOuter: { value: 0 },
         uRingOpacity: { value: 0 },
+        uOccluder: { value: [0, 1, 2, 3].map(() => new THREE.Vector4(0, 0, 0, 0)) },
+        uOccluderCount: { value: 0 },
+        uSunAngRad: { value: 0.00465 },
         uLavaGlow: { value: planet.cls === 'lava' ? 1.6 : 0 },
         // Airless, geologically dead worlds keep their relief; worlds with
         // thick atmospheres and running water erode theirs away.
@@ -583,6 +613,25 @@ export class PlanetView {
       this.ringMat.uniforms.uInner.value = r * this.ringRatio[0];
       this.ringMat.uniforms.uOuter.value = r * this.ringRatio[1];
     }
+  }
+
+  /**
+   * Register the bodies that can pass between this world and its star, in world
+   * space, so their shadows fall where the geometry puts them. At most four are
+   * carried; beyond that the nearest matter and the rest are rounding.
+   */
+  setOccluders(list: { pos: THREE.Vector3; radius: number }[]): void {
+    const arr = this.surfMat.uniforms.uOccluder.value as THREE.Vector4[];
+    const n = Math.min(arr.length, list.length);
+    for (let i = 0; i < n; i++) {
+      arr[i].set(list[i].pos.x, list[i].pos.y, list[i].pos.z, list[i].radius);
+    }
+    this.surfMat.uniforms.uOccluderCount.value = n;
+  }
+
+  /** Angular radius of the star as seen from this world, radians. */
+  setSunAngularRadius(a: number): void {
+    this.surfMat.uniforms.uSunAngRad.value = a;
   }
 
   /** @param sunDir unit vector from the planet toward its star, in world space. */
