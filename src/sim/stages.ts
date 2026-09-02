@@ -49,7 +49,7 @@ import {
   lightCurve, magnitudeToLuminosity, supernovaColor, coreCollapseRate, typeIaRate,
   type SupernovaType,
 } from '../astro/supernova';
-import { starLabel } from '../astro/stellar';
+import { starLabel, type Star } from '../astro/stellar';
 import { CLASS_LABEL, type Planet } from '../astro/planets';
 import { blackbodyRGB } from '../astro/blackbody';
 import { RNG, hash3 } from '../core/rng';
@@ -92,6 +92,8 @@ export interface Inspection {
   rows: Row[];
   note?: string;
   swatch?: string;
+  /** Draw this star's spectrum under the rows. */
+  spectrum?: { tempK: number; metallicity?: number; vsini?: number };
 }
 
 export abstract class Stage {
@@ -1043,6 +1045,7 @@ export class GalaxyStage extends Stage {
         { k: 'galactic r', v: s.radiusKpc.toFixed(2), u: 'kpc' },
       ],
       note: habitables > 0 ? 'At least one world here has liquid water on its surface.' : undefined,
+      spectrum: { tempK: st.teff, metallicity: st.metallicity },
     };
   }
 
@@ -1236,9 +1239,46 @@ export class SystemStage extends Stage {
   }
 
   override inspect(ndc: THREE.Vector2): Inspection | null {
-    const i = this.pickNearest(ndc, this.planetPoints(), 0.03);
+    // Stars and planets are picked together, so whichever is actually nearest
+    // the cursor wins - a hot Jupiter can sit closer to its star than the
+    // star's own drawn radius, and picking the star first would make it
+    // unclickable.
+    const sys = this.system;
+    const starR = Math.max(this.view.starView.worldRadius, this.env.controls.distance * 0.012);
+    const targets: { pos: THREE.Vector3; radius: number; index: number }[] = [
+      { pos: this.view.primaryPos, radius: starR, index: -1 },
+    ];
+    if (sys.companion) {
+      targets.push({ pos: this.view.companionPos, radius: starR, index: -2 });
+    }
+    targets.push(...this.planetPoints());
+    const i = this.pickNearest(ndc, targets, 0.03);
     if (i === null) return null;
+    if (i === -1) return this.describeStar(sys.star, this.starName);
+    if (i === -2 && sys.companion) {
+      return this.describeStar(sys.companion.star, `${this.starName} B`);
+    }
     return describePlanet(this.view.slots[i].planet, this.starName);
+  }
+
+  private describeStar(st: Star, name: string): Inspection {
+    const peak = 2.897771955e6 / st.teff;
+    return {
+      title: name,
+      kind: starLabel(st),
+      swatch: `rgb(${st.color.map((c) => Math.round(Math.min(1, c) * 255)).join(',')})`,
+      rows: [
+        { k: 'mass', v: st.massMsun.toFixed(3), u: 'M☉' },
+        { k: 'radius', v: st.radiusRsun.toFixed(3), u: 'R☉' },
+        { k: 'luminosity', v: sig(st.luminosityLsun, 3), u: 'L☉' },
+        { k: 'temperature', v: Math.round(st.teff).toString(), u: 'K' },
+        { k: 'peak at', v: peak.toFixed(0), u: 'nm' },
+        { k: 'metallicity', v: `${st.metallicity >= 0 ? '+' : ''}${st.metallicity.toFixed(2)}`, u: 'dex' },
+        { k: 'age', v: st.ageGyr.toFixed(2), u: 'Gyr' },
+        { k: 'remaining', v: Math.max(0, st.lifetimeGyr - st.ageGyr).toFixed(2), u: 'Gyr' },
+      ],
+      spectrum: { tempK: st.teff, metallicity: st.metallicity },
+    };
   }
 
   child(ndc?: THREE.Vector2): Target | null {

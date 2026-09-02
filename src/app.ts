@@ -19,6 +19,7 @@ import {
 import { Timeline } from './ui/timeline';
 import { Rows, el, sig, commas } from './ui/hud';
 import { saveBlob } from './ui/save';
+import { spectrumCanvas } from './ui/spectrum';
 import { PLANCK18, PRESET_COSMOLOGIES, Cosmology, growthFactor } from './cosmology/lcdm';
 import type { CosmicWebField } from './cosmology/zeldovich';
 import { hashString } from './core/rng';
@@ -602,6 +603,14 @@ export class App {
       const d = el('div', 'row');
       d.append(el('span', 'k', row.k), el('span', 'v', row.u ? `${row.v} ${row.u}` : row.v));
       this.inspectorBody.append(d);
+    }
+    if (info.spectrum) {
+      this.inspectorBody.append(spectrumCanvas(info.spectrum));
+      this.inspectorBody.append(el('div', 'note',
+        'Its spectrum: the Planck continuum at this temperature, with the lines '
+        + 'that survive at it. Line strength measures excitation, not abundance '
+        + '— hydrogen is the commonest element in every star, and its lines are '
+        + 'strongest only near 9500 K.'));
     }
     if (info.note) this.inspectorBody.append(el('div', 'note', info.note));
     const go = this.stage.child(ndc);

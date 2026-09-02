@@ -147,8 +147,9 @@ export class SystemView {
   readonly starView: StarView;
   /** The second star, when this is a binary. */
   readonly companionView?: StarView;
-  private companionPos = new THREE.Vector3();
-  private primaryPos = new THREE.Vector3();
+  /** Where each star sits this frame, scene units. */
+  readonly companionPos = new THREE.Vector3();
+  readonly primaryPos = new THREE.Vector3();
   readonly slots: PlanetSlot[] = [];
   private beltMats: THREE.RawShaderMaterial[] = [];
   readonly comets: CometView[] = [];
