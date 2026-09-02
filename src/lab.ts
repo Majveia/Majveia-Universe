@@ -122,6 +122,53 @@ if (params.get('mode') === 'system') {
   (window as unknown as Record<string, unknown>).labSystem = sv;
 }
 
+// --- Optional subsystem: a galaxy collision, integrated live.
+if (params.get('mode') === 'encounter') {
+  const { Encounter } = await import('./sim/encounter');
+  const { PointCloud } = await import('./render/pointcloud');
+  const { SkyDome } = await import('./render/skydome');
+  engine.scene.remove(view.group);
+  engine.scene.add(new SkyDome({ brightness: 0.3, bandStrength: 0.002, seed, nebula: 0 }).mesh);
+  const model = new Encounter(gp, {
+    seed,
+    tracers: Number(params.get('tracers') ?? 30000),
+    massRatio: params.has('ratio') ? Number(params.get('ratio')) : undefined,
+    pericentre: params.has('peri') ? Number(params.get('peri')) : undefined,
+    prograde: params.get('retro') !== '1',
+  });
+  const cloud = new PointCloud(model.count, model.colors, model.style);
+  cloud.setSize(Number(params.get('psize') ?? 1.7));
+  cloud.setBrightness(Number(params.get('pbri') ?? 0.30));
+  engine.scene.add(cloud.points);
+  controls.snapTo(new THREE.Vector3(), model.scaleKpc * Number(params.get('d') ?? 2.2),
+    Number(params.get('theta') ?? 0.3), Number(params.get('phi') ?? 0.85));
+  controls.minDistance = 0.5;
+  controls.maxDistance = model.scaleKpc * 40;
+  engine.camera.near = 0.05;
+  engine.camera.far = model.scaleKpc * 400;
+  engine.camera.updateProjectionMatrix();
+  const perFrame = Number(params.get('sub') ?? 2);
+  const step = () => {
+    requestAnimationFrame(step);
+    for (let i = 0; i < perFrame; i++) model.step(model.dt);
+    cloud.updateFrom(model.pos, model.count);
+  };
+  requestAnimationFrame(step);
+  // eslint-disable-next-line no-console
+  console.info('[lab:encounter]', model.label, 'tracers', model.count,
+    'dt', model.dt.toFixed(2), 'Myr', 'scale', model.scaleKpc.toFixed(0), 'kpc');
+  Object.assign((window as unknown as Record<string, Record<string, unknown>>).lab, {
+    model, cloud,
+    advance: (myr: number) => {
+      const n = Math.round(myr / model.dt);
+      for (let i = 0; i < n; i++) model.step(model.dt);
+      cloud.updateFrom(model.pos, model.count);
+    },
+    time: () => model.time,
+    sep: () => model.separation,
+  });
+}
+
 // --- Optional subsystem: a black hole.
 if (params.get('mode') === 'blackhole') {
   const { BlackHoleView } = await import('./render/blackhole');

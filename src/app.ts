@@ -485,6 +485,18 @@ export class App {
           else document.documentElement.requestFullscreen?.().catch(() => {});
           break;
         case 'KeyP': this.capture(); break;
+        case 'KeyM': {
+          const g = this.stage as unknown as { toggleEncounter?: () => boolean };
+          if (g.toggleEncounter) {
+            const on = g.toggleEncounter();
+            this.rebuildReadout();
+            this.flash(on ? 'gravitational encounter — running' : 'encounter ended');
+            if (on && !this.playing) this.togglePlay();
+          } else {
+            this.flash('encounters need a galaxy');
+          }
+          break;
+        }
         case 'KeyT': {
           const st = this.stage as unknown as { toggleTrueScale?: () => boolean };
           if (st.toggleTrueScale) {
@@ -705,6 +717,7 @@ const HELP_HTML = `
     <h3>Look</h3>
     <dl>
       <dt>V</dt><dd>tint by peculiar velocity</dd>
+      <dt>M</dt><dd>collide this galaxy with another</dd>
       <dt>C</dt><dd>change the cosmology</dd>
       <dt>U</dt><dd>hide the interface</dd>
       <dt>F</dt><dd>fullscreen</dd>

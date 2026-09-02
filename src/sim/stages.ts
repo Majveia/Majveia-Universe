@@ -34,6 +34,8 @@ import { SkyDome } from '../render/skydome';
 import { NebulaView } from '../render/nebula';
 import { BlackHoleView } from '../render/blackhole';
 import { buildGalaxy, angularRate, rotationCurve, type GalaxyParams } from '../galaxy/generator';
+import { Encounter } from './encounter';
+import { PointCloud } from '../render/pointcloud';
 import { starLabel } from '../astro/stellar';
 import { CLASS_LABEL, type Planet } from '../astro/planets';
 import { blackbodyRGB } from '../astro/blackbody';
@@ -556,6 +558,9 @@ export class GalaxyStage extends Stage {
   private bh?: BlackHoleView;
   private sky!: SkyDome;
   private patternRate = 0;
+  private encounter?: Encounter;
+  private encounterCloud?: PointCloud;
+  private encounterSteps = 0;
 
   build(): void {
     const u = this.env.universe;
@@ -678,7 +683,65 @@ export class GalaxyStage extends Stage {
     cam.updateProjectionMatrix();
   }
 
+  /**
+   * Replace the galaxy with a live gravitational encounter: this galaxy, an
+   * intruder derived from the same seed, and both discs integrated forward.
+   * The analytic model is switched off while it runs - a standing density wave
+   * and a violently perturbed disc are different physics and cannot both be
+   * true at once.
+   */
+  toggleEncounter(): boolean {
+    if (this.encounter) {
+      this.encounterCloud?.dispose();
+      if (this.encounterCloud) this.root.remove(this.encounterCloud.points);
+      this.encounter = undefined;
+      this.encounterCloud = undefined;
+      this.view.group.visible = true;
+      this.catalogPoints.visible = true;
+      for (const n of this.nebulae) n.mesh.visible = true;
+      if (this.bh) this.bh.mesh.visible = true;
+      const c = this.env.controls;
+      c.snapTo(new THREE.Vector3(), this.params.radiusKpc * 2.4, 0.45, 0.78);
+      return false;
+    }
+    const q = this.env.quality();
+    this.encounter = new Encounter(this.params, {
+      seed: this.params.seed,
+      tracers: Math.max(6000, Math.round(26000 * q)),
+    });
+    this.encounterCloud = new PointCloud(
+      this.encounter.count, this.encounter.colors, this.encounter.style);
+    this.encounterCloud.setSize(1.7);
+    this.encounterCloud.setBrightness(0.30);
+    this.encounterCloud.updateFrom(this.encounter.pos, this.encounter.count);
+    this.root.add(this.encounterCloud.points);
+    this.view.group.visible = false;
+    this.catalogPoints.visible = false;
+    for (const n of this.nebulae) n.mesh.visible = false;
+    if (this.bh) this.bh.mesh.visible = false;
+    const c = this.env.controls;
+    c.snapTo(new THREE.Vector3(), this.encounter.scaleKpc * 1.6, 0.35, 0.55);
+    c.maxDistance = this.encounter.scaleKpc * 30;
+    return true;
+  }
+
+  get encounterActive(): boolean { return !!this.encounter; }
+
   update(dt: number): void {
+    if (this.encounter && this.encounterCloud) {
+      this.simTime += dt * this.timeScale;
+      // Advance in whole steps, capped so a large time warp costs frame rate
+      // rather than dropping the integration into instability.
+      const want = (dt * this.timeScale) / this.encounter.dt;
+      const steps = Math.min(48, Math.max(0, Math.round(want)));
+      for (let i = 0; i < steps; i++) this.encounter.step(this.encounter.dt);
+      this.encounterSteps += steps;
+      this.encounterCloud.updateFrom(this.encounter.pos, this.encounter.count);
+      const com = this.encounter.centreOfMass();
+      this.env.controls.target.set(com[0], com[1], com[2]);
+      this.sky.mesh.position.copy(this.env.engine.camera.position);
+      return;
+    }
     this.simTime += dt * this.timeScale;
     const cam = this.env.engine.camera.position;
     this.view.update(cam, dt * this.timeScale);
@@ -711,6 +774,21 @@ export class GalaxyStage extends Stage {
     const g = this.params;
     const rSun = 2.2 * g.discScaleKpc;
     const [dv, du] = formatDistance(this.env.controls.distance * 3.0857e19);
+    if (this.encounter) {
+      const e = this.encounter;
+      const since = Number.isFinite(e.pericentreTime) ? e.time - e.pericentreTime : NaN;
+      return [
+        { k: 'encounter', v: e.label, accent: true },
+        { k: 'elapsed', v: e.time.toFixed(0), u: 'Myr' },
+        { k: 'separation', v: e.separation.toFixed(1), u: 'kpc' },
+        { k: 'closest', v: e.minSeparation.toFixed(1), u: 'kpc' },
+        { k: 'since peri', v: Number.isFinite(since) && since > 0 ? `${since.toFixed(0)} Myr` : '—' },
+        { k: 'tidal debris', v: `${(e.tidalFraction(g.radiusKpc) * 100).toFixed(1)}`, u: '%' },
+        { k: 'tracers', v: commas(e.count) },
+        { k: 'steps', v: commas(this.encounterSteps) },
+        { k: 'field of view', v: dv, u: du },
+      ];
+    }
     return [
       { k: 'type', v: g.type, accent: true },
       { k: 'stellar mass', v: sig(g.stellarMassMsun, 3), u: 'M☉' },
@@ -787,6 +865,7 @@ export class GalaxyStage extends Stage {
 
   override dispose(): void {
     this.view.dispose();
+    this.encounterCloud?.dispose();
     for (const n of this.nebulae) n.dispose();
     this.bh?.dispose();
     this.sky.dispose();
