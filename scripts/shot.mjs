@@ -38,6 +38,7 @@ if (args.epoch) await page.evaluate((a) => window.majveia.setEpoch(+a), args.epo
 if (args.eval) await page.evaluate(args.eval);
 await page.waitForTimeout(settle);
 if (args.hideui) await page.evaluate(() => document.getElementById('ui').classList.add('hidden'));
+else await page.evaluate(() => document.getElementById('ui').classList.remove('idle'));
 await page.waitForTimeout(300);
 await page.screenshot({ path: out });
 console.log(logs.slice(-30).join('\n'));

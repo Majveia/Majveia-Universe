@@ -54,7 +54,34 @@ html, body {
   letter-spacing: 0.055em;
   -webkit-user-select: none;
   user-select: none;
+  /* The background is a live scene that can be brilliant white in one corner
+     and pure black in the next, so every glyph carries its own shadow rather
+     than sitting on a panel. */
+  text-shadow: 0 0 12px rgba(0, 0, 0, 0.95), 0 0 3px rgba(0, 0, 0, 0.9), 0 1px 2px rgba(0, 0, 0, 0.8);
 }
+
+/* A whisper of a scrim where the readouts live, so they stay legible over a
+   cluster core without ever reading as a panel. */
+#ui::before,
+#ui::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 34vh;
+  pointer-events: none;
+  transition: opacity var(--fade);
+}
+#ui::before {
+  top: 0;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.42), transparent 78%);
+}
+#ui::after {
+  bottom: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.48), transparent 78%);
+}
+#ui.idle::before, #ui.idle::after { opacity: 0.55; }
+#ui.hidden::before, #ui.hidden::after { opacity: 0; }
 
 #ui .layer {
   position: absolute;
@@ -62,7 +89,7 @@ html, body {
 }
 
 /* Everything dims when the user stops interacting: immersion over chrome. */
-#ui.idle .dimmable { opacity: 0.16; }
+#ui.idle .dimmable { opacity: 0.22; }
 #ui.hidden .layer { opacity: 0 !important; pointer-events: none !important; }
 
 /* --- Masthead ------------------------------------------------------------ */

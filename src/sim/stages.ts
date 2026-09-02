@@ -166,7 +166,7 @@ export class CosmosStage extends Stage {
     this.root.add(this.web.group);
 
     // Markers on the most massive haloes: these are the doors down a level.
-    const knots = field.knots.slice(0, 500);
+    const knots = field.knots.slice(0, 220);
     this.nodeCount = knots.length;
     const pos = new Float32Array(knots.length * 3);
     const col = new Float32Array(knots.length * 3);
@@ -174,9 +174,11 @@ export class CosmosStage extends Stage {
     for (let i = 0; i < knots.length; i++) {
       const k = knots[i];
       pos[i * 3] = k.x; pos[i * 3 + 1] = k.y; pos[i * 3 + 2] = k.z;
-      const hot = Math.min(1, Math.log10(k.massMsun / 1e13) * 0.5 + 0.5);
-      col[i * 3] = 1; col[i * 3 + 1] = 0.86 - hot * 0.1; col[i * 3 + 2] = 0.62 + hot * 0.3;
-      size[i] = 2 + hot * 4;
+      const hot = Math.min(1, Math.max(0, Math.log10(k.massMsun / 1e13) * 0.5 + 0.5));
+      col[i * 3] = 0.55 + hot * 0.35;
+      col[i * 3 + 1] = 0.70 + hot * 0.22;
+      col[i * 3 + 2] = 0.95;
+      size[i] = 1.6 + hot * 2.6;
       this.markerPos.push(new THREE.Vector3(k.x, k.y, k.z));
     }
     const g = new THREE.BufferGeometry();
@@ -250,8 +252,10 @@ export class CosmosStage extends Stage {
     });
 
     // Haloes only exist once they have collapsed, so markers fade in with time.
+    // Markers are navigation aids, not matter: dim, and only once the haloes
+    // they mark have actually collapsed.
     (this.markers.material as THREE.RawShaderMaterial).uniforms.uOpacity.value =
-      0.6 * Math.min(1, Math.max(0, (D - 0.25) / 0.5));
+      0.30 * Math.min(1, Math.max(0, (D - 0.25) / 0.5));
     const p = (this.markers.geometry.getAttribute('position') as THREE.BufferAttribute);
     const knots = field.knots;
     for (let i = 0; i < this.nodeCount; i++) {

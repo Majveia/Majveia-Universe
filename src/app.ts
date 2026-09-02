@@ -479,8 +479,9 @@ export class App {
         case 'KeyV': this.velBtn.click(); break;
         case 'KeyC': this.cycleCosmology(); break;
         case 'KeyF':
-          if (document.fullscreenElement) document.exitFullscreen();
-          else document.documentElement.requestFullscreen?.();
+          // Fullscreen is often denied inside an embed; failing is fine.
+          if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+          else document.documentElement.requestFullscreen?.().catch(() => {});
           break;
         case 'KeyP': this.capture(); break;
         case 'KeyT': {
