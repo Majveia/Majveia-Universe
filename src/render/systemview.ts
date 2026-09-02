@@ -22,6 +22,7 @@ import { StarView } from './star';
 import { RNG } from '../core/rng';
 import { habitableZone } from '../astro/stellar';
 import { CometView } from './cometview';
+import { NebulaShellView, type NebulaShellOptions } from './nebulashell';
 
 const ORBIT_VERT = /* glsl */ `
 in float aT;
@@ -157,6 +158,8 @@ export class SystemView {
   readonly comets: CometView[] = [];
   private lastTime = 0;
   private zoneMat?: THREE.ShaderMaterial;
+  /** The star's ejected envelope, once it has one. */
+  nebula?: NebulaShellView;
   private starRadiusOverride: number | null = null;
   minAngularRadius: number;
   /** Largest magnification currently applied to any body, for the readout. */
@@ -385,6 +388,10 @@ export class SystemView {
 
     for (const m of this.beltMats) m.uniforms.uTime.value = timeS;
     for (const c of this.comets) c.update(timeS, dtS);
+    if (this.nebula) {
+      this.nebula.mesh.position.copy(this.primaryPos);
+      this.nebula.update(camera);
+    }
 
     const camPos = camera.getWorldPosition(this.tmp.set(0, 0, 0)).clone();
     this.magnification = 1;
@@ -460,10 +467,35 @@ export class SystemView {
     }
   }
 
+  /**
+   * Throw the star's envelope off.
+   *
+   * The shell is centred on the star and expands through the planetary system
+   * at twenty-five kilometres a second, which crosses Neptune's orbit in about
+   * six years and a light-year in twelve thousand. Both of those are worth
+   * seeing and they are three orders of magnitude apart, so the caller owns the
+   * clock; this only owns the geometry.
+   */
+  ejectEnvelope(opts: NebulaShellOptions): NebulaShellView {
+    this.clearNebula();
+    const n = new NebulaShellView(opts);
+    this.nebula = n;
+    this.group.add(n.mesh);
+    return n;
+  }
+
+  clearNebula(): void {
+    if (!this.nebula) return;
+    this.group.remove(this.nebula.mesh);
+    this.nebula.dispose();
+    this.nebula = undefined;
+  }
+
   /** 0 for strict true scale; a few milliradians for a legible orrery. */
   setMinAngularRadius(v: number): void { this.minAngularRadius = Math.max(0, v); }
 
   dispose(): void {
+    this.clearNebula();
     this.starView.dispose();
     this.companionView?.dispose();
     for (const c of this.comets) c.dispose();

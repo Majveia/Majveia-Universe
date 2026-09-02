@@ -42,6 +42,11 @@ import { PlanetView } from '../render/planet';
 import { MoonView } from '../render/moon';
 import { AuroraView } from '../render/aurora';
 import {
+  planetaryNebula, shellRadius, shellThickness, shellBrightness,
+  coreLuminosityLsun, coreRadiusRsun, ionisedFraction, reflectedBrightness,
+  transitionTimeS, pulseIntervalYears, type PlanetaryNebula,
+} from '../astro/planetarynebula';
+import {
   windPressure, standoffRadii, ovalColatitude, auroralPower, dipoleTilt,
 } from '../physics/magnetosphere';
 import {
@@ -68,7 +73,7 @@ import { detectability } from '../astro/detection';
 import type { DetectionPlotOptions } from '../ui/detection';
 import { blackbodyRGB } from '../astro/blackbody';
 import { RNG, hash3 } from '../core/rng';
-import { AU, GYR, MPC, M_EARTH, M_JUPITER, MYR, R_EARTH, R_SUN, YEAR, DAY, G, M_SUN } from '../core/constants';
+import { AU, GYR, MPC, M_EARTH, M_JUPITER, MYR, R_EARTH, R_SUN, YEAR, DAY, G, M_SUN, LY } from '../core/constants';
 import { sig, commas, formatDistance, formatTime } from '../ui/hud';
 
 export type ScaleId = 'cosmos' | 'cluster' | 'galaxy' | 'system' | 'world';
@@ -1384,6 +1389,15 @@ export class SystemStage extends Stage {
   /** Star radius in AU at the current age, and the AU of the star's own scale. */
   private evoRadiusAu = 0;
   private evoEngulfed = 0;
+  /** The envelope, once the star has thrown it off. */
+  private evoNebula?: PlanetaryNebula;
+  /** Real seconds since the ejection, which is not the same clock as the age. */
+  private evoNebulaT = 0;
+  /** Years since the ejection, on the nebula's own stretched clock. */
+  private evoNebulaYr = 0;
+  private evoShellAu = 0;
+  /** Camera framing to put back when the run restarts. */
+  private evoFraming?: { maxDistance: number; far: number };
 
   build(): void {
     const u = this.env.universe;
@@ -1491,6 +1505,7 @@ export class SystemStage extends Stage {
     if (!this.evolving || !s) return [];
     const st0 = this.system.star;
     const life = msLifetimeGyr(st0.massMsun);
+    if (this.evoNebula) return this.nebulaRows(this.evoNebula, life);
     const phase = s.kind === 'main-sequence'
       ? `main sequence · ${((this.evoAge / life) * 100).toFixed(0)}% through`
       : s.kind;
@@ -1506,6 +1521,59 @@ export class SystemStage extends Stage {
         : 'nothing yet' },
       { k: 'lifetime', v: life < 1
         ? `${(life * 1000).toFixed(0)} Myr` : `${sig(life, 3)} Gyr` },
+    ];
+  }
+
+  /**
+   * The nebula, while it is expanding.
+   *
+   * The numbers here are the ones worth carrying away. Half the star has left,
+   * and it is going at twenty-five kilometres a second whatever else is true.
+   * The shell passes Neptune within a decade and reaches a light-year in twelve
+   * thousand years, and none of it will still be visible in fifty thousand -
+   * the gas thins into the interstellar medium and becomes the raw material of
+   * the next generation of stars, which is where most of the carbon in a human
+   * body came from. The clock row says how badly time is being stretched to
+   * show all of that at once, because it is being stretched a long way.
+   */
+  private nebulaRows(pn: PlanetaryNebula, life: number): Row[] {
+    const yr = this.evoNebulaYr;
+    const au = this.evoShellAu;
+    const size = au > 20_000
+      ? `${sig((au * AU) / LY, 3)} ly` : `${sig(au, 3)} AU`;
+    const survivors = this.system.planets.length - this.evoEngulfed;
+    const passed = this.system.planets.filter(
+      (pl, i) => i >= this.evoEngulfed && pl.au < au).length;
+    // How fast the clock is running right now, in years of shell per second.
+    // Differenced rather than derived, so it cannot drift out of step with the
+    // schedule above however that schedule is later changed.
+    const t = this.evoNebulaT;
+    const rate = Math.max(0,
+      (this.nebulaYears(t + 0.05, pn) - this.nebulaYears(Math.max(t - 0.05, 0), pn))
+      / Math.min(0.1, t + 0.05));
+    const ion = ionisedFraction(pn, yr * YEAR);
+    const done = yr > pn.lifetimeS / YEAR;
+    const phase = ion < 0.02
+      ? (t <= SystemStage.SWEEP_S
+        ? 'proto-planetary nebula · dust in starlight'
+        : 'drifting · the core is still contracting')
+      : ion < 0.98 ? 'lighting up'
+      : done ? 'nebula fading' : 'planetary nebula';
+    return [
+      { k: 'phase', v: phase, accent: true },
+      { k: 'since ejection', v: yr < 1000
+        ? `${sig(yr, 3)} yr` : `${sig(yr / 1000, 3)} kyr` },
+      { k: 'shell radius', v: size },
+      { k: 'expanding at', v: `${(pn.speed / 1e3).toFixed(0)}`, u: 'km/s' },
+      { k: 'swept past', v: survivors
+        ? `${passed} of ${survivors} surviving planets` : 'nothing left to pass' },
+      { k: 'ejected', v: `${sig(pn.ejectedMsun, 3)} M☉ back to the galaxy` },
+      { k: 'core now', v: ion < 0.98
+        ? `${sig(pn.remnantMsun, 3)} M☉ · still contracting`
+        : `${sig(pn.remnantMsun, 3)} M☉ · ${Math.round(pn.centralTempK / 1000)} kK` },
+      { k: 'lights up at', v: `${sig(transitionTimeS(pn) / YEAR / 1000, 2)} kyr` },
+      { k: 'visible for', v: `${sig(pn.lifetimeS / YEAR / 1000, 2)} kyr` },
+      { k: 'clock', v: `${sig(rate, 2)} yr/s of a ${sig(life, 2)} Gyr life` },
     ];
   }
 
@@ -1553,6 +1621,7 @@ export class SystemStage extends Stage {
       this.evolving = false;
       this.evoHR = undefined;
       this.evoTrack = [];
+      if (this.evoNebula) this.endNebula(msLifetimeGyr(this.system.star.massMsun));
       this.view.setStarRadiusRsun(null);
       this.view.starView.setTemperature(this.system.star.teff);
       const st = this.system.star;
@@ -1580,9 +1649,15 @@ export class SystemStage extends Stage {
   private stepEvolution(dt: number): void {
     const st0 = this.system.star;
     const life = msLifetimeGyr(st0.massMsun);
+    // Once the envelope is off, the age clock stops and the nebula's own runs.
+    if (this.evoNebula) { this.stepNebula(dt, life); return; }
     // Fifty seconds from the zero-age main sequence to well past the end.
     const over = this.evoAge / life;
     const next = Math.min(1.34, over + (dt * 1.32) / 50);
+    // The tip of the giant branch. For a star between about one and eight solar
+    // masses this is where the envelope goes, and the run stops to watch it.
+    const pn = planetaryNebula(st0.massMsun);
+    if (pn.occurs && over < 1.12 && next >= 1.12) { this.beginNebula(pn, life); return; }
     this.evoAge = next * life;
     const s = makeStar(st0.massMsun, this.evoAge, st0.metallicity);
     this.evoStar = s;
@@ -1612,6 +1687,192 @@ export class SystemStage extends Stage {
       this.evoHR.mark(s);
     }
     if (next >= 1.34) this.evoAge = life * 0.02;
+  }
+
+  // --- The nebula phase.
+  //
+  // The envelope leaves at 25 km/s and two entirely different things happen at
+  // that one speed. It crosses the planetary system in a few years, sweeping
+  // over each surviving world in turn; and then it goes on for twenty thousand
+  // more, thinning and fading, until it is a light-year of gas too tenuous to
+  // see. Those two are three orders of magnitude apart in time and four in
+  // size, so a single linear clock can show one or the other and never both.
+  //
+  // So the clock is explicitly in two pieces - five seconds of real time at a
+  // couple of years each for the sweep, then sixteen seconds of exponential time
+  // for the nebula - and the readout says at every moment how fast it is
+  // running. A time axis that lies quietly is worse than one that stretches
+  // and admits it.
+
+  /** Real seconds spent on the sweep through the planetary system. */
+  private static readonly SWEEP_S = 6;
+  /**
+   * Years of expansion covered in that time. Neptune is thirty astronomical
+   * units out and the envelope is doing twenty-five kilometres a second, so it
+   * crosses that orbit in five years and nine months. Fourteen years takes the
+   * front well past it while leaving the crossing itself watchable.
+   */
+  private static readonly SWEEP_YR = 14;
+  /**
+   * Real seconds spent drifting in the dark. Between the envelope leaving the
+   * planetary system and the core getting hot enough to light it up, a thousand
+   * to ten thousand years pass in which the only thing to see is a fading dust
+   * shell. That is a real interval and skipping it would be a lie, so it is run
+   * through rather than cut - just quickly, and labelled.
+   */
+  private static readonly DRIFT_S = 4;
+  /** Real seconds spent on the nebula proper, once it is lit. */
+  private static readonly NEBULA_S = 14;
+  /** Total length of the whole sequence, real seconds. */
+  private static readonly EJECTION_S =
+    SystemStage.SWEEP_S + SystemStage.DRIFT_S + SystemStage.NEBULA_S;
+
+  /**
+   * Where the shell is, in years since the ejection, at a given moment of the
+   * run. Three segments, because there are three things to watch and they are
+   * separated by four orders of magnitude in time: the front crossing the
+   * planets, the long dark drift while the core contracts, and the nebula.
+   *
+   * The switch-on is placed deliberately: the drift ends just short of the
+   * core's transition time, so the lights come up at the start of the last
+   * segment rather than at the end of it.
+   */
+  private nebulaYears(t: number, pn: PlanetaryNebula): number {
+    const S = SystemStage.SWEEP_S, Y = SystemStage.SWEEP_YR;
+    if (t <= S) return (Y / S) * Math.max(t, 0);
+    const dark = Math.max(Y * 1.5, 0.55 * (transitionTimeS(pn) / YEAR));
+    if (t <= S + SystemStage.DRIFT_S) {
+      return Y * Math.pow(dark / Y, (t - S) / SystemStage.DRIFT_S);
+    }
+    const end = (2.2 * pn.lifetimeS) / YEAR;
+    const q = Math.min(1, (t - S - SystemStage.DRIFT_S) / SystemStage.NEBULA_S);
+    return dark * Math.pow(Math.max(end / dark, 1.01), q);
+  }
+
+  /**
+   * Throw the envelope off.
+   *
+   * What is uncovered is not the white dwarf of the textbooks. That comes
+   * later. On the day the envelope leaves, the core is a hundred thousand kelvin
+   * and a few hundred to ten thousand solar luminosities, radiating almost
+   * entirely in the ultraviolet - and it has to be, because otherwise there
+   * would be nothing to ionise the gas and no nebula to see.
+   */
+  private beginNebula(pn: PlanetaryNebula, life: number): void {
+    this.evoNebula = pn;
+    this.evoNebulaT = 0;
+    this.evoNebulaYr = 0;
+    this.evoShellAu = 0;
+    this.evoAge = life * 1.12;
+
+    const teff = pn.centralTempK;
+    const rSun = coreRadiusRsun(pn);
+    const lSun = coreLuminosityLsun(pn);
+    this.evoStar = makeStar(this.system.star.massMsun, this.evoAge, this.system.star.metallicity);
+    this.evoRadiusAu = (rSun * R_SUN) / AU;
+    this.view.setStarRadiusRsun(rSun);
+    this.view.starView.setTemperature(4600);
+    const [hzIn, hzOut] = habitableZone(lSun, teff);
+    this.view.setHabitableZone(hzIn, hzOut);
+
+    // A round nebula is the rare one. The waist comes from the dense equatorial
+    // torus the AGB wind left, and how pinched it is depends on whether there
+    // was a companion to shape it - so a binary gets a strongly bipolar one.
+    const waist = this.system.companion ? 0.9 : 0.42 + 0.36 * ((this.ctx.star ?? 0) % 7) / 6;
+    const shell = this.view.ejectEnvelope({
+      radius: 1e-6,
+      thickness: 0.6,
+      centralTempK: teff,
+      brightness: 0,
+      waist,
+      seed: (this.ctx.star ?? 0) * 7 + 3,
+    });
+    // Tip the torus off the ecliptic: the disc that shaped the planets and the
+    // one that shapes the wind are the same disc, so it is only slightly off.
+    shell.setAxis(new THREE.Vector3(0.18, 1, 0.1));
+
+    // The diagram earns its keep here. The track has spent the last few seconds
+    // climbing up and to the right along the giant branch; losing the envelope
+    // uncovers the core, and the star jumps most of the way across the top of
+    // the diagram to the left in a few thousand years - the fastest thing any
+    // star ever does on it - before dropping down the white dwarf cooling
+    // sequence. Two points draw the whole post-AGB crossing.
+    if (this.evoHR) {
+      this.evoTrack.push({ teff, lum: lSun });
+      this.evoHR.setTrack(this.evoTrack);
+      this.evoHR.mark({ ...this.evoStar, teff, luminosityLsun: lSun, kind: 'white-dwarf' });
+    }
+
+    const c = this.env.controls;
+    const cam = this.env.engine.camera;
+    this.evoFraming = { maxDistance: c.maxDistance, far: cam.far };
+  }
+
+  private stepNebula(dt: number, life: number): void {
+    const pn = this.evoNebula;
+    if (!pn) return;
+    this.evoNebulaT += dt;
+    const yr = this.nebulaYears(this.evoNebulaT, pn);
+    this.evoNebulaYr = yr;
+    const tS = yr * YEAR;
+
+    const rM = shellRadius(pn, tS);
+    this.evoShellAu = rM / AU;
+    const shell = this.view.nebula;
+    const ion = ionisedFraction(pn, tS);
+    if (shell) {
+      shell.setGeometry(this.evoShellAu, shellThickness(pn, tS));
+      shell.setArcs(yr / pulseIntervalYears(pn));
+      // Neither brightness is free to choose. The emission goes as the square of
+      // a density that falls as the cube of the radius, so once the gas is lit
+      // the display is over almost as soon as it has begun; and before it is
+      // lit there is no emission at all, only starlight off dust.
+      shell.setPhase(ion, reflectedBrightness(pn, tS));
+      shell.setBrightness(Math.max(ion * shellBrightness(pn, tS), 0.05) * 1.3);
+    }
+    // The star is a cool post-AGB supergiant until the core finishes
+    // contracting, and only then the blue-white ionising source.
+    this.view.starView.setTemperature(4600 + (pn.centralTempK - 4600) * ion);
+
+    // Keep the thing in frame. The shell outgrows the orrery within seconds and
+    // then outgrows the star system entirely; the camera only ever pulls back,
+    // so a user who has zoomed in to watch it pass a planet keeps their view.
+    const want = this.evoShellAu * 3.6;
+    const c = this.env.controls;
+    if (want > c.distance) {
+      c.maxDistance = Math.max(c.maxDistance, want * 1.4);
+      c.focusOn(c.target, want);
+      // Eased motion cannot follow an exponential clock: the shell doubles
+      // faster than the camera closes the gap, and the one framing that shows
+      // nothing at all is the one from inside the shell. So there is also a
+      // hard floor. It grows as smoothly as the shell does, so it is not a cut.
+      c.distance = Math.max(c.distance, this.evoShellAu * 2.1);
+      const cam = this.env.engine.camera;
+      const far = want * 60;
+      if (far > cam.far) { cam.far = far; cam.updateProjectionMatrix(); }
+    }
+
+    if (this.evoNebulaT > SystemStage.EJECTION_S) this.endNebula(life);
+  }
+
+  private endNebula(life: number): void {
+    this.view.clearNebula();
+    this.evoNebula = undefined;
+    this.evoNebulaT = 0;
+    this.evoNebulaYr = 0;
+    this.evoShellAu = 0;
+    this.evoAge = life * 0.02;
+    const c = this.env.controls;
+    const cam = this.env.engine.camera;
+    if (this.evoFraming) {
+      c.maxDistance = this.evoFraming.maxDistance;
+      cam.far = this.evoFraming.far;
+      cam.updateProjectionMatrix();
+      c.focusOn(c.target, Math.min(c.distance, c.maxDistance * 0.1));
+      this.evoFraming = undefined;
+    }
+    for (let i = 0; i < this.view.slots.length; i++) this.view.setPlanetEngulfed(i, false);
+    this.evoEngulfed = 0;
   }
 
   scaleLabel(): string {

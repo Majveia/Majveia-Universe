@@ -153,6 +153,86 @@ if (params.get('mode') === 'system') {
   (window as unknown as Record<string, unknown>).labSystem = sv;
 }
 
+// --- Optional subsystem: a planetary nebula, on its own.
+//
+// The ring is the thing to check here: it must come out of the path length
+// through the shell and nothing else, so the way to test it is to vary the
+// thickness and watch the ring sharpen. ?t is the age in years, which is also
+// the size, since the shell only ever does 25 km/s.
+if (params.get('mode') === 'pn') {
+  const { NebulaShellView } = await import('./render/nebulashell');
+  const pnMod = await import('./astro/planetarynebula');
+  const { SkyDome } = await import('./render/skydome');
+  engine.scene.remove(view.group);
+  engine.scene.add(new SkyDome({
+    brightness: 0.5, bandStrength: 0.006, seed, nebula: 0.004,
+  }).mesh);
+
+  const mass = Number(params.get('mass') ?? 1);
+  const pn = pnMod.planetaryNebula(mass);
+  const yr0 = Number(params.get('t') ?? 6000);
+  const AU_M = 1.495978707e11;
+  const mk = (yr: number) => {
+    const tS = yr * 365.25 * 86400;
+    return {
+      au: pnMod.shellRadius(pn, tS) / AU_M,
+      thick: pnMod.shellThickness(pn, tS),
+      ion: pnMod.ionisedFraction(pn, tS),
+      refl: pnMod.reflectedBrightness(pn, tS),
+      bright: pnMod.shellBrightness(pn, tS),
+    };
+  };
+  const st0 = mk(yr0);
+  const shell = new NebulaShellView({
+    radius: st0.au,
+    thickness: params.has('thick') ? Number(params.get('thick')) : st0.thick,
+    centralTempK: Number(params.get('tempK') ?? pn.centralTempK),
+    brightness: params.has('bright') ? Number(params.get('bright'))
+      : Math.max(st0.ion * st0.bright, 0.05) * 1.3,
+    waist: Number(params.get('waist') ?? 0.55),
+    seed,
+  });
+  shell.setAxis(new THREE.Vector3(0.18, 1, 0.1));
+  shell.setPhase(st0.ion, st0.refl);
+  shell.setArcs(yr0 / pnMod.pulseIntervalYears(pn));
+  engine.scene.add(shell.mesh);
+
+  controls.snapTo(new THREE.Vector3(), st0.au * Number(params.get('d') ?? 3.4),
+    Number(params.get('theta') ?? 0.5), Number(params.get('phi') ?? 0.35));
+  controls.minDistance = st0.au * 1e-3;
+  controls.maxDistance = st0.au * 60;
+  engine.camera.near = st0.au * 1e-3;
+  engine.camera.far = st0.au * 400;
+  engine.camera.updateProjectionMatrix();
+
+  let yr = yr0;
+  const rate = Number(params.get('rate') ?? 0);
+  const step = () => {
+    requestAnimationFrame(step);
+    if (rate) {
+      yr += rate / 60;
+      const c = mk(yr);
+      shell.setGeometry(c.au, c.thick);
+      shell.setPhase(c.ion, c.refl);
+      shell.setArcs(yr / pnMod.pulseIntervalYears(pn));
+      shell.setBrightness(Math.max(c.ion * c.bright, 0.05) * 1.3);
+    }
+    shell.update(engine.camera);
+  };
+  requestAnimationFrame(step);
+  // eslint-disable-next-line no-console
+  console.info('[lab:pn]', `${mass} Msun ->`,
+    `core ${pn.remnantMsun.toFixed(3)} Msun at ${(pn.centralTempK / 1000).toFixed(0)} kK,`,
+    `${pnMod.coreLuminosityLsun(pn).toFixed(0)} Lsun,`,
+    `ejected ${pn.ejectedMsun.toFixed(3)} Msun;`,
+    `at ${yr0} yr: r=${st0.au.toFixed(0)} AU thick=${st0.thick.toFixed(3)}`,
+    `bright=${st0.bright.toFixed(4)} ion=${st0.ion.toFixed(3)} refl=${st0.refl.toFixed(3)};`,
+    `lights up at ${(pnMod.transitionTimeS(pn) / 3.156e7).toFixed(0)} yr;`,
+    `visible ${(pn.lifetimeS / 3.156e7 / 1000).toFixed(1)} kyr`);
+  (window as unknown as Record<string, unknown>).labPN = shell;
+  (window as unknown as Record<string, unknown>).lab = { ready: true, engine, controls };
+}
+
 // --- Optional subsystem: a galaxy collision, integrated live.
 if (params.get('mode') === 'encounter') {
   const { Encounter } = await import('./sim/encounter');
