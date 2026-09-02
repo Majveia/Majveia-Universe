@@ -18,6 +18,7 @@ import {
 } from './sim/stages';
 import { Timeline } from './ui/timeline';
 import { Rows, el, sig, commas } from './ui/hud';
+import { saveBlob } from './ui/save';
 import { PLANCK18, PRESET_COSMOLOGIES, Cosmology, growthFactor } from './cosmology/lcdm';
 import type { CosmicWebField } from './cosmology/zeldovich';
 import { hashString } from './core/rng';
@@ -562,15 +563,16 @@ export class App {
 
   private capture(): void {
     this.engine.render(0);
+    this.flash('capturing frame…');
     this.canvas.toBlob((b) => {
-      if (!b) return;
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(b);
-      a.download = `majveia-${this.seedText}-${this.stage?.id ?? 'view'}.png`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      if (!b) { this.flash('could not capture the frame'); return; }
+      const name = `majveia-${this.seedText}-${this.stage?.id ?? 'view'}.png`;
+      saveBlob(b, name).then((outcome) => {
+        this.flash(outcome === 'saved' ? 'frame saved'
+          : outcome === 'declined' ? 'save cancelled'
+          : 'saving is unavailable here');
+      });
     }, 'image/png');
-    this.flash('frame saved');
   }
 
   private wake(): void {

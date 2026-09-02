@@ -43,7 +43,7 @@ try { css = await readFile(path.join(outDir, 'app.css'), 'utf8'); } catch { /* s
 // A literal </script> inside the bundle would close the tag early.
 const safe = (s) => s.replace(/<\/script/gi, '<\\/script');
 
-const title = 'Majveia — a simulated universe';
+const title = 'Majveia Universe';
 const body = `
 <canvas id="stage"></canvas>
 <div id="ui"></div>
