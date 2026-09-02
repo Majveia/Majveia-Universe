@@ -8,7 +8,7 @@ without a loading screen in between.
 ```
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 268 tests, mostly checking physics against measurement
+npm test             # 326 tests, mostly checking physics against measurement
 npm run bundle:single # one self-contained HTML file, no network dependencies
 ```
 
@@ -113,6 +113,42 @@ dull red glow at γ = 224, a wall of light at γ = 700. The presets climb by abo
 a factor of ten in γ each step, because 0.99 and 0.9999995 look alike written
 down and differ by a factor of 140 in everything that matters.
 
+### Gravitational waves
+
+**G** at the galactic scale replaces the galaxy with two black holes eleven
+seconds from merging. It is a jump of sixteen orders of magnitude out of the
+scale that stage normally works at, and the clock changes with it: a galaxy
+runs at twelve million years a second, and the whole of this takes eleven.
+
+Almost everything about a chirp is fixed by one combination of the masses,
+`Mc = (m1 m2)^(3/5)/(m1+m2)^(1/5)`, which is why that is the first thing anyone
+measures from a detection and why they can measure it without knowing the
+distance, the inclination or the individual masses. The quadrupole formula
+gives the orbital decay, which integrates to a time to merger going as `a⁴` —
+the reason binaries spend essentially all their lives wide and quiet and then
+merge in an eyeblink.
+
+The picture is the leading-order quadrupole field at retarded time: a two-armed
+spiral that tightens as the frequency rises. Two arms because the radiation is
+quadrupolar and a binary looks the same after half a turn; winding because the
+wave takes `r/c` to get there; tightening because of the chirp. After
+coalescence the source stops, and the region inside `r = ct` — which has
+nothing left to emit — shows only the remnant's ringdown, while everything
+outside is still carrying the inspiral outward. The boundary between them
+expands at exactly the speed of light.
+
+The strain trace along the bottom is the picture that was on every front page
+in February 2016, drawn from the same waveform as the field. Its window is
+measured in cycles rather than seconds, because a fixed window in time shows a
+lazy sine early on and a block of ink at the end.
+
+Checked against GW150914 throughout: chirp mass 28 M☉, ISCO at 576 km, peak
+strain 1e-21 at 410 Mpc, three solar masses radiated, final mass 62, final spin
+0.68, ringdown near 250 Hz, and a peak power of a thousandth of `c⁵/G` — which
+for a fifth of a second outshone every star in the observable universe by a
+factor of a hundred, in a form of radiation that passed through all of them
+unnoticed.
+
 ### Galaxies
 
 Spiral arms are **Lindblad kinematic density waves**. Every star sits on a
@@ -168,6 +204,23 @@ empty. Only near 9500 K is the balance right. Below about 4000 K molecules
 survive and TiO takes over the optical entirely, which is why an M dwarf's
 spectrum is a comb.
 
+### The Hertzsprung-Russell diagram
+
+**D** plots the galaxy you are in. Stars do not fill the diagram — they lie on a
+line, and where a star sits on it is set by one number, its mass. The turnoff is
+a clock that reads the age of the population, because everything more massive
+than it has already gone. Clicking a star rings it on the plot.
+
+The sampling needed care. A volume-limited draw from an initial mass function is
+three-quarters M dwarfs and holds one O star in a hundred thousand, so at any
+plottable number of points the upper main sequence comes out empty; and drawing
+ages uniformly over eleven billion years finds a massive star still alive about
+one time in a thousand, which empties it again. So the draw is flat in log mass,
+two thirds of it restricted to stars alive now, and both the mass function and
+the survival probability go back into the *opacity* of each point. The bright
+end of the diagram is faint for the same reason the sky has few blue giants in
+it.
+
 ### Planets
 
 Formation runs the physical sequence: a protoplanetary disc whose mass scales
@@ -198,6 +251,27 @@ Atmospheres use single-scattering Rayleigh extinction with `β ~ λ⁻⁴`, so l
 go blue and terminators redden because the path length says they should. Water
 is a smooth dielectric, so sunlight glints off an ocean in a narrow GGX lobe
 with a Fresnel weight - dark looking straight down, a mirror at grazing angles.
+
+### How any of it would be found
+
+Everything else in the inspector is what a planet *is*. Click one and the last
+panel is the entirety of what could be *measured* about it from another star.
+
+**Transits** take a bite out of the light that is `(Rp/R*)²` deep — an area
+ratio, not a mass ratio: 1% for a hot Jupiter and 84 parts per million for the
+Earth. The curve is the overlapping area of two discs weighted by the
+limb-darkened intensity of the patch being covered, which is where the rounded
+bottom of a real light curve comes from, and it reuses the same two-circle
+overlap as the eclipse code. The catch is in the word *if*: the geometric
+probability is only `R*/a`, half a per cent for an Earth at 1 AU.
+
+**Radial velocity** measures the star's own orbit about the barycentre:
+12.5 m/s for Jupiter and 9 cm/s for the Earth, read off a star four light years
+away by watching its absorption lines shift a ten-millionth of their width.
+
+The two are complementary and that is the whole reason both exist. Transits give
+the radius, radial velocity gives the mass, and only a planet with both has a
+density and therefore a composition.
 
 ### Aurorae and eclipses
 
@@ -356,6 +430,8 @@ looking at the output:
 | V | tint the web by peculiar velocity |
 | B | show the microwave background |
 | J | fly at a fraction of light speed |
+| G | merge two black holes |
+| D | Hertzsprung-Russell diagram |
 | O | go to the Solar System |
 | T | true scale in a system |
 | U | hide the interface |
@@ -412,7 +488,7 @@ src/
   render/       the HDR engine and every shader
   sim/          the universe object graph and the scale ladder
   ui/           the interface
-tests/          268 tests against published measurements
+tests/          326 tests against published measurements
 ```
 
 ## Accuracy
@@ -422,8 +498,10 @@ itself - the age of the universe (13.79 Gyr), σ₈ recovery, the BAO sound
 horizon (147 Mpc), Earth's orbital speed (29.8 km/s), Mercury's
 43″/century relativistic precession, the Sun's habitable zone, Earth's
 equilibrium temperature (255 K), the ISCO of a solar-mass black hole (8.9 km),
-κ = √2 Ω for a flat rotation curve, the Sun and Moon coming out the same
-apparent size (which is why eclipses happen at all), Earth's magnetopause at
+κ = √2 Ω for a flat rotation curve, GW150914's chirp mass and final spin,
+Jupiter moving the Sun at 12.5 m/s and the Earth at 9 cm/s, the Sun and Moon
+coming out the same apparent size (which is why eclipses happen at all),
+Earth's magnetopause at
 ten radii and its auroral oval 19° from the pole, the solar CMB dipole at
 3.36 mK, the acoustic peaks at ℓ = 216, 504, 792, and Ca II K coming out as the
 deepest line in a solar spectrum.
