@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { makeStar } from '../src/astro/stellar';
+import { makeStar, msLifetimeGyr, habitableZone } from '../src/astro/stellar';
 import {
   buildSystem, radiusFromMass, equilibriumTemperature, jeansParameter, snowLine,
 } from '../src/astro/planets';
@@ -281,5 +281,50 @@ describe('universe graph', () => {
     const a = u.system(g, 42).system;
     const b = u.system(g, 42).system;
     expect(a.planets.map((p) => p.name)).toEqual(b.planets.map((p) => p.name));
+  });
+});
+
+describe('a star aging off the main sequence', () => {
+  it('takes the Sun to the red giant branch tip the models put it at', () => {
+    const life = msLifetimeGyr(1);
+    // The end of the giant phase in this model.
+    const tip = makeStar(1, life * 1.1199, 0);
+    expect(tip.kind).toBe('giant');
+    expect(tip.luminosityLsun).toBeGreaterThan(1200);
+    expect(tip.luminosityLsun).toBeLessThan(4000);
+    expect(tip.radiusRsun).toBeGreaterThan(120);
+    expect(tip.radiusRsun).toBeLessThan(220);
+    // Which is 0.6 to 1 AU: past Mercury and Venus, and close to the Earth.
+    expect((tip.radiusRsun * 6.957e8) / 1.495978707e11).toBeGreaterThan(0.55);
+    // And the surface temperature that falls out of L and R is the observed one.
+    expect(tip.teff).toBeGreaterThan(2800);
+    expect(tip.teff).toBeLessThan(3600);
+  });
+
+  it('brightens the Sun by a third across its main sequence, as it has', () => {
+    const life = msLifetimeGyr(1);
+    const zams = makeStar(1, 0.02 * life, 0);
+    const now = makeStar(1, 4.6, 0);
+    const end = makeStar(1, 0.999 * life, 0);
+    expect(now.luminosityLsun / zams.luminosityLsun).toBeGreaterThan(1.1);
+    expect(now.luminosityLsun / zams.luminosityLsun).toBeLessThan(1.3);
+    expect(end.luminosityLsun / zams.luminosityLsun).toBeGreaterThan(1.5);
+  });
+
+  it('leaves a white dwarf that cools, and a black hole from a massive star', () => {
+    const wd = makeStar(1, msLifetimeGyr(1) * 1.5, 0);
+    expect(wd.kind).toBe('white-dwarf');
+    const older = makeStar(1, msLifetimeGyr(1) * 3, 0);
+    expect(older.luminosityLsun).toBeLessThan(wd.luminosityLsun);
+    expect(makeStar(30, msLifetimeGyr(30) * 2, 0).kind).toBe('black-hole');
+  });
+
+  it('moves the habitable zone outward as the star brightens', () => {
+    const life = msLifetimeGyr(1);
+    const young = habitableZone(makeStar(1, 0.02 * life, 0).luminosityLsun, 5772);
+    const giant = makeStar(1, life * 1.08, 0);
+    const late = habitableZone(giant.luminosityLsun, giant.teff);
+    // By the giant branch the habitable zone is out past Jupiter.
+    expect(late[0]).toBeGreaterThan(young[1] * 4);
   });
 });

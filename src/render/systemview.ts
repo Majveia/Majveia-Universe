@@ -140,6 +140,8 @@ interface PlanetSlot {
   orbitMat: THREE.ShaderMaterial;
   worldPos: THREE.Vector3;
   precessRate: number;
+  /** The orbit line's opacity when nothing has happened to the planet. */
+  baseOrbitOpacity: number;
 }
 
 export class SystemView {
@@ -155,6 +157,7 @@ export class SystemView {
   readonly comets: CometView[] = [];
   private lastTime = 0;
   private zoneMat?: THREE.ShaderMaterial;
+  private starRadiusOverride: number | null = null;
   minAngularRadius: number;
   /** Largest magnification currently applied to any body, for the readout. */
   magnification = 1;
@@ -200,7 +203,11 @@ export class SystemView {
           uOpacity: { value: 0.0055 },
         },
       });
-      const g = new THREE.RingGeometry(hzIn, hzOut, 192, 1);
+      // The geometry spans far more than the current zone, because the zone
+      // moves: a star brightens by a third across its main sequence and by two
+      // orders of magnitude as a giant, and the habitable zone goes with it.
+      // The uniforms decide what is actually drawn.
+      const g = new THREE.RingGeometry(hzIn * 0.12, Math.min(hzOut * 30, 2000), 192, 1);
       g.rotateX(-Math.PI / 2);
       this.group.add(new THREE.Mesh(g, this.zoneMat));
     }
@@ -284,6 +291,7 @@ export class SystemView {
       planet: p, view, marker, orbit, orbitMat,
       worldPos: new THREE.Vector3(),
       precessRate: relativisticPrecessionPerOrbit(p.elements.a, p.elements.e, muStar) / T,
+      baseOrbitOpacity: orbitMat.uniforms.uOpacity.value as number,
     };
   }
 
@@ -338,6 +346,34 @@ export class SystemView {
     this.group.add(pts);
   }
 
+  /**
+   * Draw the star at a radius other than its catalogued one, in solar radii.
+   * Null restores it. Used while a star is being aged: a G dwarf reaches two
+   * hundred solar radii on the giant branch, which is most of the way to the
+   * Earth's orbit.
+   */
+  setStarRadiusRsun(r: number | null): void { this.starRadiusOverride = r; }
+
+  /** Hide a planet that the star has swallowed. */
+  setPlanetEngulfed(index: number, engulfed: boolean): void {
+    const slot = this.slots[index];
+    if (!slot) return;
+    if (slot.view) slot.view.group.visible = !engulfed;
+    slot.marker.visible = !engulfed;
+    slot.orbitMat.uniforms.uOpacity.value = engulfed ? 0.02 : slot.baseOrbitOpacity;
+  }
+
+  /**
+   * Move the habitable zone. Used while a star is being aged: the zone is a
+   * function of luminosity, so it sweeps outward as the star evolves and the
+   * worlds it passes over change what they are.
+   */
+  setHabitableZone(inner: number, outer: number): void {
+    if (!this.zoneMat) return;
+    this.zoneMat.uniforms.uInner.value = inner;
+    this.zoneMat.uniforms.uOuter.value = outer;
+  }
+
   /** Advance to a simulation time and reposition everything. */
   update(timeS: number, camera: THREE.Camera): void {
     const dtS = Math.max(0, timeS - this.lastTime);
@@ -375,7 +411,7 @@ export class SystemView {
     // The star gets the same treatment as the planets.
     {
       const d = Math.max(camPos.distanceTo(this.primaryPos), 1e-12);
-      const trueR = (st.radiusRsun * R_SUN) / AU;
+      const trueR = ((this.starRadiusOverride ?? st.radiusRsun) * R_SUN) / AU;
       this.starView.setWorldRadius(Math.max(trueR, this.minAngularRadius * 2.2 * d));
     }
 

@@ -29,6 +29,7 @@ import { CmbView } from '../render/cmbview';
 import { MergerView } from '../render/mergerview';
 import { StrainTrace } from '../ui/strain';
 import { HRDiagram } from '../ui/hrdiagram';
+import { ChirpAudio } from '../ui/chirpaudio';
 import {
   chirpMass, finalMass, finalSpin, radiatedFraction, peakLuminosity,
   PLANCK_LUMINOSITY,
@@ -58,7 +59,9 @@ import {
   lightCurve, magnitudeToLuminosity, supernovaColor, coreCollapseRate, typeIaRate,
   type SupernovaType,
 } from '../astro/supernova';
-import { starLabel, makeStar, msLifetimeGyr, type Star } from '../astro/stellar';
+import {
+  starLabel, makeStar, msLifetimeGyr, habitableZone, type Star,
+} from '../astro/stellar';
 import { CLASS_LABEL, type Planet, type PlanetarySystem } from '../astro/planets';
 import { solarSystem } from '../astro/solsystem';
 import { detectability } from '../astro/detection';
@@ -751,6 +754,7 @@ export class GalaxyStage extends Stage {
   private encounterSteps = 0;
   private merger?: MergerView;
   private strain?: StrainTrace;
+  private chirp?: ChirpAudio;
   private hr?: HRDiagram;
   /** Time relative to coalescence while the merger runs, seconds. */
   private mergerT = 0;
@@ -973,6 +977,8 @@ export class GalaxyStage extends Stage {
       this.merger.dispose();
       this.merger = undefined;
       this.strain = undefined;
+      this.chirp?.stop();
+      this.chirp = undefined;
       this.showGalaxy(true);
       this.timeScale = this.baseTimeScale;
       const c = this.env.controls;
@@ -991,6 +997,10 @@ export class GalaxyStage extends Stage {
     this.merger = new MergerView({ m1, m2, startSeparation: 26, fieldRadius: 300 });
     this.mergerT = -this.merger.inspiralS;
     this.strain = new StrainTrace({ binary: this.merger.binary });
+    this.chirp = new ChirpAudio(this.merger.binary);
+    // The reference the envelope divides by: the strain a moment before the
+    // holes touch.
+    this.chirp.calibrate(-0.001);
     this.root.add(this.merger.group);
     this.showGalaxy(false);
     this.timeScale = 1;   // one second per second: the chirp in real time
@@ -1071,6 +1081,17 @@ export class GalaxyStage extends Stage {
     return true;
   }
 
+  /**
+   * Turn the chirp into sound. Nothing is transposed: a stellar-mass merger
+   * sweeps from tens of hertz to a few hundred, which is the audio band, so the
+   * oscillator runs at the frequency the waveform actually has.
+   */
+  toggleChirpAudio(): 'on' | 'off' | 'unavailable' {
+    if (!this.chirp) return 'unavailable';
+    if (this.chirp.on) { this.chirp.stop(); return 'off'; }
+    return this.chirp.start() ? 'on' : 'unavailable';
+  }
+
   /** Ring the star being inspected on the diagram, if it is open. */
   markOnHR(s: Star | null): void { this.hr?.mark(s); }
 
@@ -1083,6 +1104,7 @@ export class GalaxyStage extends Stage {
       if (this.mergerT > 0.45) this.mergerT = -this.merger.inspiralS;
       this.merger.update(this.mergerT, this.env.engine.camera);
       this.strain?.update(this.mergerT);
+      this.chirp?.update(this.mergerT);
       this.sky.mesh.position.copy(this.env.engine.camera.position);
       return;
     }
@@ -1352,6 +1374,17 @@ export class SystemStage extends Stage {
   /** Minimum apparent radius for bodies; 0 is strict true scale. */
   minAngular = 0.0045;
 
+  // --- Stellar evolution.
+  private evolving = false;
+  /** Age the star is being shown at, Gyr. */
+  private evoAge = 0;
+  private evoStar?: Star;
+  private evoHR?: HRDiagram;
+  private evoTrack: { teff: number; lum: number }[] = [];
+  /** Star radius in AU at the current age, and the AU of the star's own scale. */
+  private evoRadiusAu = 0;
+  private evoEngulfed = 0;
+
   build(): void {
     const u = this.env.universe;
     const g = u.galaxy(this.ctx.cluster ?? 0, this.ctx.member ?? 0);
@@ -1404,6 +1437,7 @@ export class SystemStage extends Stage {
 
   update(dt: number): void {
     this.simTime += dt * this.timeScale;
+    if (this.evolving && this.timeScale > 0) this.stepEvolution(dt);
     this.view.update(this.simTime, this.env.engine.camera);
     this.sky.mesh.position.copy(this.env.engine.camera.position);
   }
@@ -1444,9 +1478,34 @@ export class SystemStage extends Stage {
       { k: 'snow line', v: sys.snowLineAu.toFixed(2), u: 'AU' },
       { k: 'planets', v: sys.planets.length.toString() },
       { k: 'body scale', v: this.minAngular === 0 ? 'true' : `×${sig(this.view.magnification, 2)}` },
+      ...this.evolutionRows(),
       ...this.cometRows(),
       { k: 'elapsed', v: tv, u: tu },
       { k: 'field of view', v: dv, u: du },
+    ];
+  }
+
+  /** Where the star is in its life, while it is being aged. */
+  private evolutionRows(): Row[] {
+    const s = this.evoStar;
+    if (!this.evolving || !s) return [];
+    const st0 = this.system.star;
+    const life = msLifetimeGyr(st0.massMsun);
+    const phase = s.kind === 'main-sequence'
+      ? `main sequence · ${((this.evoAge / life) * 100).toFixed(0)}% through`
+      : s.kind;
+    return [
+      { k: 'age', v: this.evoAge < 1
+        ? `${(this.evoAge * 1000).toFixed(0)} Myr` : `${sig(this.evoAge, 3)} Gyr`, accent: true },
+      { k: 'phase', v: phase },
+      { k: 'radius now', v: `${sig(s.radiusRsun, 3)} R☉ · ${sig(this.evoRadiusAu, 2)} AU` },
+      { k: 'luminosity now', v: sig(s.luminosityLsun, 3), u: 'L☉' },
+      { k: 'surface now', v: Math.round(s.teff).toString(), u: 'K' },
+      { k: 'swallowed', v: this.evoEngulfed
+        ? `${this.evoEngulfed} of ${this.system.planets.length} planets`
+        : 'nothing yet' },
+      { k: 'lifetime', v: life < 1
+        ? `${(life * 1000).toFixed(0)} Myr` : `${sig(life, 3)} Gyr` },
     ];
   }
 
@@ -1470,6 +1529,89 @@ export class SystemStage extends Stage {
 
   override setBoost(beta: number, dir: THREE.Vector3): void {
     this.sky.setBoost(beta, dir);
+  }
+
+  /**
+   * Run the star's whole life.
+   *
+   * A star's structure is a function of its mass and its age and almost nothing
+   * else, so aging it is just re-evaluating the same model at a later time and
+   * watching what falls out: the luminosity climbing by a third across the main
+   * sequence, the swell onto the giant branch, the surface cooling from yellow
+   * to red as the radius runs away, the habitable zone sweeping outward past
+   * one world after another, and the inner planets going inside the
+   * photosphere. The Sun will do all of this, and Mercury and Venus are inside
+   * the radius it reaches.
+   *
+   * Time is parameterised by age over main-sequence lifetime rather than in
+   * years, because the same run then works for an O star that lives three
+   * million years and an M dwarf that lives six trillion - and the readout
+   * says which.
+   */
+  toggleEvolution(): boolean {
+    if (this.evolving) {
+      this.evolving = false;
+      this.evoHR = undefined;
+      this.evoTrack = [];
+      this.view.setStarRadiusRsun(null);
+      this.view.starView.setTemperature(this.system.star.teff);
+      const st = this.system.star;
+      this.view.setHabitableZone(st.habitableZoneAu[0], st.habitableZoneAu[1]);
+      for (let i = 0; i < this.view.slots.length; i++) this.view.setPlanetEngulfed(i, false);
+      this.evoEngulfed = 0;
+      return false;
+    }
+    this.evolving = true;
+    const st = this.system.star;
+    this.evoAge = msLifetimeGyr(st.massMsun) * 0.02;
+    this.evoTrack = [];
+    this.evoHR = new HRDiagram({ title: `${starLabel(st)} · its whole life` });
+    this.evoHR.setPopulation([]);
+    return true;
+  }
+
+  override overlay(): HTMLElement | null {
+    if (!this.evoHR) return null;
+    this.evoHR.draw();
+    return this.evoHR.el;
+  }
+
+  /** Advance the star's age and re-evaluate everything downstream of it. */
+  private stepEvolution(dt: number): void {
+    const st0 = this.system.star;
+    const life = msLifetimeGyr(st0.massMsun);
+    // Fifty seconds from the zero-age main sequence to well past the end.
+    const over = this.evoAge / life;
+    const next = Math.min(1.34, over + (dt * 1.32) / 50);
+    this.evoAge = next * life;
+    const s = makeStar(st0.massMsun, this.evoAge, st0.metallicity);
+    this.evoStar = s;
+    this.evoRadiusAu = (s.radiusRsun * R_SUN) / AU;
+
+    this.view.setStarRadiusRsun(s.radiusRsun);
+    this.view.starView.setTemperature(s.teff);
+    const [hzIn, hzOut] = habitableZone(s.luminosityLsun, s.teff);
+    this.view.setHabitableZone(hzIn, hzOut);
+
+    let engulfed = 0;
+    for (let i = 0; i < this.view.slots.length; i++) {
+      const inside = this.view.slots[i].planet.au < this.evoRadiusAu;
+      this.view.setPlanetEngulfed(i, inside);
+      if (inside) engulfed++;
+    }
+    this.evoEngulfed = engulfed;
+
+    if (this.evoHR) {
+      const last = this.evoTrack[this.evoTrack.length - 1];
+      if (!last || Math.abs(Math.log10(s.luminosityLsun / last.lum)) > 0.006
+        || Math.abs(Math.log10(s.teff / last.teff)) > 0.002) {
+        this.evoTrack.push({ teff: s.teff, lum: s.luminosityLsun });
+        if (this.evoTrack.length > 900) this.evoTrack.shift();
+        this.evoHR.setTrack(this.evoTrack);
+      }
+      this.evoHR.mark(s);
+    }
+    if (next >= 1.34) this.evoAge = life * 0.02;
   }
 
   scaleLabel(): string {

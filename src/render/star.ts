@@ -203,6 +203,26 @@ export class StarView {
     this.coronaMat.uniforms.uCenter.value.copy(worldPos);
   }
 
+  /**
+   * Re-colour the star for a new effective temperature. Used while a star is
+   * being aged: a G dwarf swelling into a red giant drops from 5800 K to 3200,
+   * and the colour has to follow or the whole point is lost.
+   */
+  setTemperature(teff: number): void {
+    const c = blackbodyRGB(teff);
+    const hot = blackbodyRGB(teff * 1.06);
+    const cool = blackbodyRGB(teff * 0.86);
+    (this.mat.uniforms.uColor.value as THREE.Vector3).set(c[0], c[1], c[2]);
+    (this.mat.uniforms.uHotColor.value as THREE.Vector3)
+      .set(hot[0] * 1.35, hot[1] * 1.35, hot[2] * 1.35);
+    (this.mat.uniforms.uCoolColor.value as THREE.Vector3)
+      .set(cool[0] * 0.55, cool[1] * 0.5, cool[2] * 0.45);
+    (this.coronaMat.uniforms.uColor.value as THREE.Vector3).set(c[0], c[1], c[2]);
+    // Cool stars are magnetically active and heavily spotted; hot ones are not.
+    this.mat.uniforms.uSpots.value = teff < 5200 ? 0.85 : teff < 6300 ? 0.4 : 0.08;
+    this.mat.uniforms.uGranule.value = teff > 9000 ? 22 : 13;
+  }
+
   setIntensity(v: number): void {
     this.mat.uniforms.uIntensity.value = v;
     this.coronaMat.uniforms.uIntensity.value = v * 0.9;

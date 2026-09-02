@@ -541,6 +541,26 @@ export class App {
           }
           break;
         }
+        case 'KeyY': {
+          const st = this.stage as unknown as { toggleEvolution?: () => boolean };
+          if (st.toggleEvolution) {
+            const on = st.toggleEvolution();
+            this.flash(on ? 'running the star\u2019s whole life' : 'back to the present');
+            if (on && !this.playing) this.togglePlay();
+          } else {
+            this.flash('a star can only be aged from its own system');
+          }
+          break;
+        }
+        case 'KeyN': {
+          const st = this.stage as unknown as
+            { toggleChirpAudio?: () => 'on' | 'off' | 'unavailable' };
+          const r = st.toggleChirpAudio?.() ?? 'unavailable';
+          this.flash(r === 'on'
+            ? 'the chirp, at its real frequencies — nothing transposed'
+            : r === 'off' ? 'sound off' : 'there is nothing to hear here');
+          break;
+        }
         case 'KeyD': {
           const st = this.stage as unknown as { toggleHR?: () => boolean };
           if (st.toggleHR) {
@@ -557,7 +577,7 @@ export class App {
           if (st.toggleMerger) {
             const on = st.toggleMerger();
             this.flash(on
-              ? 'two black holes, eleven seconds from merging'
+              ? 'two black holes, eleven seconds from merging — press N to hear it'
               : 'back to the galaxy');
             if (on && !this.playing) this.togglePlay();
           } else {
@@ -875,6 +895,8 @@ const HELP_HTML = `
       <dt>M</dt><dd>collide this galaxy with another</dd>
       <dt>G</dt><dd>merge two black holes</dd>
       <dt>D</dt><dd>Hertzsprung-Russell diagram</dd>
+      <dt>N</dt><dd>hear the merger</dd>
+      <dt>Y</dt><dd>run the star's whole life</dd>
       <dt>C</dt><dd>change the cosmology</dd>
       <dt>U</dt><dd>hide the interface</dd>
       <dt>F</dt><dd>fullscreen</dd>

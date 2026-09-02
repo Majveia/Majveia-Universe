@@ -162,10 +162,18 @@ export function makeStar(massMsun: number, ageGyr: number, metallicity = 0, rng?
   } else if (ageGyr > life) {
     const over = (ageGyr - life) / Math.max(life, 1e-4);
     if (over < 0.12) {
-      // Hydrogen-shell burning: swelling and cooling
+      // Hydrogen-shell burning, and it runs away. On the red giant branch the
+      // luminosity goes as a high power of the inert helium core's mass, so the
+      // growth is exponential rather than linear: the Sun ends its giant phase
+      // at about 2600 L and 170 R, which is 0.8 AU - past Mercury and Venus.
+      // Interpolating in log to those endpoints is crude but it lands the tip
+      // where the models put it, and the surface temperature that falls out,
+      // 5772 (L/R^2)^(1/4) = 3160 K, is the observed one.
       kind = massMsun > 8 ? 'supergiant' : 'giant';
-      L *= 1 + 60 * over * (massMsun > 8 ? 0.3 : 1);
-      R *= 1 + 120 * over;
+      const u = over / 0.12;
+      // A supergiant swells further and brightens less: it was already bright.
+      L *= Math.pow(massMsun > 8 ? 6 : 2600, u);
+      R *= Math.pow(massMsun > 8 ? 600 : 170, u);
       lumClass = massMsun > 8 ? 'I' : 'III';
     } else {
       const rem = remnantMass(massMsun);

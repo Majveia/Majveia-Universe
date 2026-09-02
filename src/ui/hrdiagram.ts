@@ -58,6 +58,7 @@ export class HRDiagram {
   private h: number;
   private points: HRPoint[] = [];
   private marked: HRPoint | null = null;
+  private track: { teff: number; lum: number }[] = [];
   private caption: HTMLDivElement;
   private title: string;
   private dirty = true;
@@ -92,6 +93,17 @@ export class HRDiagram {
       teff: s.teff, lum: s.luminosityLsun, color: s.color, kind: s.kind,
       weight: weights?.[i],
     }));
+    this.dirty = true;
+  }
+
+  /**
+   * A track: where one star has been on the diagram. Adding points as it ages
+   * draws the evolutionary path, which is the thing the diagram was invented to
+   * make visible - a star does not move along the main sequence, it sits on it
+   * and then leaves.
+   */
+  setTrack(points: { teff: number; lum: number }[]): void {
+    this.track = points;
     this.dirty = true;
   }
 
@@ -154,6 +166,18 @@ export class HRDiagram {
       g.fill();
     }
 
+    if (this.track.length > 1) {
+      g.strokeStyle = 'rgba(232,184,122,.55)';
+      g.lineWidth = 1.1;
+      g.beginPath();
+      for (let i = 0; i < this.track.length; i++) {
+        const p = this.track[i];
+        const x = this.x(p.teff), y = this.y(p.lum);
+        if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.stroke();
+    }
+
     if (this.marked) {
       const x = this.x(this.marked.teff), y = this.y(this.marked.lum);
       g.strokeStyle = 'rgba(232,184,122,.95)';
@@ -169,7 +193,8 @@ export class HRDiagram {
 
     const giants = this.points.filter((p) => p.kind === 'giant' || p.kind === 'supergiant').length;
     const wd = this.points.filter((p) => p.kind === 'white-dwarf').length;
-    this.caption.textContent =
-      `${this.title} · ${giants} giants · ${wd} white dwarfs`;
+    this.caption.textContent = this.points.length
+      ? `${this.title} · ${giants} giants · ${wd} white dwarfs`
+      : this.title;
   }
 }
