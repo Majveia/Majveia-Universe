@@ -120,6 +120,7 @@ uniform float uTime;
 uniform vec2 uResolution;
 uniform float uSaturation;
 uniform float uAberration;
+uniform float uBlackPoint;
 
 // ---- AgX tone mapping (Blender/Filament formulation).
 // Highlights desaturate toward white along a perceptual path instead of
@@ -186,6 +187,12 @@ void main() {
 
   col = agx(col);
 
+  // AgX has a long toe by design, which lifts the darkest values into a
+  // visible grey. On a panel with true blacks that reads as a grey wash across
+  // what should be empty space, so a black point is subtracted and the range
+  // renormalised - the display equivalent of setting the pedestal.
+  col = max(col - uBlackPoint, vec3(0.0)) / max(1.0 - uBlackPoint, 1e-4);
+
   float l = luma(col);
   col = mix(vec3(l), col, uSaturation);
 
@@ -247,6 +254,8 @@ export class Engine {
   vignette = 0.5;
   saturation = 1.06;
   aberration = 0.0018;
+  /** Pedestal subtracted after tone mapping so empty space is truly black. */
+  blackPoint = 0.014;
 
   private hdr!: THREE.WebGLRenderTarget;
   private mips: THREE.WebGLRenderTarget[] = [];
@@ -297,6 +306,7 @@ export class Engine {
       uVignette: { value: 0.5 }, uTime: { value: 0 },
       uResolution: { value: new THREE.Vector2() },
       uSaturation: { value: 1 }, uAberration: { value: 0 },
+      uBlackPoint: { value: 0.014 },
     });
   }
 
@@ -383,6 +393,7 @@ export class Engine {
     cu.uVignette.value = this.vignette;
     cu.uSaturation.value = this.saturation;
     cu.uAberration.value = this.aberration;
+    cu.uBlackPoint.value = this.blackPoint;
     cu.uTime.value = this.clock;
     (cu.uResolution.value as THREE.Vector2).set(this.width, this.height);
     r.setRenderTarget(null);

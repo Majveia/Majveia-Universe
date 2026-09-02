@@ -75,6 +75,9 @@ export interface CosmicWebField {
 export interface Knot {
   /** Eulerian comoving position today, Mpc. */
   x: number; y: number; z: number;
+  /** Lagrangian position and displacement, so the knot can be tracked to any epoch. */
+  qx: number; qy: number; qz: number;
+  px: number; py: number; pz: number;
   /** Peak height nu = delta_linear / sigma. Sets the halo mass function. */
   nu: number;
   /** Estimated halo mass, solar masses (Press-Schechter style scaling). */
@@ -455,7 +458,12 @@ function findKnots(
     // Mass from the Lagrangian volume of the exclusion sphere
     const massMsun = ((4 / 3) * Math.PI * Math.pow(exclusion, 3)) * rhoBar *
       Math.max(0.4, 1 + delta);
-    out.push({ x, y, z, nu, massMsun, zCollapse });
+    out.push({
+      x, y, z,
+      qx: q[p], qy: q[p + 1], qz: q[p + 2],
+      px: psi[p], py: psi[p + 1], pz: psi[p + 2],
+      nu, massMsun, zCollapse,
+    });
     const key = keyOf(x, y, z);
     const arr = buckets.get(key);
     if (arr) arr.push(out.length - 1); else buckets.set(key, [out.length - 1]);

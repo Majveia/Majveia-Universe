@@ -123,6 +123,47 @@ if (params.get('mode') === 'system') {
   (window as unknown as Record<string, unknown>).labSystem = sv;
 }
 
+// --- Optional subsystem: a black hole.
+if (params.get('mode') === 'blackhole') {
+  const { BlackHoleView } = await import('./render/blackhole');
+  engine.scene.remove(view.group);
+  const M = 1;
+  const bh = new BlackHoleView({
+    massMsun: Number(params.get('mass') ?? 4.3e6),
+    gravitationalRadius: M,
+    diskInner: Number(params.get('rin') ?? 6),
+    diskOuter: Number(params.get('rout') ?? 24),
+    temperature: Number(params.get('temp') ?? 11000),
+    steps: Number(params.get('steps') ?? 240),
+    diskBrightness: Number(params.get('disk') ?? 0.42),
+    skyBrightness: Number(params.get('skyb') ?? 1.0),
+  });
+  engine.scene.add(bh.mesh);
+  bh.setDiskNormal(new THREE.Vector3(0, 1, 0));
+  // Near-edge-on: the view that shows the disc bent up over the top of the hole.
+  controls.snapTo(new THREE.Vector3(), Number(params.get('d') ?? 42),
+    Number(params.get('theta') ?? 0.0), Number(params.get('phi') ?? 1.40));
+  controls.minDistance = 4;
+  controls.maxDistance = 400;
+  engine.camera.near = 0.5;
+  engine.camera.far = 1e5;
+  engine.camera.updateProjectionMatrix();
+  let t = 0;
+  const step = () => {
+    requestAnimationFrame(step);
+    t += 0.016 * Number(params.get('rate') ?? 1);
+    bh.update(engine.camera.position, t);
+  };
+  requestAnimationFrame(step);
+  Object.assign((window as unknown as Record<string, Record<string, unknown>>).lab, {
+    bh,
+    setDisk: (v: number) => bh.setDiskBrightness(v),
+    setTemp: (v: number) => bh.setTemperature(v),
+    setSky: (v: number) => bh.setSkyBrightness(v),
+    setSteps: (v: number) => bh.setSteps(v),
+  });
+}
+
 // --- Optional subsystem: one planet, close up.
 if (params.get('mode') === 'planet') {
   const { makeStar } = await import('./astro/stellar');
