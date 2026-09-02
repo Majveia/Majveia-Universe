@@ -511,12 +511,19 @@ export class ClusterStage extends Stage {
       })), 0.03);
       if (idx === null) return null;
     } else {
+      // Without a pointer, fall toward something worth arriving at. The most
+      // massive galaxy in a cluster is almost always a red, gasless elliptical
+      // - correct, and the least interesting place to be dropped - so star
+      // formation and spiral structure count for as much as mass here. Click
+      // any galaxy directly to override this.
       const cam = this.env.engine.camera.position;
       let best = 0, bestScore = -Infinity;
       for (let i = 0; i < this.positions.length; i++) {
         const g = this.env.universe.galaxy(ci, i);
         const d = this.positions[i].distanceTo(cam);
-        const s = Math.log10(g.stellarMassMsun) - Math.log10(d + 0.01) * 1.5;
+        const spiral = g.arms > 0 ? 1.4 : 0;
+        const s = Math.log10(g.stellarMassMsun) + spiral + Math.log10(1 + g.sfrMsunYr)
+          - Math.log10(d + 0.01) * 1.4;
         if (s > bestScore) { bestScore = s; best = i; }
       }
       idx = best;
