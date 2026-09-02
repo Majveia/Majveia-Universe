@@ -76,6 +76,8 @@ export class App {
   private stack: { id: ScaleId; ctx: StageCtx; label: string }[] = [];
   private readout: Rows;
   private readoutKeys = '';
+  private overlayHost!: HTMLDivElement;
+  private mountedOverlay: HTMLElement | null = null;
   private timeline: Timeline;
   private inspector: HTMLDivElement;
   private inspectorBody: HTMLDivElement;
@@ -217,8 +219,10 @@ export class App {
       'letter-spacing:.22em;text-transform:uppercase;color:rgba(232,184,122,.92);opacity:0;' +
       'transition:opacity 300ms;pointer-events:none;text-align:center';
 
+    // Where a stage can mount an instrument of its own - a strain trace, say.
+    this.overlayHost = el('div');
     this.uiRoot.append(masthead, this.readout.el, this.timeline.el, this.warpEl,
-      this.ladder, this.inspector, hint, rail, this.flashEl);
+      this.ladder, this.inspector, hint, rail, this.overlayHost, this.flashEl);
     document.body.append(this.helpEl);
 
     this.bindEvents();
@@ -536,6 +540,19 @@ export class App {
           }
           break;
         }
+        case 'KeyG': {
+          const st = this.stage as unknown as { toggleMerger?: () => boolean };
+          if (st.toggleMerger) {
+            const on = st.toggleMerger();
+            this.flash(on
+              ? 'two black holes, eleven seconds from merging'
+              : 'back to the galaxy');
+            if (on && !this.playing) this.togglePlay();
+          } else {
+            this.flash('mergers are watched from the galactic scale');
+          }
+          break;
+        }
         case 'KeyO': {
           // The one system in here that is not generated. Every number in it is
           // measured, which makes it the check on all the others.
@@ -781,6 +798,12 @@ export class App {
       // to be rebuilt when it changes, not only when the scale does.
       const keys = rows.map((r) => r.k).join('\u0000');
       if (keys !== this.readoutKeys) this.rebuildReadout();
+      const ov = this.stage.overlay();
+      if (ov !== this.mountedOverlay) {
+        this.overlayHost.innerHTML = '';
+        if (ov) this.overlayHost.append(ov);
+        this.mountedOverlay = ov;
+      }
       for (const r of rows) this.readout.set(r.k, r.v, r.u);
       this.readout.set('__fps', this.fps.toFixed(0), 'fps');
     }
@@ -830,6 +853,7 @@ const HELP_HTML = `
       <dt>L</dt><dd>observe a cluster as a deep field</dd>
       <dt>K</dt><dd>show lensing critical curves</dd>
       <dt>M</dt><dd>collide this galaxy with another</dd>
+      <dt>G</dt><dd>merge two black holes</dd>
       <dt>C</dt><dd>change the cosmology</dd>
       <dt>U</dt><dd>hide the interface</dd>
       <dt>F</dt><dd>fullscreen</dd>

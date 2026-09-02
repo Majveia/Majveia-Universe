@@ -26,6 +26,12 @@ import {
 import { peculiarVelocityFactor } from '../cosmology/zeldovich';
 import { CosmicWebRenderer } from '../render/cosmicweb';
 import { CmbView } from '../render/cmbview';
+import { MergerView } from '../render/mergerview';
+import { StrainTrace } from '../ui/strain';
+import {
+  chirpMass, finalMass, finalSpin, radiatedFraction, peakLuminosity,
+  PLANCK_LUMINOSITY,
+} from '../physics/gwaves';
 import { peakMultipoles } from '../cosmology/cmb';
 import { GalaxySprites, type GalaxySpriteData } from '../render/galaxysprites';
 import { GalaxyView } from '../render/galaxyview';
@@ -133,6 +139,11 @@ export abstract class Stage {
    * ignore it, because there is nothing at infinity for them to aberrate.
    */
   setBoost(_beta: number, _dir: THREE.Vector3): void {}
+  /**
+   * An element the stage wants mounted over the scene while it is running -
+   * an instrument trace, rather than a row of numbers. Null for most stages.
+   */
+  overlay(): HTMLElement | null { return null; }
   onResize(): void {}
   dispose(): void {
     this.root.traverse((o) => {
@@ -733,6 +744,11 @@ export class GalaxyStage extends Stage {
   private encounter?: Encounter;
   private encounterCloud?: PointCloud;
   private encounterSteps = 0;
+  private merger?: MergerView;
+  private strain?: StrainTrace;
+  /** Time relative to coalescence while the merger runs, seconds. */
+  private mergerT = 0;
+  private baseTimeScale = 1;
 
   // --- Live supernovae.
   //
@@ -764,6 +780,7 @@ export class GalaxyStage extends Stage {
       `${g.arms ? `${g.arms} arms at ${(g.pitch * 180 / Math.PI).toFixed(0)}° pitch · ` : ''}` +
       `v(max) ${Math.round(g.vMaxKms)} km/s`;
     this.timeScale = 12; // Myr per second
+    this.baseTimeScale = 12;
 
     const q = this.env.quality();
     const buffers = buildGalaxy(g, { count: Math.round(520000 * q) });
@@ -934,7 +951,75 @@ export class GalaxyStage extends Stage {
     this.view.setViewport(this.env.viewport()[1], this.env.engine.camera.fov);
   }
 
+  /**
+   * Replace the galaxy with a binary black hole merging.
+   *
+   * It is a forty-order-of-magnitude jump out of the scale this stage normally
+   * works at - a galaxy is 10^21 m across and these two horizons are 10^5 - but
+   * it is the same stage's business: this is where the galaxy's black holes
+   * came from and where its next one will come from. The clock changes too. A
+   * galaxy runs at twelve million years a second; the whole of this takes
+   * eleven.
+   */
+  toggleMerger(): boolean {
+    if (this.merger) {
+      this.root.remove(this.merger.group);
+      this.merger.dispose();
+      this.merger = undefined;
+      this.strain = undefined;
+      this.showGalaxy(true);
+      this.timeScale = this.baseTimeScale;
+      const c = this.env.controls;
+      c.snapTo(new THREE.Vector3(), this.params.radiusKpc * 2.4, 0.45, 0.78);
+      c.minDistance = 1e-7;
+      c.maxDistance = this.params.radiusKpc * 40;
+      const cam = this.env.engine.camera;
+      cam.near = 1e-5; cam.far = this.params.radiusKpc * 400;
+      cam.updateProjectionMatrix();
+      return false;
+    }
+    // Masses drawn from the seed, in the range LIGO actually sees.
+    const rng = new RNG(this.params.seed ^ 0x9a7e);
+    const m1 = rng.range(14, 42);
+    const m2 = m1 * rng.range(0.55, 1);
+    this.merger = new MergerView({ m1, m2, startSeparation: 26, fieldRadius: 300 });
+    this.mergerT = -this.merger.inspiralS;
+    this.strain = new StrainTrace({ binary: this.merger.binary });
+    this.root.add(this.merger.group);
+    this.showGalaxy(false);
+    this.timeScale = 1;   // one second per second: the chirp in real time
+    const c = this.env.controls;
+    c.snapTo(new THREE.Vector3(), 520, 0.4, 0.40);
+    c.minDistance = 8;
+    c.maxDistance = 4000;
+    const cam = this.env.engine.camera;
+    cam.near = 0.5; cam.far = 20000;
+    cam.updateProjectionMatrix();
+    return true;
+  }
+
+  private showGalaxy(on: boolean): void {
+    this.view.group.visible = on;
+    this.catalogPoints.visible = on;
+    for (const n of this.nebulae) n.mesh.visible = on;
+    if (this.bh) this.bh.mesh.visible = on;
+    if (this.snCloud) this.snCloud.points.visible = on;
+  }
+
+  override overlay(): HTMLElement | null { return this.strain?.el ?? null; }
+
   update(dt: number): void {
+    if (this.merger) {
+      // timeScale is set to zero by the app while paused and multiplied by the
+      // time warp, so reading it back is how the merger inherits both.
+      this.mergerT += dt * this.timeScale;
+      // Hold on the remnant for a moment, then run it again.
+      if (this.mergerT > 0.45) this.mergerT = -this.merger.inspiralS;
+      this.merger.update(this.mergerT, this.env.engine.camera);
+      this.strain?.update(this.mergerT);
+      this.sky.mesh.position.copy(this.env.engine.camera.position);
+      return;
+    }
     if (this.encounter && this.encounterCloud) {
       this.simTime += dt * this.timeScale;
       // Advance in whole steps, capped so a large time warp costs frame rate
@@ -1049,6 +1134,7 @@ export class GalaxyStage extends Stage {
     const g = this.params;
     const rSun = 2.2 * g.discScaleKpc;
     const [dv, du] = formatDistance(this.env.controls.distance * 3.0857e19);
+    if (this.merger) return this.mergerRows(this.merger);
     if (this.encounter) {
       const e = this.encounter;
       const since = Number.isFinite(e.pericentreTime) ? e.time - e.pericentreTime : NaN;
@@ -1084,7 +1170,34 @@ export class GalaxyStage extends Stage {
     this.sky.setBoost(beta, dir);
   }
 
+  private mergerRows(m: MergerView): Row[] {
+    const b = m.binary;
+    const st = m.state;
+    const mf = finalMass(b.m1, b.m2);
+    const spin = finalSpin(b.m1, b.m2);
+    const rad = radiatedFraction(b.m1, b.m2) * (b.m1 + b.m2);
+    const before = st.stage === 'inspiral';
+    return [
+      { k: 'binary', v: `${b.m1.toFixed(1)} + ${b.m2.toFixed(1)} M☉`, accent: true },
+      { k: 'chirp mass', v: chirpMass(b.m1, b.m2).toFixed(1), u: 'M☉' },
+      { k: 'separation', v: before
+        ? `${(st.separationM / 1e3).toFixed(0)} km · ${(st.separationM / m.rgM).toFixed(1)} GM/c²`
+        : 'merged' },
+      { k: 'wave frequency', v: st.freqHz.toFixed(st.freqHz < 100 ? 1 : 0), u: 'Hz' },
+      { k: 'strain at 410 Mpc', v: st.strain.toExponential(2) },
+      { k: 'to coalescence', v: before ? `${(-st.t).toFixed(3)} s` : st.stage },
+      { k: 'remnant', v: `${mf.toFixed(1)} M☉ · a = ${spin.toFixed(3)}` },
+      { k: 'radiated', v: `${rad.toFixed(2)} M☉ as gravity` },
+      { k: 'ringdown', v: `${m.ringdownMode.freqHz.toFixed(0)} Hz · ${(m.ringdownMode.tauS * 1e3).toFixed(1)} ms` },
+      { k: 'peak power', v: `${(peakLuminosity(b.m1, b.m2) / PLANCK_LUMINOSITY * 100).toFixed(2)}% of c⁵/G` },
+      { k: 'field of view', v: `${(this.env.controls.distance * m.rgM / 1e3).toFixed(0)} km` },
+    ];
+  }
+
   scaleLabel(): string {
+    if (this.merger) {
+      return `${(this.env.controls.distance * this.merger.rgM / 1e3).toFixed(0)} km`;
+    }
     const [v, u] = formatDistance(this.env.controls.distance * 3.0857e19);
     return `${v} ${u}`;
   }

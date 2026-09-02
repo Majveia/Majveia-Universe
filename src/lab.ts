@@ -282,6 +282,43 @@ if (params.get('mode') === 'nebula') {
   });
 }
 
+// --- Optional subsystem: two black holes and the waves they make.
+if (params.get('mode') === 'merger') {
+  const { MergerView } = await import('./render/mergerview');
+  engine.scene.remove(view.group);
+  const mv = new MergerView({
+    m1: Number(params.get('m1') ?? 36),
+    m2: Number(params.get('m2') ?? 29),
+    startSeparation: Number(params.get('a0') ?? 26),
+    fieldRadius: Number(params.get('fr') ?? 300),
+  });
+  engine.scene.add(mv.group);
+  controls.snapTo(new THREE.Vector3(), Number(params.get('d') ?? 430),
+    Number(params.get('theta') ?? 0.4), Number(params.get('phi') ?? 0.42));
+  controls.minDistance = 8;
+  controls.maxDistance = 4000;
+  engine.camera.near = 0.5;
+  engine.camera.far = 20000;
+  engine.camera.updateProjectionMatrix();
+  // eslint-disable-next-line no-console
+  console.info('[lab:merger]', `rg=${(mv.rgM / 1e3).toFixed(1)}km`,
+    `inspiral=${mv.inspiralS.toFixed(3)}s`,
+    `ringdown=${mv.ringdownMode.freqHz.toFixed(0)}Hz`);
+  let t = params.has('t') ? Number(params.get('t')) : -mv.inspiralS;
+  const rate = Number(params.get('rate') ?? 1);
+  const frozen = params.has('t');
+  const step = () => {
+    requestAnimationFrame(step);
+    if (!frozen) {
+      t += 0.016 * rate;
+      if (t > 0.6) t = -mv.inspiralS;
+    }
+    mv.update(t, engine.camera);
+  };
+  requestAnimationFrame(step);
+  (window as unknown as Record<string, unknown>).labMerger = mv;
+}
+
 // --- Optional subsystem: one planet, close up.
 if (params.get('mode') === 'planet') {
   const { makeStar } = await import('./astro/stellar');
