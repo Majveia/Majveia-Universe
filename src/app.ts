@@ -541,6 +541,17 @@ export class App {
           }
           break;
         }
+        case 'KeyD': {
+          const st = this.stage as unknown as { toggleHR?: () => boolean };
+          if (st.toggleHR) {
+            this.flash(st.toggleHR()
+              ? 'Hertzsprung-Russell: this galaxy\u2019s own stars'
+              : 'diagram closed');
+          } else {
+            this.flash('the diagram is drawn from a galaxy\u2019s stars');
+          }
+          break;
+        }
         case 'KeyG': {
           const st = this.stage as unknown as { toggleMerger?: () => boolean };
           if (st.toggleMerger) {
@@ -863,6 +874,7 @@ const HELP_HTML = `
       <dt>K</dt><dd>show lensing critical curves</dd>
       <dt>M</dt><dd>collide this galaxy with another</dd>
       <dt>G</dt><dd>merge two black holes</dd>
+      <dt>D</dt><dd>Hertzsprung-Russell diagram</dd>
       <dt>C</dt><dd>change the cosmology</dd>
       <dt>U</dt><dd>hide the interface</dd>
       <dt>F</dt><dd>fullscreen</dd>

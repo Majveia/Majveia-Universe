@@ -28,6 +28,7 @@ import { CosmicWebRenderer } from '../render/cosmicweb';
 import { CmbView } from '../render/cmbview';
 import { MergerView } from '../render/mergerview';
 import { StrainTrace } from '../ui/strain';
+import { HRDiagram } from '../ui/hrdiagram';
 import {
   chirpMass, finalMass, finalSpin, radiatedFraction, peakLuminosity,
   PLANCK_LUMINOSITY,
@@ -57,7 +58,7 @@ import {
   lightCurve, magnitudeToLuminosity, supernovaColor, coreCollapseRate, typeIaRate,
   type SupernovaType,
 } from '../astro/supernova';
-import { starLabel, type Star } from '../astro/stellar';
+import { starLabel, makeStar, msLifetimeGyr, type Star } from '../astro/stellar';
 import { CLASS_LABEL, type Planet, type PlanetarySystem } from '../astro/planets';
 import { solarSystem } from '../astro/solsystem';
 import { detectability } from '../astro/detection';
@@ -750,6 +751,7 @@ export class GalaxyStage extends Stage {
   private encounterSteps = 0;
   private merger?: MergerView;
   private strain?: StrainTrace;
+  private hr?: HRDiagram;
   /** Time relative to coalescence while the merger runs, seconds. */
   private mergerT = 0;
   private baseTimeScale = 1;
@@ -1010,7 +1012,67 @@ export class GalaxyStage extends Stage {
     if (this.snCloud) this.snCloud.points.visible = on;
   }
 
-  override overlay(): HTMLElement | null { return this.strain?.el ?? null; }
+  override overlay(): HTMLElement | null {
+    if (this.strain) return this.strain.el;
+    if (this.hr) { this.hr.draw(); return this.hr.el; }
+    return null;
+  }
+
+  /**
+   * Plot this galaxy's own stars on a Hertzsprung-Russell diagram.
+   *
+   * The sample is drawn from the same generator the catalogue uses - the
+   * galaxy's initial mass function, its age, its metallicity gradient - so the
+   * main sequence, the turnoff, the giant branch and the white dwarfs are not
+   * drawn on: they appear because the population puts them there. A young
+   * spiral and an old elliptical give visibly different diagrams, and the
+   * turnoff is where the age is written.
+   */
+  toggleHR(): boolean {
+    if (this.hr) { this.hr = undefined; return false; }
+    const g = this.params;
+    const n = this.env.quality() > 0.6 ? 2600 : 1500;
+    const rng = new RNG(g.seed ^ 0x48522);
+    const stars: Star[] = [];
+    const weights: number[] = [];
+    // Kroupa's slopes, used here as the weight rather than as the sampler: the
+    // draw is flat in log mass so the whole sequence is populated, and how
+    // common each kind is comes through as opacity instead.
+    const kroupa = (m: number): number => (m < 0.5
+      ? Math.pow(m / 0.08, -1.3)
+      : Math.pow(0.5 / 0.08, -1.3) * Math.pow(m / 0.5, -2.3));
+    const wHi = Math.log10(kroupa(0.08)), wLo = Math.log10(kroupa(60));
+    for (let i = 0; i < n; i++) {
+      const m = 0.08 * Math.pow(60 / 0.08, rng.next());
+      // Two thirds of the draws are of stars that are still alive now, and one
+      // third from the whole history - a mixture, because a uniform age draw
+      // finds an O star alive one time in a thousand and the upper main
+      // sequence comes out empty, while drawing only living stars loses every
+      // white dwarf. The survival probability goes back into the weight, so
+      // what the mixture buys is coverage and not a false abundance.
+      const alive = rng.chance(0.66);
+      const window = alive
+        ? Math.min(g.ageGyr, 1.12 * msLifetimeGyr(m))
+        : g.ageGyr;
+      const ageGyr = rng.range(0.001, Math.max(window, 0.002));
+      const rKpc = -g.discScaleKpc * Math.log(1 - rng.next() * 0.985);
+      const metal = g.metallicity - 0.35 * (rKpc / Math.max(g.radiusKpc, 1e-3))
+        + rng.normal(0, 0.12);
+      stars.push(makeStar(m, ageGyr, metal));
+      const survival = alive ? Math.min(1, window / Math.max(g.ageGyr, 1e-6)) : 1;
+      const wlog = Math.log10(Math.max(kroupa(m) * survival, 1e-12));
+      weights.push(Math.min(1, Math.max(0, (wlog - wLo) / Math.max(wHi - wLo, 1e-6))));
+    }
+    this.hr = new HRDiagram({
+      title: `${g.type} · ${g.ageGyr.toFixed(1)} Gyr · `
+        + `[Fe/H] ${g.metallicity >= 0 ? '+' : ''}${g.metallicity.toFixed(2)}`,
+    });
+    this.hr.setPopulation(stars, weights);
+    return true;
+  }
+
+  /** Ring the star being inspected on the diagram, if it is open. */
+  markOnHR(s: Star | null): void { this.hr?.mark(s); }
 
   update(dt: number): void {
     if (this.merger) {
@@ -1216,6 +1278,7 @@ export class GalaxyStage extends Stage {
     const st = s.star;
     const sys = u.system(this.params, i);
     const habitables = sys.system.planets.filter((p) => p.habitable).length;
+    this.markOnHR(st);
     return {
       title: s.name,
       kind: starLabel(st),
