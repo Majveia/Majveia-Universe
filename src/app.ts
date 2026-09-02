@@ -249,33 +249,67 @@ export class App {
     return mem >= 4 && cores >= 4 ? 128 : 64;
   }
 
+  /**
+   * Build the universe, off the main thread when that is allowed.
+   *
+   * Some embeddings block blob-URL workers outright, and a blocked worker fails
+   * silently: it constructs, it accepts a message, and nothing ever comes back.
+   * So the worker gets a few seconds to say something, and if it does not, the
+   * job moves to the main thread at a resolution that will not freeze the tab.
+   */
   private generateField(n: number, boxMpc: number): Promise<CosmicWebField> {
+    const seed = hashString(this.seedText);
+    const opts = { boxMpc, seed, cosmology: PLANCK18, smoothCells: 1.1 };
+
+    const onMainThread = (size: number): Promise<CosmicWebField> =>
+      import('./cosmology/zeldovich').then(({ generateCosmicWeb }) => {
+        this.bootLabel.textContent = 'building on the main thread';
+        return generateCosmicWeb({ ...opts, n: size });
+      });
+
     return new Promise((resolve, reject) => {
-      const seed = hashString(this.seedText);
       let worker: Worker;
       try {
         worker = new CosmicWebWorker();
       } catch {
-        // No worker available (rare): fall back to the main thread.
-        import('./cosmology/zeldovich').then(({ generateCosmicWeb }) => {
-          resolve(generateCosmicWeb({ n, boxMpc, seed, cosmology: PLANCK18, smoothCells: 1.1 }));
-        }).catch(reject);
+        onMainThread(Math.min(n, 64)).then(resolve, reject);
         return;
       }
+      let alive = false;
+      let settled = false;
+      const giveUp = window.setTimeout(() => {
+        if (alive || settled) return;
+        settled = true;
+        try { worker.terminate(); } catch { /* already gone */ }
+        onMainThread(Math.min(n, 64)).then(resolve, reject);
+      }, 4000);
+
+      worker.onerror = () => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(giveUp);
+        try { worker.terminate(); } catch { /* already gone */ }
+        onMainThread(Math.min(n, 64)).then(resolve, reject);
+      };
       worker.onmessage = (ev: MessageEvent) => {
         const m = ev.data;
         if (m.type === 'progress') {
+          alive = true;
           this.bootBar.style.width = `${(m.fraction * 100).toFixed(1)}%`;
           this.bootLabel.textContent = m.label;
         } else if (m.type === 'done') {
+          settled = true;
+          window.clearTimeout(giveUp);
           worker.terminate();
           resolve(m.field as CosmicWebField);
         } else if (m.type === 'error') {
+          settled = true;
+          window.clearTimeout(giveUp);
           this.bootLabel.textContent = `generation failed: ${m.message}`;
           reject(new Error(m.message));
         }
       };
-      worker.postMessage({ n, boxMpc, seed, cosmology: PLANCK18, smoothCells: 1.1 });
+      worker.postMessage({ ...opts, n });
     });
   }
 

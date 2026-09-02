@@ -502,7 +502,11 @@ export function buildGalaxy(p: GalaxyParams, opts: BuildOptions = {}): GalaxyBuf
   const vc = rotationCurve(p, rSun);
   // Enclosed mass implied by the rotation curve versus the stellar mass inside:
   // the gap is the dark matter, and for a normal disc galaxy it is most of it.
-  const dynamicalMass = (vc * vc * rSun * 1e3 * 3.0857e19) / 6.6743e-11 / 1.989e30;
+  // M(<r) = v^2 r / G, in SI, expressed in solar masses.
+  // v is in km/s and r in kpc, so both need converting before they are used.
+  const vSI = vc * 1e3;
+  const rSI = rSun * 3.0857e19;
+  const dynamicalMass = (vSI * vSI * rSI) / 6.6743e-11 / 1.989e30;
   const stellarInside = p.stellarMassMsun * (1 - Math.exp(-rSun / p.discScaleKpc) * (1 + rSun / p.discScaleKpc));
 
   return {

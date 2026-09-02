@@ -66,6 +66,7 @@ export class Universe {
   private clusterCache = new Map<number, Cluster>();
   private galaxyCache = new Map<string, GalaxyParams>();
   private systemCache = new Map<string, PlanetarySystem>();
+  private starCache = new Map<string, { star: Star; name: string; radiusKpc: number; seed: number }>();
 
   constructor(seedText: string, readonly field: CosmicWebField) {
     this.seedText = seedText;
@@ -157,6 +158,9 @@ export class Universe {
    * IMF truncated at the turn-off, so the population is self-consistent.
    */
   star(galaxy: GalaxyParams, index: number): { star: Star; name: string; radiusKpc: number; seed: number } {
+    const key = `${galaxy.seed}:${index}`;
+    const cached = this.starCache.get(key);
+    if (cached) return cached;
     const seed = hash3(index, galaxy.seed, 0x57a2, this.seed);
     const rng = new RNG(seed);
     // Exponential disc for spirals, de Vaucouleurs-ish for ellipticals
@@ -171,7 +175,9 @@ export class Universe {
     const st = makeStar(m, ageGyr, metal);
     const greek = GREEK[index % GREEK.length];
     const name = `${greek} ${syllables(rng)}`;
-    return { star: st, name, radiusKpc: rKpc, seed };
+    const out = { star: st, name, radiusKpc: rKpc, seed };
+    this.starCache.set(key, out);
+    return out;
   }
 
   /** The planetary system of a star. */
