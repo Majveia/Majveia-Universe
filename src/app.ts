@@ -20,6 +20,7 @@ import { Timeline } from './ui/timeline';
 import { Rows, el, sig, commas } from './ui/hud';
 import { saveBlob } from './ui/save';
 import { spectrumCanvas } from './ui/spectrum';
+import { detectionCanvas } from './ui/detection';
 import { PLANCK18, PRESET_COSMOLOGIES, Cosmology, growthFactor } from './cosmology/lcdm';
 import type { CosmicWebField } from './cosmology/zeldovich';
 import { hashString } from './core/rng';
@@ -656,6 +657,14 @@ export class App {
         + 'that survive at it. Line strength measures excitation, not abundance '
         + '— hydrogen is the commonest element in every star, and its lines are '
         + 'strongest only near 9500 K.'));
+    }
+    if (info.detection) {
+      this.inspectorBody.append(detectionCanvas(info.detection));
+      this.inspectorBody.append(el('div', 'note',
+        'The whole of what could be measured about it from another star: the '
+        + 'bite it takes out of the light if the orbit is edge-on, and how fast '
+        + 'it pulls its star toward and away from us. One gives the radius, the '
+        + 'other the mass, and only a planet with both has a density.'));
     }
     if (info.note) this.inspectorBody.append(el('div', 'note', info.note));
     const go = this.stage.child(ndc);

@@ -60,6 +60,8 @@ import {
 import { starLabel, type Star } from '../astro/stellar';
 import { CLASS_LABEL, type Planet, type PlanetarySystem } from '../astro/planets';
 import { solarSystem } from '../astro/solsystem';
+import { detectability } from '../astro/detection';
+import type { DetectionPlotOptions } from '../ui/detection';
 import { blackbodyRGB } from '../astro/blackbody';
 import { RNG, hash3 } from '../core/rng';
 import { AU, GYR, MPC, M_EARTH, M_JUPITER, MYR, R_EARTH, R_SUN, YEAR, DAY, G, M_SUN } from '../core/constants';
@@ -109,6 +111,8 @@ export interface Inspection {
   swatch?: string;
   /** Draw this star's spectrum under the rows. */
   spectrum?: { tempK: number; metallicity?: number; vsini?: number };
+  /** Draw the transit and radial-velocity curves this planet would produce. */
+  detection?: DetectionPlotOptions;
 }
 
 export abstract class Stage {
@@ -1445,7 +1449,7 @@ export class SystemStage extends Stage {
     if (i === -2 && sys.companion) {
       return this.describeStar(sys.companion.star, `${this.starName} B`);
     }
-    return describePlanet(this.view.slots[i].planet, this.starName);
+    return describePlanet(this.view.slots[i].planet, this.starName, sys.star);
   }
 
   private describeStar(st: Star, name: string): Inspection {
@@ -1735,7 +1739,10 @@ export class WorldStage extends Stage {
   }
 
   override inspect(): Inspection | null {
-    return describePlanet(this.planet, this.title);
+    const u = this.env.universe;
+    const g = u.galaxy(this.ctx.cluster ?? 0, this.ctx.member ?? 0);
+    const sys = this.ctx.real ? solarSystem() : u.system(g, this.ctx.star ?? 0).system;
+    return describePlanet(this.planet, this.title, sys.star);
   }
 
   child(): Target | null { return null; }
@@ -1747,7 +1754,7 @@ export class WorldStage extends Stage {
 
 // ---------------------------------------------------------------------------
 
-export function describePlanet(p: Planet, _system: string): Inspection {
+export function describePlanet(p: Planet, _system: string, star?: Star): Inspection {
   const rows: Row[] = [
     { k: 'orbit', v: p.au.toFixed(3), u: 'AU' },
     { k: 'period', v: formatTime(p.periodS).join(' ') },
@@ -1777,12 +1784,28 @@ export function describePlanet(p: Planet, _system: string): Inspection {
     note = 'A hydrogen envelope thick enough that there is no surface to stand on.';
   }
 
+  // What could actually be measured about it, from four light years away.
+  let detection: DetectionPlotOptions | undefined;
+  if (star) {
+    const rs = star.radiusRsun * R_SUN;
+    const ms = star.currentMassMsun * M_SUN;
+    const d = detectability(p.radiusM, p.massKg, p.elements.a, rs, ms);
+    rows.push({ k: 'found by', v: d.method });
+    detection = {
+      planetRadiusM: p.radiusM, planetMassKg: p.massKg,
+      starRadiusM: rs, starMassKg: ms,
+      aM: p.elements.a, periodS: p.periodS, e: p.elements.e,
+      rvAmplitude: d.rvAmplitude, depthPpm: d.depthPpm, probability: d.probability,
+    };
+  }
+
   return {
     title: p.name,
     kind: CLASS_LABEL[p.cls],
     swatch: `rgb(${p.color.map((c) => Math.round(Math.min(1, c) * 255)).join(',')})`,
     rows,
     note,
+    detection,
   };
 }
 
