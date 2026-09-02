@@ -231,6 +231,48 @@ mass. Interpolating in log to the tip the models predict — 2600 L☉ and 170 R
 puts the Sun's surface at `5772·(L/R²)^¼ = 3160 K`, which is the observed tip
 temperature, and its photosphere at 0.79 AU: past Mercury and Venus.
 
+### What the Sun leaves behind
+
+The run does not stop at the giant branch. At the tip, a star between about one
+and eight solar masses loses its envelope, and everything that follows is
+downstream of one number — the mass of the core the initial-final mass relation
+leaves. For the Sun that is 0.53 M☉: half the star goes back to the galaxy.
+
+The core mass sets its temperature, from the post-AGB tracks (100 kK at 0.57
+M☉, climbing steeply because a heavier white dwarf is a smaller one); its
+luminosity, from Paczyński's core-mass-luminosity relation, which holds because
+a shell-burning star's output is fixed by the gravity at the burning shell and
+the envelope above it has no say — which is exactly why it can lose the
+envelope and not dim. It sets how long the core takes to contract far enough to
+ionise anything, which is a few hundred years for a heavy core and ten thousand
+for a light one, and is the reason the nebulae around the lightest cores are
+the faint ones. It sets the interval between the star's thermal pulses, frozen
+into the departing gas as concentric arcs — the only measurement of that
+interval that exists outside a stellar evolution code. And it sets how deep the
+doubly-ionised zone reaches, which is a thermometer: NGC 6543 at 80 kK is teal,
+IC 418 at 39 kK is orange all the way in, and the boundary between them is not
+a palette.
+
+Nothing draws a ring. The shader marches through a spherical density field and
+integrates `n²`, and the ring is what comes out, because a sightline grazing the
+shell's inner cavity runs through several times as much gas as one aimed at the
+middle. The shape is a torus with polar lobes because the fast wind cannot get
+through the waist — a genuinely round planetary nebula is the rarity — and the
+two phases invert: while the core is still contracting, the same torus is
+opaque dust and the object is two pale gold lobes with a dark lane across them,
+which is what the Egg and the Boomerang are. It becomes teal-cored and
+red-rimmed at the moment the ultraviolet switches on.
+
+The clock has to stretch, and says so. The envelope crosses Neptune's orbit in
+five years and nine months; the nebula takes twenty-two thousand years to
+brighten and fade. Those are four orders of magnitude apart and no single rate
+shows both, so the sequence runs in three labelled beats — the sweep past the
+planets, the dark drift while the core contracts, the nebula — with the readout
+naming the current rate in years per second and the camera pulling back from
+the orrery to four light-years without a cut. The HR track finishes the story:
+up the giant branch, then hard left across the top of the diagram, which is the
+fastest thing a star ever does on it.
+
 ### The Hertzsprung-Russell diagram
 
 **D** plots the galaxy you are in. Stars do not fill the diagram — they lie on a
@@ -460,7 +502,7 @@ looking at the output:
 | G | merge two black holes |
 | D | Hertzsprung-Russell diagram |
 | N | hear the merger |
-| Y | run the star's whole life |
+| Y | run the star's whole life, to the nebula |
 | O | go to the Solar System |
 | T | true scale in a system |
 | U | hide the interface |
@@ -499,7 +541,7 @@ same planets - which is why a URL is enough to share a world.
 ```
 
 `lab.html` renders one subsystem at a time against a black background for
-tuning: `?mode=system|planet|nebula|blackhole`, plus every look parameter as a
+tuning: `?mode=system|planet|nebula|pn|blackhole|merger|encounter`, plus every look parameter as a
 query argument. It is not part of the experience; it is how the experience got
 tuned.
 
@@ -512,12 +554,12 @@ src/
   physics/      Kepler solvers, orbital elements, relativity, N-body,
                 lensing, eclipses, magnetospheres
   astro/        blackbody colour, stellar evolution, planet formation,
-                spectra, supernovae, binaries, comets
+                spectra, supernovae, planetary nebulae, binaries, comets
   galaxy/       kinematic density waves, population synthesis
   render/       the HDR engine and every shader
   sim/          the universe object graph and the scale ladder
   ui/           the interface
-tests/          330 tests against published measurements
+tests/          353 tests against published measurements
 ```
 
 ## Accuracy
@@ -532,8 +574,9 @@ Jupiter moving the Sun at 12.5 m/s and the Earth at 9 cm/s, the Sun and Moon
 coming out the same apparent size (which is why eclipses happen at all),
 Earth's magnetopause at
 ten radii and its auroral oval 19° from the pole, the solar CMB dipole at
-3.36 mK, the acoustic peaks at ℓ = 216, 504, 792, and Ca II K coming out as the
-deepest line in a solar spectrum.
+3.36 mK, the acoustic peaks at ℓ = 216, 504, 792, Ca II K coming out as the
+deepest line in a solar spectrum, and a planetary nebula reaching a light-year
+and a half across in ten thousand years — which is what the Helix measures.
 
 Where the model is an approximation, it is one with a name and a range of
 validity. Zel'dovich is first-order Lagrangian perturbation theory: exact until
