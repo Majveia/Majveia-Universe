@@ -92,8 +92,15 @@ if (params.get('mode') === 'system') {
   const { buildSystem } = await import('./astro/planets');
   const { SystemView } = await import('./render/systemview');
   engine.scene.remove(view.group);
+  const { sampleCompanion } = await import('./astro/binary');
+  const { RNG } = await import('./core/rng');
   const st = makeStar(Number(params.get('mass') ?? 1), Number(params.get('age') ?? 4.6), 0);
-  const sys = buildSystem(st, seed, params.get('star') ?? 'Kestrel');
+  let companion = null;
+  if (params.get('binary') === '1') {
+    const brng = new RNG(seed ^ 0x9911);
+    for (let k = 0; k < 200 && !companion; k++) companion = sampleCompanion(brng, st, 4.6, 0);
+  }
+  const sys = buildSystem(st, seed, params.get('star') ?? 'Kestrel', companion);
   const sv = new SystemView(sys, seed, {
     minAngularRadius: Number(params.get('minang') ?? 0.0045),
   });
@@ -115,7 +122,9 @@ if (params.get('mode') === 'system') {
   };
   requestAnimationFrame(step);
   // eslint-disable-next-line no-console
-  console.info('[lab:system]', st.spectralClass + st.subClass, 'planets:',
+  console.info('[lab:system]', st.spectralClass + st.subClass,
+    sys.companion ? `binary sep=${(sys.companion.aM / 1.496e11).toFixed(2)}AU e=${sys.companion.e.toFixed(2)} host=${sys.host}` : 'single',
+    'planets:',
     sys.planets.map((p) => `${p.name} ${p.cls} ${p.au.toFixed(2)}AU ` +
       `${(p.massKg / 5.972e24).toFixed(2)}Me ${p.surfaceK.toFixed(0)}K` +
       `${p.habitable ? ' HABITABLE' : ''}${p.rings.length ? ' rings' : ''}` +

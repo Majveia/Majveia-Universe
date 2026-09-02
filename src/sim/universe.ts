@@ -21,6 +21,7 @@ import type { CosmicWebField, Knot } from '../cosmology/zeldovich';
 import { galaxyFromHalo, massAtLifetime, type GalaxyParams } from '../galaxy/generator';
 import { makeStar, sampleKroupaIMF, type Star } from '../astro/stellar';
 import { buildSystem, type PlanetarySystem } from '../astro/planets';
+import { sampleCompanion } from '../astro/binary';
 import { angularRate, rotationCurve } from '../galaxy/generator';
 
 export interface ClusterMember {
@@ -186,7 +187,11 @@ export class Universe {
     const hit = this.systemCache.get(key);
     const s = this.star(galaxy, index);
     if (hit) return { system: hit, name: s.name, seed: s.seed };
-    const sys = buildSystem(s.star, s.seed, s.name);
+    // Roughly half of all stars have a companion, and that companion decides
+    // where planets can exist at all - so it is drawn before the planets are.
+    const crng = new RNG(hash3(index, galaxy.seed, 0xb1a2, this.seed));
+    const companion = sampleCompanion(crng, s.star, s.star.ageGyr, s.star.metallicity);
+    const sys = buildSystem(s.star, s.seed, s.name, companion);
     this.systemCache.set(key, sys);
     return { system: sys, name: s.name, seed: s.seed };
   }

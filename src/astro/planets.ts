@@ -21,6 +21,7 @@ import {
 import { RNG, derive } from '../core/rng';
 import type { Star } from './stellar';
 import { hillRadius, period, tidalLockingTimeYears, type OrbitalElements } from '../physics/kepler';
+import { planetRegion, combinedLuminosity, type Companion, type PlanetHost } from './binary';
 
 export type PlanetClass =
   | 'iron' | 'rocky' | 'desert' | 'ocean' | 'terrestrial' | 'lava' | 'carbon'
@@ -105,6 +106,12 @@ export interface Planet {
 
 export interface PlanetarySystem {
   star: Star;
+  /** The second star, if this is a binary. */
+  companion: Companion | null;
+  /** Where the planets sit relative to the pair. */
+  host: PlanetHost;
+  /** Luminosity that actually falls on the planets, solar units. */
+  effectiveLuminosity: number;
   planets: Planet[];
   /** Snow line, AU. */
   snowLineAu: number;
@@ -205,9 +212,16 @@ const MOON_NAMES = [
   'Solace', 'Thistle', 'Umbra', 'Vesper', 'Wren', 'Xanth', 'Yarrow', 'Zephyr',
 ];
 
-export function buildSystem(star: Star, seed: number, starName: string): PlanetarySystem {
+export function buildSystem(
+  star: Star, seed: number, starName: string, companion: Companion | null = null,
+): PlanetarySystem {
   const rng = derive(seed, 'system');
-  const L = Math.max(star.luminosityLsun, 1e-8);
+  const region = planetRegion(star, companion);
+  // A circumbinary planet is lit by both stars; an S-type planet orbiting one
+  // of them is lit by that one, with the other a bright point in its sky.
+  const L = Math.max(
+    region.host === 'circumbinary' ? combinedLuminosity(star, companion) : star.luminosityLsun,
+    1e-8);
   const snow = snowLine(L);
   const subl = Math.max(sublimationRadius(L), (star.radiusRsun * R_SUN * 4) / AU);
 
@@ -220,15 +234,23 @@ export function buildSystem(star: Star, seed: number, starName: string): Planeta
   const planets: Planet[] = [];
   if (star.kind === 'black-hole' || star.kind === 'neutron-star') {
     return {
-      star, planets, snowLineAu: snow, sublimationAu: subl, discSolidsMe: 0,
+      star, companion, host: region.host, effectiveLuminosity: L,
+      planets, snowLineAu: snow, sublimationAu: subl, discSolidsMe: 0,
       asteroidBelts: [], outerBeltAu: [0, 0], cometCount: 0,
     };
   }
 
   // --- Lay down orbits by mutual Hill spacing, the criterion for long-term
   //     stability. Real systems cluster around 15-25 mutual Hill radii.
-  const outerEdge = Math.min(600, 40 * Math.pow(star.massMsun, 0.9) * rng.range(0.55, 1.8));
+  // A companion clears everything between the two stable regions, so the disc
+  // is truncated at whichever edge the pair leaves.
+  const outerEdge = Math.min(
+    600, 40 * Math.pow(star.massMsun, 0.9) * rng.range(0.55, 1.8), region.outerAu);
   let a = subl * rng.range(1.4, 4.5);
+  // Only a companion imposes an inner floor, and only then does it consume a
+  // random draw - so a single star's system is bit-identical to what it was
+  // before binaries existed.
+  if (region.innerAu > 0) a = Math.max(a, region.innerAu * rng.range(1.0, 1.6));
   let idx = 0;
   let solidsLeft = discSolids;
   const maxPlanets = rng.int(3, 11);
@@ -256,6 +278,7 @@ export function buildSystem(star: Star, seed: number, starName: string): Planeta
     let semi = a;
     if (canAccrete && rng.chance(0.10)) semi = Math.max(subl * 1.6, a * rng.range(0.008, 0.09));
 
+    if (semi < region.innerAu || semi > region.outerAu) break;
     planets.push(makePlanet(rng, star, starName, idx++, semi, mEarth, snow, L));
 
     // Next orbit, spaced by mutual Hill radii
@@ -291,6 +314,9 @@ export function buildSystem(star: Star, seed: number, starName: string): Planeta
 
   return {
     star,
+    companion,
+    host: region.host,
+    effectiveLuminosity: L,
     planets,
     snowLineAu: snow,
     sublimationAu: subl,

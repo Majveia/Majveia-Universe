@@ -20,6 +20,7 @@ import type { PlanetarySystem, Planet } from '../astro/planets';
 import { PlanetView } from './planet';
 import { StarView } from './star';
 import { RNG } from '../core/rng';
+import { habitableZone } from '../astro/stellar';
 
 const ORBIT_VERT = /* glsl */ `
 in float aT;
@@ -143,6 +144,10 @@ interface PlanetSlot {
 export class SystemView {
   readonly group = new THREE.Group();
   readonly starView: StarView;
+  /** The second star, when this is a binary. */
+  readonly companionView?: StarView;
+  private companionPos = new THREE.Vector3();
+  private primaryPos = new THREE.Vector3();
   readonly slots: PlanetSlot[] = [];
   private beltMats: THREE.RawShaderMaterial[] = [];
   private zoneMat?: THREE.ShaderMaterial;
@@ -164,8 +169,18 @@ export class SystemView {
     this.starView = new StarView(st, starR, seed, 1.6);
     this.group.add(this.starView.group);
 
-    // --- Habitable zone
-    const [hzIn, hzOut] = st.habitableZoneAu;
+    if (system.companion) {
+      const c = system.companion.star;
+      const cr = Math.max((c.radiusRsun * R_SUN) / AU, 1e-9);
+      this.companionView = new StarView(c, cr, seed ^ 0x51ce, 1.6);
+      this.group.add(this.companionView.group);
+    }
+
+    // --- Habitable zone. For a circumbinary system it is set by the combined
+    //     light of both stars, so it sits further out than either alone.
+    const [hzIn, hzOut] = system.host === 'circumbinary'
+      ? habitableZone(system.effectiveLuminosity, st.teff)
+      : st.habitableZoneAu;
     if (Number.isFinite(hzIn) && hzOut > hzIn && hzOut < 400) {
       this.zoneMat = new THREE.ShaderMaterial({
         vertexShader: ZONE_VERT,
@@ -195,7 +210,7 @@ export class SystemView {
 
     // --- Asteroid belts
     const rng = new RNG(seed ^ 0x5eed);
-    for (const belt of system.asteroidBelts) this.addBelt(belt, muStar, rng);
+    for (const belt of system.asteroidBelts) this.addBelt(belt, muStar, rng, 0.22);
     this.addBelt({
       innerAu: system.outerBeltAu[0], outerAu: system.outerBeltAu[1],
       count: Math.min(9000, system.cometCount * 3),
@@ -297,7 +312,7 @@ export class SystemView {
       uniforms: {
         uTime: { value: 0 },
         uGM: { value: muStar / (AU * AU * AU) },
-        uPointScale: { value: 30 },
+        uPointScale: { value: 18 },
         uColor: { value: new THREE.Vector3(...color) },
         uOpacity: { value: opacity },
       },
@@ -313,16 +328,35 @@ export class SystemView {
     this.timeS = timeS;
     const st = this.system.star;
     const muStar = G * st.currentMassMsun * M_SUN;
-    this.starView.update(timeS, this.group.position);
+    this.starView.update(timeS, this.primaryPos);
 
     for (const m of this.beltMats) m.uniforms.uTime.value = timeS;
 
     const camPos = camera.getWorldPosition(this.tmp.set(0, 0, 0)).clone();
     this.magnification = 1;
 
+    // --- Both stars orbit their common barycentre.
+    const comp = this.system.companion;
+    if (comp && this.companionView) {
+      const muPair = G * (st.currentMassMsun + comp.star.currentMassMsun) * M_SUN;
+      const rel = stateAt(comp.elements, muPair, timeS);
+      // Split about the barycentre by mass ratio.
+      const f = comp.mu;
+      this.primaryPos.set(-rel.x / AU * f, -rel.z / AU * f, -rel.y / AU * f);
+      this.companionPos.set(rel.x / AU * (1 - f), rel.z / AU * (1 - f), rel.y / AU * (1 - f));
+      this.starView.group.position.copy(this.primaryPos);
+      this.companionView.group.position.copy(this.companionPos);
+      const dc = Math.max(camPos.distanceTo(this.companionPos), 1e-12);
+      const trueRc = (comp.star.radiusRsun * R_SUN) / AU;
+      this.companionView.setWorldRadius(Math.max(trueRc, this.minAngularRadius * 2.2 * dc));
+      this.companionView.update(timeS, this.companionPos);
+    } else {
+      this.primaryPos.set(0, 0, 0);
+    }
+
     // The star gets the same treatment as the planets.
     {
-      const d = Math.max(camPos.length(), 1e-12);
+      const d = Math.max(camPos.distanceTo(this.primaryPos), 1e-12);
       const trueR = (st.radiusRsun * R_SUN) / AU;
       this.starView.setWorldRadius(Math.max(trueR, this.minAngularRadius * 2.2 * d));
     }
@@ -348,14 +382,21 @@ export class SystemView {
         const shown = Math.max(trueR, this.minAngularRadius * camDist);
         slot.view.setWorldRadius(shown);
         this.magnification = Math.max(this.magnification, shown / trueR);
-        const sunDir = slot.worldPos.clone().negate().normalize();
-        // Inverse-square illumination, in units where 1 AU is unity
-        const d2 = Math.max(slot.worldPos.lengthSq(), 1e-8);
+        // Light comes from wherever the star actually is, which for a binary
+        // is not the origin - so a circumbinary planet's terminator swings
+        // over the binary period and its two shadows never quite align.
+        const sunDir = this.primaryPos.clone().sub(slot.worldPos).normalize();
+        const d2 = Math.max(slot.worldPos.distanceToSquared(this.primaryPos), 1e-8);
         // Illumination really does fall as 1/d^2, and a planet at 0.1 AU is
         // genuinely a hundred times more brightly lit than one at 1 AU. The
         // clamp keeps the inner system from swamping the tone mapper while
         // leaving the ordering and most of the range intact.
-        const irr = Math.max(0.015, Math.min(1.8, st.luminosityLsun / d2));
+        let irrRaw = st.luminosityLsun / d2;
+        if (comp && this.companionView) {
+          const d2c = Math.max(slot.worldPos.distanceToSquared(this.companionPos), 1e-8);
+          irrRaw += comp.star.luminosityLsun / d2c;
+        }
+        const irr = Math.max(0.015, Math.min(1.8, irrRaw));
         const col = this.sunColor.clone().multiplyScalar(irr);
         slot.view.update(sunDir, col, timeS, slot.view.group.position);
 
@@ -370,6 +411,7 @@ export class SystemView {
 
   dispose(): void {
     this.starView.dispose();
+    this.companionView?.dispose();
     for (const s of this.slots) { s.view?.dispose(); s.orbit.geometry.dispose(); s.orbitMat.dispose(); }
   }
 }

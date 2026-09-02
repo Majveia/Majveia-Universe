@@ -1089,8 +1089,13 @@ export class SystemStage extends Stage {
     this.starName = name;
     this.title = name;
     const st = system.star;
-    this.subtitle = `${starLabel(st)} · ${system.planets.length} planets · ` +
-      `${st.massMsun.toFixed(2)} M☉ · ${sig(st.luminosityLsun, 2)} L☉`;
+    const comp = system.companion;
+    this.subtitle = comp
+      ? `${starLabel(st)} + ${starLabel(comp.star)} · ${system.planets.length} ` +
+        `${system.host === 'circumbinary' ? 'circumbinary ' : ''}planets · ` +
+        `separation ${sig(comp.aM / AU, 2)} AU`
+      : `${starLabel(st)} · ${system.planets.length} planets · ` +
+        `${st.massMsun.toFixed(2)} M☉ · ${sig(st.luminosityLsun, 2)} L☉`;
     // A year per second at the default warp.
     this.timeScale = YEAR;
 
@@ -1132,6 +1137,22 @@ export class SystemStage extends Stage {
     const st = sys.star;
     const [dv, du] = formatDistance(this.env.controls.distance * AU);
     const [tv, tu] = formatTime(this.simTime);
+    const comp = sys.companion;
+    if (comp) {
+      return [
+        { k: 'primary', v: starLabel(st), accent: true },
+        { k: 'companion', v: starLabel(comp.star) },
+        { k: 'separation', v: sig(comp.aM / AU, 3), u: 'AU' },
+        { k: 'binary period', v: formatTime(comp.periodS).join(' ') },
+        { k: 'eccentricity', v: comp.e.toFixed(3) },
+        { k: 'planets', v: `${sys.planets.length} · ${sys.host}` },
+        { k: 'stable beyond', v: sys.host === 'circumbinary'
+          ? `${sig(comp.pTypeLimit / AU, 2)} AU` : `inside ${sig(comp.sTypeLimit / AU, 2)} AU` },
+        { k: 'habitable zone', v: `${st.habitableZoneAu[0].toFixed(2)}–${st.habitableZoneAu[1].toFixed(2)}`, u: 'AU' },
+        { k: 'elapsed', v: tv, u: tu },
+        { k: 'field of view', v: dv, u: du },
+      ];
+    }
     return [
       { k: 'star', v: starLabel(st), accent: true },
       { k: 'mass', v: st.massMsun.toFixed(3), u: 'M☉' },
