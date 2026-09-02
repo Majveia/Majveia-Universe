@@ -116,6 +116,12 @@ export abstract class Stage {
   inspect(_ndc: THREE.Vector2): Inspection | null { return null; }
   /** Human label for the current scale bar. */
   abstract scaleLabel(): string;
+  /**
+   * Put the observer in motion at a fraction of the speed of light, along a
+   * world-space direction. Stages that draw a sky transform it; the others
+   * ignore it, because there is nothing at infinity for them to aberrate.
+   */
+  setBoost(_beta: number, _dir: THREE.Vector3): void {}
   onResize(): void {}
   dispose(): void {
     this.root.traverse((o) => {
@@ -1003,6 +1009,10 @@ export class GalaxyStage extends Stage {
     ];
   }
 
+  override setBoost(beta: number, dir: THREE.Vector3): void {
+    this.sky.setBoost(beta, dir);
+  }
+
   scaleLabel(): string {
     const [v, u] = formatDistance(this.env.controls.distance * 3.0857e19);
     return `${v} ${u}`;
@@ -1199,6 +1209,10 @@ export class SystemStage extends Stage {
       { k: 'distance', v: sig(best.heliocentricAu, 2), u: 'AU' },
       { k: 'tails', v: `${sig(best.dustTailAu, 2)} AU dust · ${sig(best.ionTailAu, 2)} AU ion` },
     ];
+  }
+
+  override setBoost(beta: number, dir: THREE.Vector3): void {
+    this.sky.setBoost(beta, dir);
   }
 
   scaleLabel(): string {
@@ -1480,6 +1494,10 @@ export class WorldStage extends Stage {
     }
     const label = eclipseLabel(this.eclipseDepth, total);
     return label ? ` · ${label}` : '';
+  }
+
+  override setBoost(beta: number, dir: THREE.Vector3): void {
+    this.sky.setBoost(beta, dir);
   }
 
   scaleLabel(): string {

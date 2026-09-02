@@ -53,6 +53,16 @@ const WARPS: TimeWarp[] = [
   { label: '×10⁴', scale: 1e4 },
 ];
 
+/**
+ * Speeds to fly at. They climb by about a factor of ten in the Lorentz factor
+ * each step, which is the only way to make the trailing decimals of beta mean
+ * something: 0.99 and 0.9999995 look alike written down and differ by a factor
+ * of 140 in everything that matters.
+ */
+const BOOSTS = [0, 0.5, 0.9, 0.99, 0.9999, 0.99999, 0.999999, 0.99999999];
+
+const lorentz = (b: number): number => 1 / Math.sqrt(Math.max(1 - b * b, 1e-18));
+
 export class App {
   readonly engine: Engine;
   readonly controls: Controls;
@@ -82,6 +92,10 @@ export class App {
   private playing = false;
   private scrubbing = false;
   private warpIndex = 1;
+  private boostIndex = 0;
+  /** Beta actually applied, eased toward the selected preset. */
+  private boost = 0;
+  private boostDir = new THREE.Vector3(0, 0, -1);
   private idle = 0;
   private lastFrame = performance.now();
   private fps = 60;
@@ -517,6 +531,16 @@ export class App {
           }
           break;
         }
+        case 'KeyJ': {
+          // Relativistic flight. The presets climb by roughly a factor of ten
+          // in gamma each step, because that is the only way to make the last
+          // few decimal places of beta mean anything.
+          this.boostIndex = (this.boostIndex + 1) % BOOSTS.length;
+          const b = BOOSTS[this.boostIndex];
+          this.flash(b === 0 ? 'back to rest'
+            : `boost · beta ${b} · gamma ${lorentz(b).toFixed(b < 0.99 ? 2 : 0)}`);
+          break;
+        }
         case 'KeyT': {
           const st = this.stage as unknown as { toggleTrueScale?: () => boolean };
           if (st.toggleTrueScale) {
@@ -683,11 +707,31 @@ export class App {
         this.stage.timeScale = this.playing ? base * warp.scale : 0;
         this.stage.update(dt);
         this.stage.timeScale = base;
-        this.warpEl.textContent = this.playing
+        const rel = this.boost > 1e-4
+          ? ` · β ${this.boost >= 0.9999 ? this.boost.toFixed(8) : this.boost.toFixed(3)}` +
+            ` · γ ${lorentz(this.boost) < 100 ? lorentz(this.boost).toFixed(2)
+              : lorentz(this.boost).toExponential(1)}`
+          : '';
+        this.warpEl.textContent = (this.playing
           ? `${warp.label} · ${this.stage.scaleLabel()}`
-          : `paused · ${this.stage.scaleLabel()}`;
+          : `paused · ${this.stage.scaleLabel()}`) + rel;
       }
       this.controls.update(dt);
+
+      // --- Relativistic flight. Beta is eased rather than jumped: the
+      //     interesting part of aberration is watching the sky slide forward,
+      //     and that only reads if it takes a moment. The easing runs in the
+      //     rapidity, not in beta, because beta crowds against 1 and rapidity
+      //     does not - it is the quantity that actually adds.
+      const targetBeta = BOOSTS[this.boostIndex];
+      const rap = (b: number) => Math.atanh(Math.min(b, 0.999999999));
+      const k = 1 - Math.exp(-dt * 1.6);
+      const nowRap = rap(this.boost) + (rap(targetBeta) - rap(this.boost)) * k;
+      this.boost = Math.tanh(nowRap);
+      if (this.boost < 1e-4) this.boost = 0;
+      // Forward is where the camera is pointing.
+      this.engine.camera.getWorldDirection(this.boostDir);
+      this.stage.setBoost(this.boost, this.boostDir);
     }
 
     this.engine.render(dt);
@@ -746,6 +790,7 @@ const HELP_HTML = `
       <dt>U</dt><dd>hide the interface</dd>
       <dt>F</dt><dd>fullscreen</dd>
       <dt>T</dt><dd>true scale in a system</dd>
+      <dt>J</dt><dd>fly at a fraction of light speed</dd>
       <dt>P</dt><dd>save a frame</dd>
     </dl>
   </div>

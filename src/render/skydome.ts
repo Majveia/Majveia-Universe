@@ -44,6 +44,9 @@ uniform vec3 uBandColor;
 uniform vec3 uBandNormal;
 uniform float uSeed;
 uniform float uNebula;
+uniform float uBeta;        // speed as a fraction of c
+uniform vec3 uBoost;        // direction of travel, world space
+uniform float uSkyGain;     // detector stop-down, so structure survives beaming
 
 vec3 blackbodyApprox(float T) {
   T = clamp(T, 1200.0, 32000.0);
@@ -70,6 +73,35 @@ vec3 h33(vec3 p) {
 
 void main() {
   vec3 d = normalize(vDir);
+
+  // --- Relativistic aberration.
+  //
+  // d is where the light *appears* to come from. To find the star that emitted
+  // it, run the transformation backwards: with mu the cosine of the angle
+  // between the apparent direction and the direction of travel,
+  //
+  //     mu_rest = (mu - beta) / (1 - beta mu)
+  //
+  // and the perpendicular component follows from normalisation. The sky is then
+  // sampled in the rest frame, which is where the stars actually are.
+  float doppler = 1.0;
+  if (uBeta > 1e-6) {
+    float g = 1.0 / sqrt(max(1.0 - uBeta * uBeta, 1e-12));
+    float mu = clamp(dot(d, uBoost), -1.0, 1.0);
+    doppler = 1.0 / (g * (1.0 - uBeta * mu));
+    float mu0 = clamp((mu - uBeta) / (1.0 - uBeta * mu), -1.0, 1.0);
+    vec3 perp = d - uBoost * mu;
+    float pl = length(perp);
+    d = pl > 1e-7
+      ? normalize(uBoost * mu0 + (perp / pl) * sqrt(max(1.0 - mu0 * mu0, 0.0)))
+      : normalize(uBoost * sign(mu0 == 0.0 ? 1.0 : mu0));
+  }
+  // Iv/v^3 is a Lorentz invariant, so bolometric surface brightness goes as the
+  // fourth power of the Doppler factor. The sky ahead does not just blueshift,
+  // it blazes; the sky behind goes out.
+  float d2 = doppler * doppler;
+  float beam = d2 * d2;
+
   float band = dot(d, normalize(uBandNormal));
   vec3 col = vec3(0.0);
 
@@ -89,11 +121,12 @@ void main() {
       float thresh = 0.974 - fo * 0.006;
       if (h.z * planeBoost > thresh) {
         vec3 rel = g + h - f;
-        float d2 = dot(rel, rel);
         // Luminosity function: many faint, few bright
         float mag = pow(fract(h.x * 91.7), 5.0);
         float T = mix(2700.0, 24000.0, pow(fract(h.y * 47.3), 2.6));
-        col += blackbodyApprox(T) * mag * exp(-d2 * 340.0) / pow(2.7, fo);
+        // A blackbody stays a blackbody: only its temperature moves.
+        col += blackbodyApprox(T * doppler) * mag * exp(-dot(rel, rel) * 340.0)
+             / pow(2.7, fo);
       }
     }
   }
@@ -111,6 +144,30 @@ void main() {
     col += vec3(0.55, 0.14, 0.22) * mask * uNebula;
     float n2 = fbm(d * 4.7 + vec3(91.0, 5.0, uSeed), 4, 2.3, 0.5);
     col += vec3(0.10, 0.32, 0.34) * smoothstep(0.34, 0.62, n2) * exp(-pow(band * 3.6, 2.0)) * uNebula * 0.6;
+  }
+
+  // Beaming, and the stop-down that keeps it legible. The forward brightening
+  // is real and enormous - at gamma 700 it is fourteen orders of magnitude -
+  // so what is shown is the sky through an instrument that closes down as it
+  // accelerates. The *ratios* across the sky are untouched: the headlight cone
+  // and the darkness behind it are the physics, the absolute level is not.
+  col *= beam * uSkyGain;
+
+  // --- The microwave background, which is invisible until it is not.
+  //
+  // It is a 2.7 K blackbody, so the Doppler factor takes it to 2.7 D. The
+  // fraction of that curve landing in the visible is the Wien tail,
+  // exp(-hc/lambda k T), and the steepness of that exponential is why the
+  // background is nothing at all at gamma = 100 and a wall of light at
+  // gamma = 1000.
+  if (uBeta > 0.9) {
+    float Tc = 2.7255 * doppler;
+    float wien = exp(-26170.0 / max(Tc, 1.0));
+    // The background is not stopped down with the stars, because the whole
+    // point of it is that it stops being a background: past gamma of a few
+    // hundred the microwave sky outshines every star in it.
+    float I = min(Tc * Tc * Tc * Tc * wien * 4.0e-4, 14.0);
+    col += blackbodyApprox(max(Tc, 1200.0)) * I;
   }
 
   fragColor = vec4(col * uBrightness, 1.0);
@@ -144,6 +201,9 @@ export class SkyDome {
         uBandNormal: { value: new THREE.Vector3(0, 1, 0) },
         uSeed: { value: ((opts.seed ?? 1) % 997) / 13 },
         uNebula: { value: opts.nebula ?? 0.006 },
+        uBeta: { value: 0 },
+        uBoost: { value: new THREE.Vector3(0, 0, -1) },
+        uSkyGain: { value: 1 },
       },
     });
     this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), this.mat);
@@ -157,6 +217,21 @@ export class SkyDome {
   setBrightness(v: number): void { this.mat.uniforms.uBrightness.value = v; }
   setBandStrength(v: number): void { this.mat.uniforms.uBandStrength.value = v; }
   setNebula(v: number): void { this.mat.uniforms.uNebula.value = v; }
+
+  /**
+   * Put the observer in motion.
+   * @param beta speed as a fraction of c
+   * @param dir unit vector along the direction of travel, world space
+   */
+  setBoost(beta: number, dir: THREE.Vector3): void {
+    const b = Math.max(0, Math.min(beta, 0.99999999));
+    this.mat.uniforms.uBeta.value = b;
+    (this.mat.uniforms.uBoost.value as THREE.Vector3).copy(dir).normalize();
+    // Normalise against the forward Doppler factor, slightly under the fourth
+    // power so that accelerating still reads as the sky getting brighter.
+    const dFwd = Math.sqrt((1 + b) / Math.max(1 - b, 1e-16));
+    this.mat.uniforms.uSkyGain.value = b > 1e-6 ? Math.pow(dFwd, -3.2) : 1;
+  }
 
   dispose(): void { this.mesh.geometry.dispose(); this.mat.dispose(); }
 }
