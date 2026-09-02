@@ -485,6 +485,26 @@ export class App {
           else document.documentElement.requestFullscreen?.().catch(() => {});
           break;
         case 'KeyP': this.capture(); break;
+        case 'KeyL': {
+          const c = this.stage as unknown as { observeDeepField?: () => boolean };
+          if (c.observeDeepField) {
+            const on = c.observeDeepField();
+            this.rebuildReadout();
+            this.flash(on
+              ? 'deep field · 1 Gpc · the cluster is lensing what is behind it'
+              : 'back to the cluster');
+          } else this.flash('deep fields are observed from a cluster');
+          break;
+        }
+        case 'KeyK': {
+          const c = this.stage as unknown as { toggleCriticalCurves?: () => boolean };
+          if (c.toggleCriticalCurves) {
+            this.flash(c.toggleCriticalCurves()
+              ? 'critical curves — where magnification diverges'
+              : 'critical curves hidden');
+          }
+          break;
+        }
         case 'KeyM': {
           const g = this.stage as unknown as { toggleEncounter?: () => boolean };
           if (g.toggleEncounter) {
@@ -624,7 +644,7 @@ export class App {
         // Falling in: the light drains away and the field of view narrows.
         const k = t / FALL;
         this.engine.exposure = Math.max(0, 1 - k * k);
-        this.engine.camera.fov = 60 - 14 * k * k;
+        this.engine.camera.fov = this.baseFov() * (1 - 0.23 * k * k);
         this.engine.camera.updateProjectionMatrix();
       } else {
         if (!this.transitionDone && this.transitionTarget) {
@@ -634,12 +654,12 @@ export class App {
         }
         const k = Math.min(1, (t - FALL) / RISE);
         this.engine.exposure = k * k * (3 - 2 * k);
-        this.engine.camera.fov = 46 + 14 * k;
+        this.engine.camera.fov = this.baseFov() * (0.77 + 0.23 * k);
         this.engine.camera.updateProjectionMatrix();
         if (k >= 1) {
           this.transitionT0 = 0;
           this.engine.exposure = 1;
-          this.engine.camera.fov = 60;
+          this.engine.camera.fov = this.baseFov();
           this.engine.camera.updateProjectionMatrix();
           this.controls.locked = false;
           this.stage?.onResize();
@@ -679,6 +699,8 @@ export class App {
     }
   }
 
+  private baseFov(): number { return this.stage?.baseFov ?? 60; }
+
   /** Growth factor at the current epoch, for external readouts. */
   get growth(): number { return growthFactor(this.cosmology, this.epochA); }
 }
@@ -717,6 +739,8 @@ const HELP_HTML = `
     <h3>Look</h3>
     <dl>
       <dt>V</dt><dd>tint by peculiar velocity</dd>
+      <dt>L</dt><dd>observe a cluster as a deep field</dd>
+      <dt>K</dt><dd>show lensing critical curves</dd>
       <dt>M</dt><dd>collide this galaxy with another</dd>
       <dt>C</dt><dd>change the cosmology</dd>
       <dt>U</dt><dd>hide the interface</dd>

@@ -31,6 +31,7 @@ import { SystemView } from '../render/systemview';
 import { PlanetView } from '../render/planet';
 import { StarView } from '../render/star';
 import { SkyDome } from '../render/skydome';
+import { LensedField, einsteinMass } from '../render/lensedfield';
 import { NebulaView } from '../render/nebula';
 import { BlackHoleView } from '../render/blackhole';
 import { buildGalaxy, angularRate, rotationCurve, type GalaxyParams } from '../galaxy/generator';
@@ -89,6 +90,8 @@ export abstract class Stage {
   /** Seconds of simulated time per second of wall clock. */
   timeScale = 1;
   simTime = 0;
+  /** Vertical field of view this stage wants, degrees. */
+  baseFov = 60;
 
   constructor(protected env: StageEnv, readonly ctx: StageCtx) {}
 
@@ -361,7 +364,9 @@ export class ClusterStage extends Stage {
   private positions: THREE.Vector3[] = [];
   private radii: number[] = [];
   private icm?: THREE.Mesh;
-  private sky!: SkyDome;
+  private sky!: LensedField;
+  private deep = false;
+  private savedView: { d: number; theta: number; phi: number } | null = null;
 
   build(): void {
     const u = this.env.universe;
@@ -372,8 +377,11 @@ export class ClusterStage extends Stage {
       `${commas(cl.richness)} galaxies · σ ${Math.round(cl.sigmaKms)} km/s · ` +
       `${sig(cl.massMsun, 2)} M☉ of which ~85% is dark matter`;
 
-    this.sky = new SkyDome({ brightness: 0.35, bandStrength: 0.004, seed: cl.seed, nebula: 0 });
+    // The sky behind a cluster is not a starfield - it is the distant
+    // universe, and the cluster bends its light.
+    this.sky = new LensedField({ seed: cl.seed, brightness: 0.55, density: 1 });
     this.sky.mesh.scale.setScalar(cl.radiusMpc * 400);
+    this.sky.setShape(0.62 + (cl.seed % 100) / 400, ((cl.seed % 628) / 100));
     this.root.add(this.sky.mesh);
 
     const data: GalaxySpriteData[] = [];
@@ -452,14 +460,89 @@ export class ClusterStage extends Stage {
     this.sprites.setViewport(this.env.viewport()[1], this.env.engine.camera.fov);
   }
 
+  override dispose(): void { this.sky.dispose(); this.sprites.dispose(); super.dispose(); }
+
   update(dt: number): void {
     this.simTime += dt * this.timeScale;
-    this.sky.mesh.position.copy(this.env.engine.camera.position);
+    const cam = this.env.engine.camera.position;
+    this.sky.mesh.position.copy(cam);
+    const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
+    // Aim the lens: the deflection is a fixed angular scale set by the
+    // cluster's velocity dispersion, so it shrinks against the cluster's own
+    // apparent size as you approach and only resolves from far away.
+    // The core radius matters enormously. A non-singular isothermal sphere
+    // whose core is comparable to its own Einstein radius is sub-critical: the
+    // lens equation stays one-to-one, and there are no multiple images and no
+    // arcs at all. Real cluster lenses have cores of tens of kiloparsecs
+    // against Einstein radii of a couple of hundred, and that ratio is what
+    // makes them produce the arcs they are famous for.
+    const coreKpc = cl.radiusMpc * 1000 * 0.008;
+    this.sky.aim(cam, this.root.position, cl.sigmaKms, coreKpc,
+      this.env.controls.distance * 1000);
+    this.sky.setFieldOfView((this.env.engine.camera.fov * Math.PI) / 180);
   }
+
+  /**
+   * Back off to a cosmological distance and narrow the field of view, which is
+   * the only vantage from which cluster lensing is visible: the Einstein angle
+   * is about 40 arcseconds for a rich cluster, so from inside its own virial
+   * radius the arcs are buried in the core, and from a gigaparsec away with a
+   * few arcminutes of field they are the most obvious thing in the frame.
+   */
+  observeDeepField(): boolean {
+    const c = this.env.controls;
+    const cam = this.env.engine.camera;
+    this.deep = !this.deep;
+    if (this.deep) {
+      this.savedView = { d: c.distance, theta: c.theta, phi: c.phi };
+      const D = 1000; // Mpc
+      c.maxDistance = D * 4;
+      c.minDistance = D * 0.02;
+      c.snapTo(new THREE.Vector3(), D, c.theta, c.phi);
+      this.baseFov = 0.10;
+      cam.near = D * 0.4;
+      cam.far = D * 3;
+    } else {
+      const v = this.savedView ?? { d: 5, theta: 0.5, phi: 1.05 };
+      const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
+      c.maxDistance = cl.radiusMpc * 30;
+      c.minDistance = 0.001;
+      c.snapTo(new THREE.Vector3(), v.d, v.theta, v.phi);
+      this.baseFov = 60;
+      cam.near = 1e-4;
+      cam.far = cl.radiusMpc * 900;
+    }
+    cam.fov = this.baseFov;
+    cam.updateProjectionMatrix();
+    this.onResize();
+    return this.deep;
+  }
+
+  /** Overlay the critical curves, where the magnification formally diverges. */
+  toggleCriticalCurves(): boolean {
+    const on = this.sky.critical <= 0;
+    this.sky.setCritical(on ? 1 : 0);
+    return on;
+  }
+
+  get deepField(): boolean { return this.deep; }
 
   rows(): Row[] {
     const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
     const [dv, du] = formatDistance(this.env.controls.distance * MPC);
+    if (this.deep) {
+      const D = this.env.controls.distance;
+      const fieldArcmin = this.baseFov * 60;
+      return [
+        { k: 'observing', v: 'deep field', accent: true },
+        { k: 'distance', v: sig(D, 3), u: 'Mpc' },
+        { k: 'field', v: fieldArcmin.toFixed(1), u: 'arcmin' },
+        { k: 'Einstein θ', v: this.sky.einsteinAngleArcsec.toFixed(1), u: 'arcsec' },
+        { k: 'lensed mass', v: sig(einsteinMass(cl.sigmaKms, D), 3), u: 'M☉' },
+        { k: 'dispersion', v: Math.round(cl.sigmaKms).toString(), u: 'km/s' },
+        { k: 'galaxies', v: commas(cl.richness) },
+      ];
+    }
     return [
       { k: 'cluster mass', v: sig(cl.massMsun, 3), u: 'M☉', accent: true },
       { k: 'virial radius', v: cl.radiusMpc.toFixed(2), u: 'Mpc' },

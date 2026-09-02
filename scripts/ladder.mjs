@@ -18,19 +18,26 @@ await page.goto('http://localhost:4173/?' + (args.q ?? ''), { waitUntil: 'load' 
 await page.waitForFunction(() => window.majveia?.ready === true, null, { timeout: 240000 });
 await page.waitForTimeout(2500);
 const names = ['cosmos', 'cluster', 'galaxy', 'system', 'world'];
-for (let i = 0; i < 5; i++) {
+const stop = +(args.stop ?? 5);
+for (let i = 0; i < stop; i++) {
   await page.screenshot({ path: `${out}-${i}-${names[i]}.png` });
   const info = await page.evaluate(() => {
     const s = window.majveia.app.stage ?? null;
     return s ? { id: s.id, title: s.title, sub: s.subtitle } : null;
   }).catch(() => null);
   console.log(i, names[i], JSON.stringify(info));
-  if (i === 4) break;
+  if (i === stop - 1) break;
   await page.evaluate(() => window.majveia.descend());
   await page.waitForTimeout(600);
   await page.waitForFunction(() => window.majveia.travelling === false, null, { timeout: 120000 })
     .catch(() => console.log('  (transition timed out)'));
   await page.waitForTimeout(+(args.wait ?? 3000));
+}
+if (args.eval) {
+  await page.evaluate(args.eval);
+  await page.waitForTimeout(+(args.evalwait ?? 2500));
+  await page.screenshot({ path: `${out}-eval.png` });
+  console.log('eval shot');
 }
 console.log(errs.length ? 'ERRORS:\n' + errs.slice(0, 12).join('\n') : 'no console errors');
 await browser.close();
