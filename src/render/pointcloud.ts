@@ -64,6 +64,10 @@ export class PointCloud {
   private geo: THREE.BufferGeometry;
   private mat: THREE.RawShaderMaterial;
   private posAttr: THREE.BufferAttribute;
+  private colorAttr: THREE.BufferAttribute;
+  private styleAttr: THREE.BufferAttribute;
+  readonly colors: Float32Array;
+  readonly style: Float32Array;
 
   constructor(capacity: number, colors: Float32Array, style: Float32Array) {
     this.positions = new Float32Array(capacity * 3);
@@ -71,8 +75,14 @@ export class PointCloud {
     this.posAttr = new THREE.BufferAttribute(this.positions, 3);
     this.posAttr.setUsage(THREE.DynamicDrawUsage);
     this.geo.setAttribute('position', this.posAttr);
-    this.geo.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
-    this.geo.setAttribute('aStyle', new THREE.BufferAttribute(style, 2));
+    this.colors = colors;
+    this.style = style;
+    this.colorAttr = new THREE.BufferAttribute(colors, 3);
+    this.styleAttr = new THREE.BufferAttribute(style, 2);
+    this.colorAttr.setUsage(THREE.DynamicDrawUsage);
+    this.styleAttr.setUsage(THREE.DynamicDrawUsage);
+    this.geo.setAttribute('aColor', this.colorAttr);
+    this.geo.setAttribute('aStyle', this.styleAttr);
     this.geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
     this.mat = new THREE.RawShaderMaterial({
       vertexShader: VERT,
@@ -97,6 +107,18 @@ export class PointCloud {
   updateFrom(src: Float64Array, count: number, scale = 1): void {
     const p = this.positions;
     for (let i = 0; i < count * 3; i++) p[i] = src[i] * scale;
+    this.posAttr.needsUpdate = true;
+    this.geo.setDrawRange(0, count);
+  }
+
+  /** Re-upload colour and style after writing into the exposed arrays. */
+  touchAppearance(): void {
+    this.colorAttr.needsUpdate = true;
+    this.styleAttr.needsUpdate = true;
+  }
+
+  /** Write positions directly from a Float32Array of xyz triples. */
+  setPositions(count: number): void {
     this.posAttr.needsUpdate = true;
     this.geo.setDrawRange(0, count);
   }

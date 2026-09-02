@@ -37,6 +37,7 @@ const gp = galaxyFromHalo(seed, halo, Number(params.get('env') ?? 0));
 if (params.get('type')) (gp as { type: string }).type = params.get('type') as string;
 const buf = buildGalaxy(gp, { count: Number(params.get('stars') ?? 500000) });
 const view = new GalaxyView(buf);
+view.setViewport(window.innerHeight, engine.camera.fov);
 engine.scene.add(view.group);
 
 view.setFlux(Number(params.get('flux') ?? 1));

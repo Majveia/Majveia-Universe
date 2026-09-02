@@ -25,6 +25,7 @@ precision highp float;
 in vec4 orbit;   // a, b, theta0, omega (rad/Myr)
 in vec4 aStar;   // tilt0, z, luminosity, kind
 in vec3 aColor;
+in float aSnrRadiusKpc;
 
 uniform mat4 modelViewMatrix;
 uniform mat4 projectionMatrix;
@@ -40,6 +41,7 @@ uniform float uDust;
 uniform float uFlux;
 uniform float uStarSize;
 uniform float uDiffuseSize;
+uniform float uPixPerRad;
 uniform float uMaxSize;
 uniform float uArmContrast;
 uniform vec3 uCamera;
@@ -47,6 +49,7 @@ uniform vec3 uCamera;
 out vec3 vColor;
 out float vAlpha;
 out float vKind;
+out float vShell;
 
 const float PI = 3.14159265359;
 
@@ -109,7 +112,14 @@ void main() {
   float size = uStarSize * (1.0 + 0.42 * log2(1.0 + flux * 24.0));
   float maxSize = uMaxSize;
   if (kind > 2.5 && kind < 3.5) { size *= 2.2; maxSize = 8.0; }  // H II: small knots
-  if (kind > 4.5) {
+  if (kind > 6.5) {
+    // A supernova remnant is a resolved shell, not a point: its angular size
+    // comes from its physical radius, so a young one is a knot and an old one
+    // is a ring tens of parsecs across.
+    float ang = (aSnrRadiusKpc / dist) * uPixPerRad;
+    size = max(ang * 2.0, 1.4);
+    maxSize = 90.0;
+  } else if (kind > 4.5) {
     // Unresolved starlight: one sprite stands for a whole neighbourhood, so it
     // is drawn as a broad soft gaussian whose peak is reduced in proportion to
     // its area. Total flux is identical to drawing it as a point.
@@ -127,6 +137,9 @@ void main() {
   vColor = aColor * ext;
   vAlpha = peak * arm;
   vKind = kind;
+  // How resolved the shell is: below a couple of pixels it must read as a
+  // point, above that as a ring.
+  vShell = kind > 6.5 ? clamp((size - 3.0) / 6.0, 0.0, 1.0) : 0.0;
   gl_PointSize = size;
 }
 `;
@@ -136,12 +149,24 @@ precision highp float;
 in vec3 vColor;
 in float vAlpha;
 in float vKind;
+in float vShell;
 out vec4 fragColor;
 void main() {
   vec2 d = gl_PointCoord * 2.0 - 1.0;
   float r2 = dot(d, d);
   if (r2 > 1.0) discard;
   float g;
+  if (vKind > 6.5) {
+    // A limb-brightened shell: the line of sight through a thin spherical
+    // shell is longest at its edge, which is why a supernova remnant looks
+    // like a ring rather than a disc.
+    float r = sqrt(r2);
+    float ring = exp(-pow((r - 0.72) * 5.5, 2.0));
+    float fill = exp(-r2 * 2.0) * 0.30;
+    g = mix(exp(-r2 * 3.6), ring * 0.9 + fill, vShell);
+    fragColor = vec4(vColor * (g * vAlpha), 1.0);
+    return;
+  }
   if (vKind > 4.5) {
     g = exp(-r2 * 2.6) * 0.42;          // unresolved starlight: broad and soft
   } else if (vKind > 2.5 && vKind < 3.5) {
@@ -170,6 +195,18 @@ export class GalaxyView {
     this.geo.setAttribute('orbit', new THREE.BufferAttribute(buffers.orbit, 4));
     this.geo.setAttribute('aStar', new THREE.BufferAttribute(buffers.star, 4));
     this.geo.setAttribute('aColor', new THREE.BufferAttribute(buffers.color, 3));
+    // Remnant shell radii, in kpc, aligned with the sprite order. Non-remnant
+    // sprites get zero and never read it.
+    const snr = new Float32Array(buffers.count);
+    {
+      let k = 0;
+      for (let idx = 0; idx < buffers.count; idx++) {
+        if (buffers.star[idx * 4 + 3] > 6.5) {
+          snr[idx] = (buffers.snrRadiusPc[k++] ?? 10) / 1000;
+        }
+      }
+    }
+    this.geo.setAttribute('aSnrRadiusKpc', new THREE.BufferAttribute(snr, 1));
     this.geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(buffers.count * 3), 3));
     this.geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), p.radiusKpc * 3);
 
@@ -189,6 +226,7 @@ export class GalaxyView {
         uFlux: { value: 1 },
         uStarSize: { value: 1.5 },
         uDiffuseSize: { value: 20 },
+        uPixPerRad: { value: 800 },
         uMaxSize: { value: 16 },
         uArmContrast: { value: 2.4 },
         uCamera: { value: new THREE.Vector3() },
@@ -221,6 +259,11 @@ export class GalaxyView {
   setFlux(v: number): void { this.material.uniforms.uFlux.value = this.baseFlux * v; }
   setStarSize(v: number): void { this.material.uniforms.uStarSize.value = v; }
   setDiffuseSize(v: number): void { this.material.uniforms.uDiffuseSize.value = v; }
+
+  /** Keep resolved shell sizes in physical units as the window changes. */
+  setViewport(heightPx: number, fovDeg: number): void {
+    this.material.uniforms.uPixPerRad.value = heightPx / (2 * Math.tan((fovDeg * Math.PI) / 360));
+  }
   setDust(v: number): void { this.material.uniforms.uDust.value = v; }
 
   dispose(): void { this.geo.dispose(); this.material.dispose(); }

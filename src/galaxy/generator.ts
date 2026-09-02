@@ -73,16 +73,23 @@ export interface GalaxyBuffers {
    * (tilt0, z, luminosity, kind). Kinds:
    *   0 disc (resolved)   1 bulge (resolved)  2 halo / globulars
    *   3 H II region       4 young / OB        5 disc (unresolved)
-   *   6 bulge (unresolved)
+   *   6 bulge (unresolved) 7 supernova remnant
    */
   star: Float32Array;
   /** Linear-light RGB. */
   color: Float32Array;
+  /** Shell radius of each supernova remnant, parsecs, in emission order. */
+  snrRadiusPc: Float32Array;
   params: GalaxyParams;
   /** Handy summary numbers for the inspector. */
   stats: {
     starCount: number;
     hiiCount: number;
+    snrCount: number;
+    /** True number of remnants the galaxy holds, before the sprite cap. */
+    snrTrueCount: number;
+    /** Supernovae per century, both channels. */
+    supernovaePerCentury: number;
     totalSampledLuminosity: number;
     rotationPeriodMyr: number;
     escapeVelocityKms: number;
@@ -244,7 +251,15 @@ export function buildGalaxy(p: GalaxyParams, opts: BuildOptions = {}): GalaxyBuf
   // lanes cut across a continuous disc instead of across empty space.
   const diffDiscN = Math.floor(count * 0.17);
   const diffBulgeN = Math.floor(count * 0.06 * (0.3 + p.bulgeFraction));
-  const discN = count - bulgeN - haloN - hiiN - diffDiscN - diffBulgeN;
+  // Supernova remnants. The steady-state number is the rate times the lifetime:
+  // a galaxy forming a few solar masses a year holds several thousand of them
+  // at any moment, each a few tens of parsecs across and a few hundred thousand
+  // years old. They are drawn as a population rather than as events, because
+  // that is what they are on any timescale you can watch.
+  const snrLifetimeYr = 3e5;
+  const snrTrue = (p.sfrMsunYr / 100 + 4e-14 * p.stellarMassMsun) * snrLifetimeYr;
+  const snrN = Math.min(Math.floor(count * 0.012), Math.max(0, Math.round(snrTrue)));
+  const discN = count - bulgeN - haloN - hiiN - diffDiscN - diffBulgeN - snrN;
 
   const tanPitch = Math.tan(p.pitch);
   const a0 = Math.max(0.35, p.discScaleKpc * 0.55);
@@ -273,6 +288,7 @@ export function buildGalaxy(p: GalaxyParams, opts: BuildOptions = {}): GalaxyBuf
   // Fraction of the disc that is young and blue, from the specific SFR.
   const youngFrac = Math.min(0.16, 0.008 + (p.sfrMsunYr * 1e9) / Math.max(p.stellarMassMsun, 1) * 2.2);
 
+  const snrRadiusPc: number[] = [];
   let i = 0;
   const put = (
     a: number, b: number, theta0: number, omega: number,
@@ -450,6 +466,36 @@ export function buildGalaxy(p: GalaxyParams, opts: BuildOptions = {}): GalaxyBuf
     }
   }
 
+  // --- Supernova remnants. Core-collapse ones sit in the arms where their
+  //     short-lived progenitors formed; type Ia ones, whose progenitors are old
+  //     white dwarfs, are scattered through the whole disc.
+  const ccFraction = snrTrue > 0
+    ? (p.sfrMsunYr / 100) / (p.sfrMsunYr / 100 + 4e-14 * p.stellarMassMsun) : 0;
+  for (let k = 0; k < snrN; k++) {
+    const coreCollapse = rng.chance(ccFraction);
+    const a = Math.max(0.05, sampleExponentialDisc(rng, p.discScaleKpc * 1.1, p.radiusKpc * 1.15));
+    // Age drawn uniformly over the remnant lifetime, since the rate is steady;
+    // radius follows from the Sedov-Taylor solution, so the population shows
+    // the whole size distribution at once.
+    const ageFrac = rng.next();
+    const radiusPc = 20 * Math.pow(Math.max(ageFrac, 1e-3), 0.32);
+    let tilt: number;
+    if (coreCollapse && p.arms > 0) {
+      tilt = orbitTilt(a) + rng.normal(0, 0.16)
+        + (rng.int(0, Math.max(0, p.arms - 1)) * 2 * Math.PI) / Math.max(p.arms, 1);
+    } else {
+      tilt = rng.range(0, Math.PI * 2);
+    }
+    // [O III] and [S II] shells plus synchrotron: teal-white, fading with age.
+    const fade = Math.pow(1 - ageFrac, 0.8);
+    put(a, a, rng.range(0, Math.PI * 2), angularRate(p, a),
+      tilt, sampleSech2(rng, p.thicknessKpc * (coreCollapse ? 0.5 : 1.0)),
+      0.4 + 2.5 * fade, 7,
+      0.55 + 0.35 * (1 - fade), 0.95, 0.85 + 0.15 * fade);
+    // Stash the shell radius in the unused size slot via the style array below.
+    snrRadiusPc.push(radiusPc);
+  }
+
   // Any shortfall from rounding becomes disc stars
   while (i < count) {
     const a = Math.max(0.05, sampleExponentialDisc(rng, p.discScaleKpc, p.radiusKpc));
@@ -484,11 +530,12 @@ export function buildGalaxy(p: GalaxyParams, opts: BuildOptions = {}): GalaxyBuf
     Lyoung,                         // 4 young / OB
     Lold * (1 - fb) * 0.97 * 0.58,  // 5 disc, unresolved
     Lold * fb * 0.62,               // 6 bulge, unresolved
+    0.02 * Lyoung + 4e-14 * p.stellarMassMsun * 3e5 * 3e4, // 7 supernova remnants
   ];
-  const sums = new Array(7).fill(0);
+  const sums = new Array(8).fill(0);
   for (let k = 0; k < count; k++) sums[star[k * 4 + 3] | 0] += star[k * 4 + 2];
-  const scale = new Array(7).fill(0);
-  for (let kind = 0; kind < 7; kind++) {
+  const scale = new Array(8).fill(0);
+  for (let kind = 0; kind < 8; kind++) {
     scale[kind] = sums[kind] > 0 ? budget[kind] / sums[kind] : 0;
   }
   let totalL = 0;
@@ -514,10 +561,14 @@ export function buildGalaxy(p: GalaxyParams, opts: BuildOptions = {}): GalaxyBuf
     orbit,
     star,
     color,
+    snrRadiusPc: Float32Array.from(snrRadiusPc),
     params: p,
     stats: {
       starCount: Math.round(p.stellarMassMsun / 0.4),
       hiiCount: hiiN,
+      snrCount: snrN,
+      snrTrueCount: Math.round(snrTrue),
+      supernovaePerCentury: (p.sfrMsunYr / 100 + 4e-14 * p.stellarMassMsun) * 100,
       totalSampledLuminosity: totalL,
       rotationPeriodMyr: (2 * Math.PI) / Math.max(angularRate(p, rSun), 1e-9),
       escapeVelocityKms: Math.sqrt(2) * vc,

@@ -37,6 +37,10 @@ import { BlackHoleView } from '../render/blackhole';
 import { buildGalaxy, angularRate, rotationCurve, type GalaxyParams } from '../galaxy/generator';
 import { Encounter } from './encounter';
 import { PointCloud } from '../render/pointcloud';
+import {
+  lightCurve, magnitudeToLuminosity, supernovaColor, coreCollapseRate, typeIaRate,
+  type SupernovaType,
+} from '../astro/supernova';
 import { starLabel } from '../astro/stellar';
 import { CLASS_LABEL, type Planet } from '../astro/planets';
 import { blackbodyRGB } from '../astro/blackbody';
@@ -645,6 +649,25 @@ export class GalaxyStage extends Stage {
   private encounterCloud?: PointCloud;
   private encounterSteps = 0;
 
+  // --- Live supernovae.
+  //
+  // A galaxy like this one has a supernova every few decades, and each is
+  // bright for about a year. Those two timescales differ by a factor of fifty,
+  // so at any honest playback speed you either never see one or see nothing but
+  // a strobe. The events therefore run on their own clock - the light curve at
+  // a tenth of a year per second, the arrival rate capped at about one every
+  // couple of seconds - and the readout states the galaxy's true rate alongside
+  // what is being shown. Everything about each event except its cadence is real:
+  // the type, where it goes off, its peak magnitude, and how it fades.
+  private snCloud?: PointCloud;
+  private snEvents: {
+    type: SupernovaType; x: number; y: number; z: number; days: number; alive: boolean;
+  }[] = [];
+  private snSpawnAccum = 0;
+  private snCount = 0;
+  private static SN_YEARS_PER_SECOND = 0.11;
+  private static SN_MAX_PER_SECOND = 0.7;
+
   build(): void {
     const u = this.env.universe;
     const ci = this.ctx.cluster ?? 0;
@@ -746,6 +769,17 @@ export class GalaxyStage extends Stage {
     //     is around a hundred-millionth of the galaxy's, so it is a point here;
     //     the lensing only becomes visible when you go and look.
     const rgKpc = (2.95e3 * g.blackHoleMsun / 2) / 3.0857e19;
+    // Live supernovae: a small pool of slots, reused as events come and go.
+    const SLOTS = 28;
+    this.snCloud = new PointCloud(SLOTS, new Float32Array(SLOTS * 3), new Float32Array(SLOTS * 2));
+    this.snCloud.setSize(2.8);
+    this.snCloud.setBrightness(1);
+    this.snCloud.setCount(0);
+    this.root.add(this.snCloud.points);
+    for (let i = 0; i < SLOTS; i++) {
+      this.snEvents.push({ type: 'II-P', x: 0, y: 0, z: 0, days: 0, alive: false });
+    }
+
     this.bh = new BlackHoleView({
       massMsun: g.blackHoleMsun,
       gravitationalRadius: Math.max(rgKpc, g.discScaleKpc * 1e-6),
@@ -757,6 +791,7 @@ export class GalaxyStage extends Stage {
     });
     this.root.add(this.bh.mesh);
 
+    this.view.setViewport(this.env.viewport()[1], this.env.engine.camera.fov);
     const c = this.env.controls;
     c.snapTo(new THREE.Vector3(), g.radiusKpc * 2.4, 0.45, 0.78);
     c.minDistance = 1e-7;
@@ -810,6 +845,10 @@ export class GalaxyStage extends Stage {
 
   get encounterActive(): boolean { return !!this.encounter; }
 
+  override onResize(): void {
+    this.view.setViewport(this.env.viewport()[1], this.env.engine.camera.fov);
+  }
+
   update(dt: number): void {
     if (this.encounter && this.encounterCloud) {
       this.simTime += dt * this.timeScale;
@@ -847,10 +886,78 @@ export class GalaxyStage extends Stage {
     }
     attr.needsUpdate = true;
 
+    this.updateSupernovae(dt);
+
     // The catalogue markers only help when you are close enough to aim at one.
     const d = this.env.controls.distance;
     (this.catalogPoints.material as THREE.RawShaderMaterial).uniforms.uOpacity.value =
       0.55 * Math.min(1, Math.max(0, (this.params.radiusKpc * 6 - d) / (this.params.radiusKpc * 4)));
+  }
+
+  /** Advance the supernova display; see the note on its clock above. */
+  private updateSupernovae(dt: number): void {
+    const cloud = this.snCloud;
+    if (!cloud) return;
+    const g = this.params;
+    const running = this.timeScale > 0;
+    if (running) {
+      this.snSpawnAccum += dt * GalaxyStage.SN_MAX_PER_SECOND;
+      while (this.snSpawnAccum >= 1) {
+        this.snSpawnAccum -= 1;
+        this.spawnSupernova();
+      }
+    }
+
+    const dDays = running ? dt * GalaxyStage.SN_YEARS_PER_SECOND * 365.25 : 0;
+    let n = 0;
+    const pos = cloud.positions;
+    const col = cloud.colors;
+    const sty = cloud.style;
+    for (const e of this.snEvents) {
+      if (!e.alive) continue;
+      e.days += dDays;
+      const mag = lightCurve(e.type, e.days);
+      if (mag > 2) { e.alive = false; continue; }  // faded below anything visible
+      const L = magnitudeToLuminosity(mag);
+      const c = supernovaColor(e.type, e.days);
+      pos[n * 3] = e.x; pos[n * 3 + 1] = e.y; pos[n * 3 + 2] = e.z;
+      col[n * 3] = c[0]; col[n * 3 + 1] = c[1]; col[n * 3 + 2] = c[2];
+      // A supernova at peak briefly outshines a billion suns; the sprite is
+      // scaled against the galaxy's own exposure so it reads as that.
+      sty[n * 2] = 1 + 0.5 * Math.log10(Math.max(L / 1e8, 1));
+      sty[n * 2 + 1] = Math.min(6, L / 6e8);
+      n++;
+    }
+    this.snCount = n;
+    cloud.setPositions(n);
+    cloud.touchAppearance();
+    void g;
+  }
+
+  private spawnSupernova(): void {
+    const slot = this.snEvents.find((e) => !e.alive);
+    if (!slot) return;
+    const g = this.params;
+    const rng = new RNG(hash3(this.encounterSteps, Math.floor(this.simTime * 977), 7, g.seed));
+    const cc = coreCollapseRate(g.sfrMsunYr);
+    const ia = typeIaRate(g.stellarMassMsun, g.sfrMsunYr);
+    const coreCollapse = rng.chance(cc / Math.max(cc + ia, 1e-30));
+    slot.type = coreCollapse ? (rng.chance(0.75) ? 'II-P' : 'Ib/c') : 'Ia';
+    // Core collapse happens where its short-lived progenitors formed - in the
+    // arms. Type Ia progenitors are old white dwarfs, so they go off anywhere.
+    const a = Math.max(0.1, -g.discScaleKpc * Math.log(1 - rng.next() * 0.99));
+    const a0 = Math.max(0.35, g.discScaleKpc * 0.55);
+    const tan = Math.tan(g.pitch);
+    const th = coreCollapse && g.arms > 0
+      ? Math.log(Math.max(a, 0.02) / a0) / tan + rng.normal(0, 0.13)
+        + (rng.int(0, Math.max(0, g.arms - 1)) * 2 * Math.PI) / g.arms
+        + this.patternRate * this.view.timeMyr
+      : rng.range(0, Math.PI * 2);
+    slot.x = a * Math.cos(th);
+    slot.z = a * Math.sin(th);
+    slot.y = rng.normal(0, g.thicknessKpc * (coreCollapse ? 0.5 : 1));
+    slot.days = 0;
+    slot.alive = true;
   }
 
   rows(): Row[] {
@@ -880,6 +987,9 @@ export class GalaxyStage extends Stage {
       { k: 'rotation', v: Math.round(this.env.universe.orbitalPeriodMyr(g, rSun)).toString(), u: 'Myr' },
       { k: 'star formation', v: g.sfrMsunYr.toFixed(2), u: 'M☉/yr' },
       { k: 'central BH', v: sig(g.blackHoleMsun, 2), u: 'M☉' },
+      { k: 'supernovae', v: this.view.buffers.stats.supernovaePerCentury.toFixed(2), u: '/century' },
+      { k: 'remnants', v: commas(this.view.buffers.stats.snrTrueCount) },
+      { k: 'now shining', v: this.snCount.toString() },
       { k: 'elapsed', v: (this.simTime).toFixed(0), u: 'Myr' },
       { k: 'field of view', v: dv, u: du },
     ];
@@ -948,6 +1058,7 @@ export class GalaxyStage extends Stage {
 
   override dispose(): void {
     this.view.dispose();
+    this.snCloud?.dispose();
     this.encounterCloud?.dispose();
     for (const n of this.nebulae) n.dispose();
     this.bh?.dispose();
