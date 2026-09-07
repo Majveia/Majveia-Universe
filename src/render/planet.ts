@@ -514,7 +514,8 @@ export class PlanetView {
       },
     });
 
-    this.surface = new THREE.Mesh(new THREE.SphereGeometry(R, seg, seg / 2), this.surfMat);
+    this.surface = new THREE.Mesh(
+      new THREE.SphereGeometry(R, Math.max(seg, 160), Math.max(seg, 160) / 2), this.surfMat);
     // Oblateness from rotation: a fast-spinning gas giant is visibly squashed.
     const oblate = Math.min(0.14, (2 * Math.PI * R / Math.max(Math.abs(planet.dayS), 1)) ** 2 * 0);
     this.surface.scale.set(1, 1 - flattening(planet) - oblate, 1);
@@ -549,7 +550,15 @@ export class PlanetView {
           uMie: { value: planet.cloudCover * 0.28 + (typeCode === 1 ? 0.3 : 0.07) },
         },
       });
-      this.atmosphere = new THREE.Mesh(new THREE.SphereGeometry(atmoR, 64, 32), this.atmoMat);
+      // The atmosphere shell is drawn outside the surface, so the silhouette
+      // you actually see against space is *its* polygon count, not the
+      // planet's - and at sixty-four segments a world filling the frame had a
+      // visibly faceted limb, twenty pixels to a facet. It is the cheapest
+      // geometry in the scene; there is no reason to be careful with it.
+      this.atmosphere = new THREE.Mesh(
+        new THREE.SphereGeometry(atmoR, Math.max(seg, 192), Math.max(seg, 192) / 2),
+        this.atmoMat,
+      );
       this.atmoRatio = atmoR / R;
       this.group.add(this.atmosphere);
     }

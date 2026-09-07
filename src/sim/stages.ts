@@ -1048,7 +1048,14 @@ export class GalaxyStage extends Stage {
     this.catalogPoints = new THREE.Points(cg, new THREE.RawShaderMaterial({
       glslVersion: THREE.GLSL3,
       transparent: true, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false,
-      uniforms: { uOpacity: { value: 0.5 } },
+      // These are stars, not pins. Drawing them as rings said "you may enter
+      // here" clearly enough, but there are several hundred of them and a
+      // galaxy full of hollow circles stops looking like a galaxy - the
+      // markers were the brightest thing in the frame and the disc was behind
+      // them. So: a point of starlight with a halo, and the halo carries the
+      // hint. What tells you which ones you can go into is that they are the
+      // only ones that hold still and brighten when you point at them.
+      uniforms: { uOpacity: { value: 0.34 } },
       vertexShader: `precision highp float;
         uniform mat4 modelViewMatrix; uniform mat4 projectionMatrix;
         in vec3 position; in vec3 aColor; out vec3 vC;
@@ -1056,7 +1063,7 @@ export class GalaxyStage extends Stage {
           vC = aColor;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
           gl_Position = projectionMatrix * mv;
-          gl_PointSize = clamp(90.0 / max(-mv.z, 0.02), 1.5, 7.0);
+          gl_PointSize = clamp(74.0 / max(-mv.z, 0.02), 1.5, 6.0);
         }`,
       fragmentShader: `precision highp float;
         in vec3 vC; out vec4 fragColor; uniform float uOpacity;
@@ -1064,8 +1071,11 @@ export class GalaxyStage extends Stage {
           vec2 d = gl_PointCoord * 2.0 - 1.0;
           float r = length(d);
           if (r > 1.0) discard;
-          float ring = smoothstep(0.5, 0.75, r) * smoothstep(1.0, 0.8, r);
-          fragColor = vec4(vC * ring * uOpacity, 1.0);
+          // Monotone from the centre out. A bright core with a separate ring
+          // around it still reads as a ring, however faint the ring is - the
+          // eye finds the annulus - so there is no annulus: just a star.
+          float I = exp(-r * r * 3.4) * (1.0 - smoothstep(0.72, 1.0, r));
+          fragColor = vec4(vC * I * uOpacity, 1.0);
         }`,
     }));
     this.catalogPoints.frustumCulled = false;

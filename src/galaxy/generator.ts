@@ -183,6 +183,33 @@ export const rotationCurve = (p: GalaxyParams, rKpc: number): number =>
   p.vMaxKms * Math.tanh(rKpc / Math.max(p.vTurnKpc, 1e-3));
 
 /** Angular rate in radians per megayear. 1 km/s = 1.0227 kpc/Gyr. */
+/**
+ * A Hernquist radius, sampled by inverting its enclosed mass and rejecting
+ * anything past a cut-off.
+ *
+ * The inversion is r = Re sqrt(u) / (1 - sqrt(u)), which has no upper bound -
+ * every sample has to land somewhere, so there has to be a cut. Clamping to it
+ * is the obvious thing and it is wrong: a Hernquist profile still has a fifth
+ * of its mass outside seven effective radii, and clamping puts all of that on
+ * exactly one radius. The result is a bright shell, and a galaxy with a
+ * perfectly sharp circular edge. Rejecting and redrawing costs about a quarter
+ * of an extra sample and leaves the profile alone.
+ */
+function sampleHernquist(rng: RNG, re: number, cut: number): number {
+  for (let t = 0; t < 48; t++) {
+    const s = Math.sqrt(rng.next());
+    const r = (re * s) / Math.max(1e-3, 1 - s);
+    if (r <= cut) return r;
+  }
+  return cut * rng.next();
+}
+
+/** Hermite smoothstep between two edges, clamped. */
+function smoothEdge(x: number, a: number, b: number): number {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
 export function angularRate(p: GalaxyParams, rKpc: number): number {
   if (rKpc < 1e-4) return 0;
   return (rotationCurve(p, rKpc) * 1.02271e-3) / rKpc;
@@ -250,7 +277,12 @@ export function buildGalaxy(p: GalaxyParams, opts: BuildOptions = {}): GalaxyBuf
   // photographic plate records - and they orbit with everything else, so dust
   // lanes cut across a continuous disc instead of across empty space.
   const diffDiscN = Math.floor(count * 0.17);
-  const diffBulgeN = Math.floor(count * 0.06 * (0.3 + p.bulgeFraction));
+  // A spiral's bulge is a detail; an elliptical's bulge is the whole galaxy,
+  // and rendering it from the same handful of large diffuse sprites leaves the
+  // envelope visibly lumpy. The total light per population is normalised
+  // afterwards, so more of them means each is fainter and the granularity goes
+  // rather than the brightness changing.
+  const diffBulgeN = Math.floor(count * 0.06 * (0.5 + 1.6 * p.bulgeFraction));
   // Supernova remnants. The steady-state number is the rate times the lifetime:
   // a galaxy forming a few solar masses a year holds several thousand of them
   // at any moment, each a few tens of parsecs across and a few hundred thousand
@@ -392,31 +424,36 @@ export function buildGalaxy(p: GalaxyParams, opts: BuildOptions = {}): GalaxyBuf
   }
 
   // --- Unresolved bulge light.
+  //
+  // A Hernquist profile has no edge, and every sample has to land somewhere,
+  // so it gets cut off - but cutting it off at a radius draws a circle in the
+  // sky, which is what an elliptical looked like here: a perfectly sharp disc
+  // of light with nothing at all outside it. The cut is still there. It fades
+  // into it now.
+  const diffCut = p.bulgeRadiusKpc * 7;
   for (let k = 0; k < diffBulgeN; k++) {
-    const u = rng.next();
-    const sq = Math.sqrt(u);
-    const rr = Math.min(p.bulgeRadiusKpc * 5, (p.bulgeRadiusKpc * sq) / Math.max(1e-3, 1 - sq));
+    const rr = sampleHernquist(rng, p.bulgeRadiusKpc, diffCut);
     const dir = rng.onSphere();
     const a = Math.max(0.02, rr * Math.hypot(dir[0], dir[1]));
     const [r, g, bl] = popColor(p.ageGyr + 1.2, p.metallicity + 0.28);
     put(a, a * rng.range(0.8, 1.0), rng.range(0, Math.PI * 2),
       angularRate(p, Math.max(a, 0.05)) * 0.6, rng.range(0, Math.PI * 2),
-      rr * dir[2] * (p.type === 'E' ? 0.85 : 0.7), 1, 6, r, g, bl);
+      rr * dir[2] * (p.type === 'E' ? 0.85 : 0.7),
+      Math.max(1e-3, 1 - smoothEdge(rr / diffCut, 0.55, 1)), 6, r, g, bl);
   }
 
   // --- Bulge: pressure supported, near-spherical, old and metal rich.
+  const bulgeCut = p.bulgeRadiusKpc * 9;
   for (let k = 0; k < bulgeN; k++) {
-    // Hernquist profile r = Re u^{1/2}/(1-u^{1/2}) sampled by inversion
-    const u = rng.next();
-    const s = Math.sqrt(u);
-    const rr = Math.min(p.bulgeRadiusKpc * 6, (p.bulgeRadiusKpc * s) / Math.max(1e-3, 1 - s));
+    const rr = sampleHernquist(rng, p.bulgeRadiusKpc, bulgeCut);
     const dir = rng.onSphere();
     const flat = p.type === 'E' ? rng.range(0.55, 1.0) : 0.7;
     const a = Math.max(0.02, rr * Math.hypot(dir[0], dir[1]));
     const [r, g, bl, L] = popColor(p.ageGyr + 1.2, p.metallicity + 0.28);
     put(a, a * rng.range(0.75, 1.0), rng.range(0, Math.PI * 2),
       angularRate(p, Math.max(a, 0.05)) * (elliptical ? 0.25 : 0.6),
-      rng.range(0, Math.PI * 2), rr * dir[2] * flat, L, 1, r, g, bl);
+      rng.range(0, Math.PI * 2), rr * dir[2] * flat,
+      Math.max(1e-4, L * (1 - smoothEdge(rr / bulgeCut, 0.6, 1))), 1, r, g, bl);
   }
 
   // --- Stellar halo and globular clusters: old, metal poor, no rotation.
