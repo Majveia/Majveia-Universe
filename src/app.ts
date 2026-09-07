@@ -148,6 +148,9 @@ export class App {
   private boost = 0;
   private boostDir = new THREE.Vector3(0, 0, -1);
   private idle = 0;
+  private hintEl!: HTMLDivElement;
+  /** Which hints the user has already demonstrated they do not need. */
+  private taught = new Set<string>();
   private lastFrame = performance.now();
   private fps = 60;
   private frame = 0;
@@ -257,11 +260,18 @@ export class App {
     }
 
     // --- Hint
-    const hint = el('div', 'layer dimmable hint');
-    hint.innerHTML =
-      '<b>drag</b> orbit · <b>scroll</b> zoom · <b>wasd</b> fly<br>' +
-      '<b>click</b> inspect · <b>enter</b> descend · <b>backspace</b> ascend<br>' +
-      '<b>space</b> time · <b>h</b> controls';
+    //
+    // Which retires itself. A line of instructions that stays on screen after
+    // it has been followed is not helping any more, it is just something else
+    // to look past - so each line goes when the thing it describes has been
+    // done, and what is left at the end is how to get them all back.
+    this.hintEl = el('div', 'layer dimmable hint');
+    this.hintEl.innerHTML =
+      '<span data-taught="look"><b>drag</b> orbit · <b>scroll</b> zoom · <b>wasd</b> fly</span><br>'
+      + '<span data-taught="go"><b>click</b> inspect · <b>enter</b> descend · '
+      + '<b>backspace</b> ascend</span><br>'
+      + '<span data-taught="time"><b>space</b> time · </span><b>h</b> controls';
+    const hint = this.hintEl;
 
     // --- Rail
     const rail = el('div', 'layer dimmable rail');
@@ -380,6 +390,7 @@ export class App {
       this.timeline.setU(OVERTURE.from);
       this.epochA = this.timeline.a;
       this.overtureT = 0;
+      this.uiRoot.classList.add('cinema');
     }
     requestAnimationFrame((t) => this.tick(t));
   }
@@ -648,6 +659,7 @@ export class App {
   private endOverture(interrupted: boolean): void {
     if (this.overtureT < 0) return;
     this.overtureT = -1;
+    this.uiRoot.classList.remove('cinema');
     if (this.stage instanceof CosmosStage) {
       this.stage.fadeCmb(0);
       this.stage.exposure = 1;
@@ -658,7 +670,21 @@ export class App {
     }
   }
 
+  /**
+   * Note that a hint has been taken, and fade it out.
+   *
+   * Once, and permanently: a line that comes back after you have used it is
+   * worse than one that never left.
+   */
+  private teach(what: string): void {
+    if (this.taught.has(what)) return;
+    this.taught.add(what);
+    const span = this.hintEl?.querySelector(`[data-taught="${what}"]`);
+    span?.classList.add('taught');
+  }
+
   private togglePlay(): void {
+    this.teach('time');
     this.playing = !this.playing;
     this.playBtn.classList.toggle('on', this.playing);
     this.playBtn.textContent = this.playing ? '❚❚ pause time' : '▸ run time';
@@ -688,7 +714,7 @@ export class App {
     // the toolbar slides away, the keyboard comes up, the device is rotated.
     window.visualViewport?.addEventListener('resize', () => this.resize());
     window.addEventListener('orientationchange', () => setTimeout(() => this.resize(), 120));
-    this.controls.onInteract = () => this.wake();
+    this.controls.onInteract = () => { this.wake(); this.teach('look'); };
 
     for (const ev of ['pointermove', 'pointerdown', 'wheel', 'keydown'] as const) {
       window.addEventListener(ev, () => this.wake(), { passive: true });
@@ -723,7 +749,7 @@ export class App {
     // with a cursor and two buttons have to be told apart by rhythm instead:
     // tap to look at, double tap to go in, two fingers to come back out. The
     // last two are the map gestures everybody already has in their hands.
-    this.controls.onTap = (x, y) => { this.aimAt(x, y); this.inspectHere(); };
+    this.controls.onTap = (x, y) => { this.aimAt(x, y); this.inspectHere(); this.teach('go'); };
     // Nothing is bound to a hold.
     //
     // It used to inspect, which a tap already does, so it bought nothing - and
@@ -765,8 +791,8 @@ export class App {
   runKey(code: string): void {
     switch (code) {
         case 'Space': this.togglePlay(); break;
-        case 'Enter': this.descend(true); break;
-        case 'Backspace': this.ascend(); break;
+        case 'Enter': this.teach('go'); this.descend(true); break;
+        case 'Backspace': this.teach('go'); this.ascend(); break;
         case 'KeyH': case 'Slash':
           this.mark('KeyH', this.helpEl.classList.toggle('show'));
           break;

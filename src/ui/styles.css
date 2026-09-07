@@ -111,6 +111,22 @@ html, body {
 #ui.idle .dimmable { opacity: 0.22; }
 #ui.hidden .layer { opacity: 0 !important; pointer-events: none !important; }
 
+/* The opening run is watched, not driven. Everything that would be used to
+   drive it stands aside until it is over - what is left is the sky, the
+   timeline saying where in history you are, and the caption. */
+#ui.cinema .masthead,
+#ui.cinema .rail,
+#ui.cinema .ladder,
+#ui.cinema .readout,
+#ui.cinema .hint,
+#ui.cinema .warp { opacity: 0 !important; pointer-events: none !important; }
+#ui.cinema .timeline { opacity: 0.7; }
+#ui.cinema.idle .timeline { opacity: 0.7; }
+
+/* The hints retire once they have been taken: what is left is how to get
+   them back. */
+.hint .taught { opacity: 0; transition: opacity 1400ms ease; }
+
 /* --- Masthead ------------------------------------------------------------ */
 .masthead {
   top: var(--edge);
@@ -130,7 +146,7 @@ html, body {
   font-size: 10px;
   letter-spacing: 0.14em;
   color: rgba(var(--ink), 0.34);
-  max-width: 30ch;
+  max-width: 44ch;
   line-height: 1.55;
 }
 .masthead .seed {

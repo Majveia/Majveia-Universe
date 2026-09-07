@@ -560,9 +560,10 @@ export class ClusterStage extends Stage {
     const ci = this.ctx.cluster ?? 0;
     const cl = u.cluster(ci);
     this.title = cl.name;
-    this.subtitle =
-      `${commas(cl.richness)} galaxies · σ ${Math.round(cl.sigmaKms)} km/s · ` +
-      `${sig(cl.massMsun, 2)} M☉ of which ~85% is dark matter`;
+    // The numbers are all in the readout below; what belongs up here is what
+    // they mean.
+    this.subtitle = `${commas(cl.richness)} galaxies falling through a halo ` +
+      'fifty times their combined mass';
 
     // The sky behind a cluster is not a starfield - it is the distant
     // universe, and the cluster bends its light.
