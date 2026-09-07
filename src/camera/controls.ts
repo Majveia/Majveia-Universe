@@ -52,6 +52,19 @@ export class Controls {
   locked = false;
   /** True while at least one finger is on the glass. */
   touching = false;
+  /**
+   * A slow ambient orbit, radians per second, engaged only once nothing has
+   * been touched for a moment.
+   *
+   * The single cheapest thing that makes a rendered universe feel alive. A
+   * still frame reads as a photograph however much is happening inside it;
+   * the same frame drifting at a fiftieth of a degree a second reads as a
+   * place. It stops the instant a hand arrives and eases back in afterwards,
+   * so it never fights anybody.
+   */
+  drift = 0;
+  /** Seconds since anything last touched the camera. */
+  private idleFor = 0;
   /** True while the device's own orientation is aiming the camera. */
   viewfinder = false;
 
@@ -89,6 +102,7 @@ export class Controls {
 
     const down = (e: PointerEvent) => {
       if (!this.enabled || e.pointerType === 'touch') return;
+      this.idleFor = 0;
       this.dragging = e.button === 2 || e.shiftKey ? 2 : 1;
       this.lastX = e.clientX; this.lastY = e.clientY;
       el.setPointerCapture(e.pointerId);
@@ -116,6 +130,7 @@ export class Controls {
     const wheel = (e: WheelEvent) => {
       if (!this.enabled || this.locked) return;
       e.preventDefault();
+      this.idleFor = 0;
       const k = Math.exp(e.deltaY * this.zoomSpeed);
       if (this.mode === 'orbit') {
         this.dTarget = Math.max(this.minDistance, Math.min(this.maxDistance, this.dTarget * k));
@@ -152,6 +167,7 @@ export class Controls {
         // Any new contact kills the inertia: catching a spinning thing stops
         // it, which is the one behaviour everybody expects without being told.
         this.spinX = 0; this.spinY = 0;
+        this.idleFor = 0;
         this.onInteract?.();
       },
     };
@@ -334,6 +350,23 @@ export class Controls {
     }
   }
 
+  /**
+   * Set the distance directly, with no easing, keeping the current focus.
+   *
+   * For a scripted move that is already easing itself and does not want the
+   * controls easing it a second time.
+   */
+  setDistance(distance: number): void {
+    const d = Math.max(this.minDistance, Math.min(this.maxDistance, distance));
+    this.dTarget = d;
+    this.distance = d;
+  }
+
+  /** Ease the distance toward a value, the way a scroll wheel would. */
+  glideTo(distance: number): void {
+    this.dTarget = Math.max(this.minDistance, Math.min(this.maxDistance, distance));
+  }
+
   /** Snap immediately, with no easing (used when changing scale). */
   snapTo(p: THREE.Vector3, distance: number, theta?: number, phi?: number): void {
     this.spinX = 0; this.spinY = 0;
@@ -362,6 +395,19 @@ export class Controls {
       this.spinX *= decay;
       this.spinY *= decay;
       if (Math.hypot(this.spinX, this.spinY) < 8) { this.spinX = 0; this.spinY = 0; }
+    }
+
+    // --- Ambient drift.
+    //
+    // Only when the hands are off, and eased in over a couple of seconds so it
+    // never appears to snatch the camera. Suppressed entirely while the device
+    // is aiming, because there the camera already belongs to somebody.
+    const busy = this.touching || this.dragging !== 0 || this.keys.size > 0
+      || this.spinX !== 0 || this.spinY !== 0 || this.viewfinder || this.locked;
+    this.idleFor = busy ? 0 : this.idleFor + dt;
+    if (this.drift !== 0 && this.idleFor > 0.8) {
+      const ease = Math.min(1, (this.idleFor - 0.8) / 2.2);
+      this.thetaTarget += this.drift * ease * dt;
     }
 
     // --- Spring back from past a pole, once nothing is holding it there.

@@ -615,19 +615,21 @@ export class PlanetView {
       u.uClimate.value = this.climateTex.texture;
       u.uHasClimate.value = 1;
       u.uClimRange.value.set(this.climateTex.range[0], this.climateTex.range[1]);
-      // Elevation in the terrain field runs about +-1; call one unit six
-      // kilometres, which puts a tall range at Himalayan height. The lapse
-      // rate is the planet's own - moist where there is water to condense,
-      // dry where there is not - so a thin-aired world's mountains are colder
-      // than a thick-aired one's by the ratio of their gravities.
       // How cold it has to be here before there is ice on the ground. Every
       // point of the seasonal field is ranked by temperature and the coldest
       // share of it equal to the planet's water inventory is what freezes; if
       // there is more water than there is cold ground, the threshold is simply
       // the freezing point and every cold place is white.
       u.uIceThreshold.value = iceThreshold(cl, planet.waterInventory);
+      // Below the frost point of its own air the atmosphere snows onto the
+      // ground, water or no water. That is Mars's bright winter cap.
       u.uFrostK.value = planet.pressureBar > 1e-4
         ? condensationTemperature(planet.air) : -1;
+      // Elevation in the terrain field runs about +-1; call one unit six
+      // kilometres, which puts a tall range at Himalayan height. The lapse
+      // rate is the planet's own - moist where there is water to condense,
+      // dry where there is not - so a thin-aired world's mountains are colder
+      // than a thick-aired one's by the ratio of their gravities.
       const relief = 6000;
       const lapse = planet.pressureBar > 0.01
         ? moistLapseRate(planet.gravity, cl.meanK, planet.pressureBar, planet.air.cp)
@@ -635,7 +637,8 @@ export class PlanetView {
       u.uLapseRate.value = lapse * relief;
     }
 
-    this.surface = new THREE.Mesh(new THREE.SphereGeometry(R, seg, seg / 2), this.surfMat);
+    this.surface = new THREE.Mesh(
+      new THREE.SphereGeometry(R, Math.max(seg, 160), Math.max(seg, 160) / 2), this.surfMat);
     // Oblateness from rotation: a fast-spinning gas giant is visibly squashed.
     const oblate = Math.min(0.14, (2 * Math.PI * R / Math.max(Math.abs(planet.dayS), 1)) ** 2 * 0);
     this.surface.scale.set(1, 1 - flattening(planet) - oblate, 1);
@@ -670,7 +673,15 @@ export class PlanetView {
           uMie: { value: planet.cloudCover * 0.28 + (typeCode === 1 ? 0.3 : 0.07) },
         },
       });
-      this.atmosphere = new THREE.Mesh(new THREE.SphereGeometry(atmoR, 64, 32), this.atmoMat);
+      // The atmosphere shell is drawn outside the surface, so the silhouette
+      // you actually see against space is *its* polygon count, not the
+      // planet's - and at sixty-four segments a world filling the frame had a
+      // visibly faceted limb, twenty pixels to a facet. It is the cheapest
+      // geometry in the scene; there is no reason to be careful with it.
+      this.atmosphere = new THREE.Mesh(
+        new THREE.SphereGeometry(atmoR, Math.max(seg, 192), Math.max(seg, 192) / 2),
+        this.atmoMat,
+      );
       this.atmoRatio = atmoR / R;
       this.group.add(this.atmosphere);
     }

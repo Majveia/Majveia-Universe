@@ -74,6 +74,11 @@ uniform float uBrightness;
 uniform float uDipole;     // amplitude of the observer's own motion, microkelvin
 uniform vec3 uDipoleDir;
 
+// A cluster in the way. uSz is (central signal in microkelvin, core angle,
+// outer angle, kinetic signal in microkelvin); uSzDir is where it is.
+uniform vec4 uSz;
+uniform vec3 uSzDir;
+
 // Cold in blue, hot in red - the convention since COBE - but with the mean
 // taken down to near black instead of to the usual pale grey, because this is
 // meant to be looked at on a panel with real blacks and with the cosmic web
@@ -95,6 +100,26 @@ void main() {
   // Our own motion through the background: a pure dipole, and by far the
   // largest anisotropy in the real sky.
   t += uDipole * dot(d, normalize(uDipoleDir));
+
+  // And a cluster in the line of sight, scattering some of it away.
+  //
+  // The same truncated beta model the gas is drawn with, evaluated in angle
+  // rather than in megaparsecs: at beta = 2/3 the column through it has a
+  // closed form, N(b) ~ atan(L/s)/s with s = sqrt(rc^2+b^2), so the profile
+  // on the sky is that shape normalised to one at the centre. Every cluster
+  // makes the same dent whatever its distance - what changes with distance is
+  // only how large the dent is on the sky.
+  if (uSz.x != 0.0 || uSz.w != 0.0) {
+    float th = acos(clamp(dot(d, normalize(uSzDir)), -1.0, 1.0));
+    float thC = max(uSz.y, 1e-9);
+    float thMax = max(uSz.z, thC * 1.001);
+    if (th < thMax) {
+      float sc = sqrt(thC * thC + th * th);
+      float l = sqrt(max(0.0, thMax * thMax - th * th));
+      float prof = (thC / sc) * atan(l / sc) / atan(thMax / thC);
+      t += (uSz.x + uSz.w) * prof;
+    }
+  }
   fragColor = vec4(ramp(t / uRange) * uBrightness, 1.0);
 }
 `;
@@ -202,6 +227,8 @@ export class CmbView {
         uBrightness: { value: 0.075 },
         uDipole: { value: opts.dipoleMicroK ?? 0 },
         uDipoleDir: { value: new THREE.Vector3(-0.07, 0.66, 0.75).normalize() },
+        uSz: { value: new THREE.Vector4(0, 0, 0, 0) },
+        uSzDir: { value: new THREE.Vector3(0, 0, 1) },
       },
     });
     this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32), this.skyMat);
@@ -223,6 +250,29 @@ export class CmbView {
   /** Full-colour temperature range, microkelvin. */
   setRange(v: number): void { this.skyMat.uniforms.uRange.value = v; }
   setDipole(microK: number): void { this.skyMat.uniforms.uDipole.value = microK; }
+
+  /**
+   * Put a cluster in the way.
+   *
+   * @param dir        unit vector from the observer to the cluster's centre
+   * @param thermalUK  thermal signal through the centre, microkelvin, signed
+   * @param kineticUK  the cluster's own motion, microkelvin, signed
+   * @param coreRad    angular core radius
+   * @param outerRad   angular radius the gas is truncated at
+   */
+  setCluster(
+    dir: THREE.Vector3, thermalUK: number, kineticUK: number,
+    coreRad: number, outerRad: number,
+  ): void {
+    (this.skyMat.uniforms.uSzDir.value as THREE.Vector3).copy(dir).normalize();
+    (this.skyMat.uniforms.uSz.value as THREE.Vector4)
+      .set(thermalUK, coreRad, outerRad, kineticUK);
+  }
+
+  /** Take it away again. */
+  clearCluster(): void {
+    (this.skyMat.uniforms.uSz.value as THREE.Vector4).set(0, 0, 0, 0);
+  }
 
   dispose(): void {
     this.mesh.geometry.dispose();

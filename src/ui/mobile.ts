@@ -96,6 +96,10 @@ const COMMANDS: Command[] = [
 
   { key: 'KeyL', label: 'deep field', rank: 20, live: has('observeDeepField'), on: lit('KeyL') },
   {
+    key: 'Semicolon', label: 'microwave', rank: 22,
+    live: has('cycleMicrowave'), on: lit('Semicolon'),
+  },
+  {
     key: 'KeyK', label: 'critical curves', rank: 21,
     live: has('toggleCriticalCurves'), on: lit('KeyK'),
   },

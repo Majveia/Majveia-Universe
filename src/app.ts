@@ -65,7 +65,34 @@ const WARPS: TimeWarp[] = [
  */
 const BOOSTS = [0, 0.5, 0.9, 0.99, 0.9999, 0.99999, 0.999999, 0.99999999];
 
+/**
+ * The opening run through cosmic history.
+ *
+ * `from` is where on the timeline it starts, which is the dark ages: there is
+ * nothing to look at yet and that is the point, because what follows only
+ * means anything by contrast. `after` is the rate cosmic time keeps at once
+ * the run is over - slow, but never zero, because structure at the present day
+ * is still growing and a frozen web is a photograph.
+ */
+const OVERTURE = {
+  seconds: 26,
+  /** Where on the timeline the growth starts: cosmic dawn, not the void. */
+  from: 0.26,
+  /** Fraction of the run spent on the microwave sky before the web takes over. */
+  sky: 0.20,
+  /** How far the aperture is opened at the start, closing to 1 by the end. */
+  gain: 16,
+  zoom: 0.36,
+  after: 0.0016,
+};
+
 const lorentz = (b: number): number => 1 / Math.sqrt(Math.max(1 - b * b, 1e-18));
+
+/** Ken Perlin's smootherstep, clamped: zero slope and zero curvature at both ends. */
+const smoothStep = (x: number): number => {
+  const t = Math.min(1, Math.max(0, x));
+  return t * t * t * (t * (t * 6 - 15) + 10);
+};
 
 export class App {
   readonly engine: Engine;
@@ -96,14 +123,34 @@ export class App {
   private bootLabel: HTMLElement;
 
   private epochA = 1;
-  private playing = false;
+  /**
+   * Time runs from the first frame.
+   *
+   * A simulation that opens paused is a picture of a simulation. Everything
+   * here has something it does - arms turn, planets go round, a cluster's
+   * galaxies swing through their orbits - and none of it was visible until
+   * somebody found the space bar.
+   */
+  private playing = true;
   private scrubbing = false;
+  /**
+   * Seconds into the opening run, or -1 once it is done.
+   *
+   * Armed at start-up and re-armed for a new universe, because a universe
+   * nobody has watched grow is worth watching grow.
+   */
+  private overtureT = -1;
+  /** The point on the timeline the opening run stops at: the present day. */
+  private overtureU1 = 1;
   private warpIndex = 1;
   private boostIndex = 0;
   /** Beta actually applied, eased toward the selected preset. */
   private boost = 0;
   private boostDir = new THREE.Vector3(0, 0, -1);
   private idle = 0;
+  private hintEl!: HTMLDivElement;
+  /** Which hints the user has already demonstrated they do not need. */
+  private taught = new Set<string>();
   private lastFrame = performance.now();
   private fps = 60;
   private frame = 0;
@@ -177,7 +224,9 @@ export class App {
     // --- Timeline
     this.timeline = new Timeline(120, 8);
     this.timeline.onChange = (a) => { this.epochA = a; };
-    this.timeline.onScrubStart = () => { this.scrubbing = true; this.playing = false; };
+    this.timeline.onScrubStart = () => {
+      this.scrubbing = true; this.playing = false; this.endOverture(true);
+    };
     this.timeline.onScrubEnd = () => { this.scrubbing = false; };
     this.timeline.setA(1);
 
@@ -211,11 +260,18 @@ export class App {
     }
 
     // --- Hint
-    const hint = el('div', 'layer dimmable hint');
-    hint.innerHTML =
-      '<b>drag</b> orbit · <b>scroll</b> zoom · <b>wasd</b> fly<br>' +
-      '<b>click</b> inspect · <b>enter</b> descend · <b>backspace</b> ascend<br>' +
-      '<b>space</b> time · <b>h</b> controls';
+    //
+    // Which retires itself. A line of instructions that stays on screen after
+    // it has been followed is not helping any more, it is just something else
+    // to look past - so each line goes when the thing it describes has been
+    // done, and what is left at the end is how to get them all back.
+    this.hintEl = el('div', 'layer dimmable hint');
+    this.hintEl.innerHTML =
+      '<span data-taught="look"><b>drag</b> orbit · <b>scroll</b> zoom · <b>wasd</b> fly</span><br>'
+      + '<span data-taught="go"><b>click</b> inspect · <b>enter</b> descend · '
+      + '<b>backspace</b> ascend</span><br>'
+      + '<span data-taught="time"><b>space</b> time · </span><b>h</b> controls';
+    const hint = this.hintEl;
 
     // --- Rail
     const rail = el('div', 'layer dimmable rail');
@@ -226,7 +282,8 @@ export class App {
       rail.append(b);
       return b;
     };
-    this.playBtn = railBtn('▸ run time', () => this.togglePlay());
+    this.playBtn = railBtn('❚❚ pause time', () => this.togglePlay());
+    this.playBtn.classList.add('on');
     this.velBtn = railBtn('peculiar velocity', (b) => {
       if (this.stage instanceof CosmosStage) {
         this.stage.velocityTint = !this.stage.velocityTint;
@@ -325,6 +382,16 @@ export class App {
     this.boot.classList.add('done');
     setTimeout(() => this.boot.remove(), 1400);
     this.flash(`${commas(field.count)} particles · ${field.knots.length} haloes`);
+    // Arm the opening run. The timeline knows where the present day is; find
+    // it once, then wind back to before there was anything to see.
+    if (this.params.get('intro') !== '0') {
+      this.timeline.setA(1);
+      this.overtureU1 = this.timeline.u;
+      this.timeline.setU(OVERTURE.from);
+      this.epochA = this.timeline.a;
+      this.overtureT = 0;
+      this.uiRoot.classList.add('cinema');
+    }
     requestAnimationFrame((t) => this.tick(t));
   }
 
@@ -423,6 +490,7 @@ export class App {
       this.stack.push({ id: target.id, ctx: target.ctx, label: target.label });
     }
 
+    if (stage.id !== 'cosmos') this.endOverture(true);
     this.titleEl.textContent = stage.title;
     this.subEl.textContent = stage.subtitle;
     this.updateCrumb();
@@ -537,7 +605,86 @@ export class App {
     this.flashTimer = window.setTimeout(() => this.flashEl.classList.remove('on'), 1900);
   }
 
+  /**
+   * The opening: thirteen point eight billion years, in about a quarter of a
+   * minute, once.
+   *
+   * You arrive in the dark ages, before there is anything to see, and the web
+   * assembles around you while the view pulls back to take it in. It is the
+   * one thing in this application that has to be watched rather than driven,
+   * because the growth of structure is a story with an order to it and nobody
+   * scrubbing a slider for the first time will find that order by accident.
+   *
+   * Interruptible: touch the timeline, or press a key that moves time, and it
+   * stands down for good and hands you the controls.
+   */
+  private runOverture(dt: number): void {
+    const st = this.stage as CosmosStage;
+    const was = this.overtureT;
+    this.overtureT += dt;
+    const k = Math.min(1, this.overtureT / OVERTURE.seconds);
+
+    // It opens on the microwave sky, because that is where the structure
+    // comes from and because a screen with nothing on it is a poor first
+    // impression of a universe. The pattern in that sky is a hundred and ten
+    // microkelvin of sound waves in a plasma that had not yet become atoms,
+    // and every filament that follows grew out of it.
+    const sky = 1 - smoothStep(k / OVERTURE.sky);
+    st.fadeCmb(sky > 0.002 ? sky : 0);
+    if (was === 0) this.flash('the sky at four hundred thousand years old');
+    else if (was < OVERTURE.seconds * OVERTURE.sky
+      && this.overtureT >= OVERTURE.seconds * OVERTURE.sky) {
+      this.flash('and what gravity made of it, over thirteen billion years');
+    }
+
+    // Slow through the dark ages where nothing is happening, quick through
+    // assembly, and easing to a stop at the present rather than arriving at it.
+    const e = smoothStep(k);
+    this.timeline.setU(OVERTURE.from + (this.overtureU1 - OVERTURE.from) * e);
+    this.epochA = this.timeline.a;
+
+    // Open the aperture early and close it as the contrast arrives, so the
+    // first structure is visible while it is still only a few per cent.
+    st.exposure = 1 + (OVERTURE.gain - 1) * Math.pow(1 - e, 1.7);
+
+    // Pulling back as it grows, so the first thing you see is a filament and
+    // the last is the whole box.
+    if (st.restDistance > 0) {
+      this.controls.setDistance(st.restDistance * (OVERTURE.zoom + (1 - OVERTURE.zoom) * e));
+    }
+    if (k >= 1) this.endOverture(false);
+  }
+
+  /** Stop the opening run, either because it finished or because it was cut. */
+  private endOverture(interrupted: boolean): void {
+    if (this.overtureT < 0) return;
+    this.overtureT = -1;
+    this.uiRoot.classList.remove('cinema');
+    if (this.stage instanceof CosmosStage) {
+      this.stage.fadeCmb(0);
+      this.stage.exposure = 1;
+    }
+    if (interrupted) {
+      const st = this.stage as CosmosStage | undefined;
+      if (st?.id === 'cosmos' && st.restDistance > 0) this.controls.glideTo(st.restDistance);
+    }
+  }
+
+  /**
+   * Note that a hint has been taken, and fade it out.
+   *
+   * Once, and permanently: a line that comes back after you have used it is
+   * worse than one that never left.
+   */
+  private teach(what: string): void {
+    if (this.taught.has(what)) return;
+    this.taught.add(what);
+    const span = this.hintEl?.querySelector(`[data-taught="${what}"]`);
+    span?.classList.add('taught');
+  }
+
   private togglePlay(): void {
+    this.teach('time');
     this.playing = !this.playing;
     this.playBtn.classList.toggle('on', this.playing);
     this.playBtn.textContent = this.playing ? '❚❚ pause time' : '▸ run time';
@@ -567,7 +714,7 @@ export class App {
     // the toolbar slides away, the keyboard comes up, the device is rotated.
     window.visualViewport?.addEventListener('resize', () => this.resize());
     window.addEventListener('orientationchange', () => setTimeout(() => this.resize(), 120));
-    this.controls.onInteract = () => this.wake();
+    this.controls.onInteract = () => { this.wake(); this.teach('look'); };
 
     for (const ev of ['pointermove', 'pointerdown', 'wheel', 'keydown'] as const) {
       window.addEventListener(ev, () => this.wake(), { passive: true });
@@ -602,7 +749,7 @@ export class App {
     // with a cursor and two buttons have to be told apart by rhythm instead:
     // tap to look at, double tap to go in, two fingers to come back out. The
     // last two are the map gestures everybody already has in their hands.
-    this.controls.onTap = (x, y) => { this.aimAt(x, y); this.inspectHere(); };
+    this.controls.onTap = (x, y) => { this.aimAt(x, y); this.inspectHere(); this.teach('go'); };
     // Nothing is bound to a hold.
     //
     // It used to inspect, which a tap already does, so it bought nothing - and
@@ -644,8 +791,8 @@ export class App {
   runKey(code: string): void {
     switch (code) {
         case 'Space': this.togglePlay(); break;
-        case 'Enter': this.descend(true); break;
-        case 'Backspace': this.ascend(); break;
+        case 'Enter': this.teach('go'); this.descend(true); break;
+        case 'Backspace': this.teach('go'); this.ascend(); break;
         case 'KeyH': case 'Slash':
           this.mark('KeyH', this.helpEl.classList.toggle('show'));
           break;
@@ -684,6 +831,27 @@ export class App {
               ? 'deep field · 1 Gpc · the cluster is lensing what is behind it'
               : 'back to the cluster');
           } else this.flash('deep fields are observed from a cluster');
+          break;
+        }
+        case 'Semicolon': {
+          // The microwave view. It lives on a punctuation key because every
+          // letter on the board is already spoken for, and it belongs next to
+          // the deep field and the critical curves rather than anywhere else.
+          const c = this.stage as unknown as {
+            cycleMicrowave?: () => number; microwaveGHz?: number;
+          };
+          if (!c.cycleMicrowave) { this.flash('the microwave sky is observed from a cluster'); break; }
+          const band = c.cycleMicrowave();
+          this.mark('Semicolon', band >= 0);
+          this.rebuildReadout();
+          const ghz = c.microwaveGHz ?? 0;
+          this.flash(band < 0
+            ? 'back to the cluster'
+            : ghz < 200
+              ? `${ghz} GHz · the cluster is a hole in the background`
+              : ghz < 250
+                ? `${ghz} GHz · the null: the gas is invisible here`
+                : `${ghz} GHz · past the null, the same gas is a hot spot`);
           break;
         }
         case 'KeyK': {
@@ -836,16 +1004,19 @@ export class App {
         }
         case 'KeyR':
           if (this.stage?.id === 'cosmos') {
+            this.endOverture(true);
             this.timeline.setA(1 / 101); this.epochA = this.timeline.a; this.flash('rewound to the dark ages');
           }
           break;
         case 'BracketLeft':
           if (this.stage?.id === 'cosmos') {
+            this.endOverture(true);
             this.timeline.setU(Math.max(0, this.timeline.u - 0.035)); this.epochA = this.timeline.a;
           } else { this.warpIndex = Math.max(0, this.warpIndex - 1); }
           break;
         case 'BracketRight':
           if (this.stage?.id === 'cosmos') {
+            this.endOverture(true);
             this.timeline.setU(Math.min(1, this.timeline.u + 0.035)); this.epochA = this.timeline.a;
           } else { this.warpIndex = Math.min(WARPS.length - 1, this.warpIndex + 1); }
           break;
@@ -1098,10 +1269,13 @@ export class App {
     // --- Time
     if (this.stage) {
       if (this.stage.id === 'cosmos') {
-        if (this.playing && !this.scrubbing) {
-          this.timeline.setU(this.timeline.u + dt * 0.02);
+        if (this.overtureT >= 0 && this.playing && !this.scrubbing) this.runOverture(dt);
+        else if (this.playing && !this.scrubbing) {
+          // Once the opening run is over, cosmic time keeps going, slowly.
+          // Structure at the present day is still growing, and a cosmic web
+          // held at a fixed scale factor is a photograph.
+          this.timeline.setU(Math.min(1, this.timeline.u + dt * OVERTURE.after));
           this.epochA = this.timeline.a;
-          if (this.timeline.u >= 1) this.togglePlay();
         }
         this.stage.timeScale = 0;
         this.stage.update(dt);
@@ -1251,6 +1425,7 @@ const HELP_HTML = `
     <dl>
       <dt>V</dt><dd>tint by peculiar velocity</dd>
       <dt>L</dt><dd>observe a cluster as a deep field</dd>
+      <dt>;</dt><dd>observe a cluster in the microwave · 100 · 143 · 217 · 353 GHz</dd>
       <dt>K</dt><dd>show lensing critical curves</dd>
       <dt>M</dt><dd>collide this galaxy with another</dd>
       <dt>G</dt><dd>merge two black holes</dd>

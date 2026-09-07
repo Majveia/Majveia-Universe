@@ -43,6 +43,8 @@ import {
 } from '../physics/gwaves';
 import { peakMultipoles } from '../cosmology/cmb';
 import { GalaxySprites, type GalaxySpriteData } from '../render/galaxysprites';
+import { ClusterOrbits, bindingPressure, type Halo } from '../physics/clusterorbits';
+import * as SZ from '../astro/sz';
 import { GalaxyView } from '../render/galaxyview';
 import { SystemView } from '../render/systemview';
 import { PlanetView } from '../render/planet';
@@ -225,6 +227,9 @@ export abstract class Stage {
 // COSMOS
 // ---------------------------------------------------------------------------
 
+/** Brightness the microwave sky is drawn at when it is fully shown. */
+const CMB_BRIGHT = 0.075;
+
 export class CosmosStage extends Stage {
   readonly id = 'cosmos' as const;
   readonly title = 'Cosmic web';
@@ -235,9 +240,24 @@ export class CosmosStage extends Stage {
   private nodeCount = 0;
   velocityTint = false;
   brightness = 0.55;
+  /**
+   * Extra exposure, for the opening run.
+   *
+   * Structure at cosmic dawn really is faint: the density contrast at z = 20
+   * is a few per cent, and shown at the same stretch as the present day it is
+   * an empty screen. Every visualisation of structure formation ever made
+   * opens the aperture early and closes it as the contrast arrives, and this
+   * is that - a change of exposure, not of physics, and it is over by the time
+   * anything is being measured.
+   */
+  exposure = 1;
   private cmb?: CmbView;
   /** 0 off, 1 as observed with the dipole, 2 with the dipole removed. */
   private cmbMode: 0 | 1 | 2 = 0;
+  /** The distance the view settles at once the opening run is over. */
+  restDistance = 1;
+  /** Strength of the last-scattering sky while the opening run dissolves it. */
+  private cmbFade = 0;
 
   build(): void {
     const field = this.env.universe.field;
@@ -301,8 +321,10 @@ export class CosmosStage extends Stage {
     this.root.add(this.markers);
 
     const box = field.boxMpc;
+    this.restDistance = box * 0.42;
     const c = this.env.controls;
-    c.snapTo(new THREE.Vector3(box / 2, box / 2, box / 2), box * 0.42, 0.7, 1.15);
+    c.snapTo(new THREE.Vector3(box / 2, box / 2, box / 2), this.restDistance, 0.7, 1.15);
+    c.drift = 0.008;
     c.minDistance = 0.4;
     c.maxDistance = box * 6;
     const cam = this.env.engine.camera;
@@ -348,6 +370,44 @@ export class CosmosStage extends Stage {
     return this.cmbMode;
   }
 
+  /**
+   * Show the last-scattering surface at a given strength, for the opening run.
+   *
+   * The same sky `cycleCmb` shows, but faded rather than switched, so it can
+   * dissolve into the structure that grew out of it. Zero takes it away again
+   * and leaves the key-driven mode exactly as it was.
+   */
+  fadeCmb(strength: number): void {
+    if (strength <= 0) {
+      if (this.cmbFade > 0 && this.cmb) {
+        this.root.remove(this.cmb.mesh);
+        this.cmb.setBrightness(CMB_BRIGHT);
+        this.cmbMode = 0;
+      }
+      this.cmbFade = 0;
+      return;
+    }
+    if (!this.cmb) {
+      this.cmb = new CmbView({
+        cosmology: this.env.cosmology,
+        seed: this.env.universe.seed,
+        waves: this.env.quality() > 0.6 ? 640 : 400,
+        resolution: this.env.quality() > 0.6 ? 2560 : 1280,
+      });
+      this.cmb.mesh.scale.setScalar(this.env.universe.field.boxMpc * 40);
+    }
+    if (this.cmbFade <= 0) {
+      this.root.add(this.cmb.mesh);
+      // The pattern, not our own motion through it: the dipole is thirty times
+      // larger and it is not what the structure grew from.
+      this.cmb.setDipole(0);
+      this.cmb.setRange(340);
+      this.cmbMode = 2;
+    }
+    this.cmbFade = strength;
+    this.cmb.setBrightness(CMB_BRIGHT * strength);
+  }
+
   /** Scales of the last-scattering surface, for the readout. */
   get cmbScales(): CmbView['scales'] | null {
     return this.cmbMode > 0 && this.cmb ? this.cmb.scales : null;
@@ -360,7 +420,7 @@ export class CosmosStage extends Stage {
     const field = this.env.universe.field;
     this.web.setGrowth(D);
     this.web.setCamera(this.env.engine.camera.position);
-    if (this.cmbMode > 0 && this.cmb) {
+    if ((this.cmbMode > 0 || this.cmbFade > 0) && this.cmb) {
       this.cmb.render(this.env.engine.renderer);
       this.cmb.mesh.position.copy(this.env.engine.camera.position);
     }
@@ -373,7 +433,7 @@ export class CosmosStage extends Stage {
       nearFade: depth * 0.16,
       fadeStart: depth * 0.30,
       fadeEnd: depth,
-      brightness: this.brightness * (cell / depth) * (this.cmbMode > 0 ? 0.75 : 1),
+      brightness: this.brightness * this.exposure * (cell / depth) * (this.cmbFade > 0 ? 0.75 : 1),
       velocityTint: this.velocityTint ? 1 : 0,
       velocityFactor: this.velocityTint ? peculiarVelocityFactor(this.env.cosmology, a) : 0,
     });
@@ -504,15 +564,30 @@ export class ClusterStage extends Stage {
   private sky!: LensedField;
   private deep = false;
   private savedView: { d: number; theta: number; phi: number } | null = null;
+  /** The cluster's own dynamics: every galaxy on its own orbit in the halo. */
+  private orbits!: ClusterOrbits;
+  private halo!: Halo;
+  /** Which galaxies can show gas at all - ellipticals are already dead. */
+  private gasBearing: Uint8Array = new Uint8Array(0);
+  /** How hard each is being stripped right now, smoothed so tails do not blink. */
+  private stripNow: Float32Array = new Float32Array(0);
+  private bindOf: Float64Array = new Float64Array(0);
+  private stripped = 0;
+  /** The microwave view: -1 off, otherwise an index into SZ.PLANCK_BANDS. */
+  private band = -1;
+  private gas!: SZ.ClusterGas;
+  private szSky?: CmbView;
+  private szSaved: { d: number; theta: number; phi: number; fov: number } | null = null;
 
   build(): void {
     const u = this.env.universe;
     const ci = this.ctx.cluster ?? 0;
     const cl = u.cluster(ci);
     this.title = cl.name;
-    this.subtitle =
-      `${commas(cl.richness)} galaxies · σ ${Math.round(cl.sigmaKms)} km/s · ` +
-      `${sig(cl.massMsun, 2)} M☉ of which ~85% is dark matter`;
+    // The numbers are all in the readout below; what belongs up here is what
+    // they mean.
+    this.subtitle = `${commas(cl.richness)} galaxies falling through a halo ` +
+      'fifty times their combined mass';
 
     // The sky behind a cluster is not a starfield - it is the distant
     // universe, and the cluster bends its light.
@@ -520,6 +595,20 @@ export class ClusterStage extends Stage {
     this.sky.mesh.scale.setScalar(cl.radiusMpc * 400);
     this.sky.setShape(0.62 + (cl.seed % 100) / 400, ((cl.seed % 628) / 100));
     this.root.add(this.sky.mesh);
+
+    // The halo, and the galaxies falling through it. Concentration falls with
+    // mass for the same reason it does in the universe's own generator: the
+    // big ones assembled late, when the universe was already thin.
+    this.halo = {
+      massMsun: cl.massMsun,
+      radiusMpc: cl.radiusMpc,
+      concentration: 9 * Math.pow(cl.massMsun / 1e12, -0.1),
+    };
+    this.orbits = new ClusterOrbits(this.halo, cl.members.length);
+    this.gasBearing = new Uint8Array(cl.members.length);
+    this.stripNow = new Float32Array(cl.members.length);
+    this.bindOf = new Float64Array(cl.members.length);
+    const vrng = new RNG(cl.seed ^ 0x5eed);
 
     const data: GalaxySpriteData[] = [];
     const rng = new RNG(cl.seed ^ 0x77);
@@ -546,7 +635,32 @@ export class ClusterStage extends Stage {
       });
       this.positions.push(new THREE.Vector3(m.x, m.y, m.z));
       this.radii.push(rMpc);
+
+      // Ellipticals have already lost whatever they had, long before the
+      // cluster got hold of them. Spirals arrive with a gas disc worth a tenth
+      // of their stars, and it is that disc the cluster takes.
+      const gasFrac = red ? 0.006 : g.type === 'Irr' ? 0.30 : 0.12;
+      this.gasBearing[m.index] = red ? 0 : 1;
+      // The disc's exponential scale length, which is what sets how hard it
+      // holds its gas - not its optical radius, which is three times larger
+      // and would make every galaxy in the cluster far too easy to strip.
+      const scaleMpc = Math.max(g.discScaleKpc, 0.2) / 1000;
+      this.bindOf[m.index] = bindingPressure(g.stellarMassMsun, scaleMpc, gasFrac);
+      this.orbits.place({
+        x: m.x, y: m.y, z: m.z,
+        haloMassMsun: m.haloMassMsun,
+        stellarMsun: g.stellarMassMsun,
+        radiusMpc: scaleMpc,
+        gasFraction: gasFrac,
+      }, () => vrng.next());
     }
+    // The brightest cluster galaxy sits in the middle and stays there - it is
+    // the one thing in a cluster that is not going anywhere.
+    if (cl.members.length > 0 && cl.members[0].environment >= 1) this.orbits.anchor(0);
+    // These galaxies have been here for gigayears already, not since the last
+    // frame: give each one the gas its orbit would have left it by now.
+    this.orbits.settle();
+
     this.sprites = new GalaxySprites(data);
     this.root.add(this.sprites.mesh);
 
@@ -583,8 +697,14 @@ export class ClusterStage extends Stage {
     this.icm.frustumCulled = false;
     this.root.add(this.icm);
 
+    // A cluster crosses itself in a couple of gigayears. At this rate that is
+    // half a minute, which is slow enough to watch an orbit and fast enough
+    // to see one finish.
+    this.timeScale = 90; // Myr per second
+
     const c = this.env.controls;
     c.snapTo(new THREE.Vector3(), cl.radiusMpc * 2.1, 0.5, 1.05);
+    c.drift = 0.014;
     c.minDistance = 0.001;
     c.maxDistance = cl.radiusMpc * 30;
     const cam = this.env.engine.camera;
@@ -597,13 +717,16 @@ export class ClusterStage extends Stage {
     this.sprites.setViewport(this.env.viewport()[1], this.env.engine.camera.fov);
   }
 
-  override dispose(): void { this.sky.dispose(); this.sprites.dispose(); super.dispose(); }
+  override dispose(): void {
+    this.sky.dispose(); this.sprites.dispose(); this.szSky?.dispose(); super.dispose();
+  }
 
   update(dt: number): void {
     this.simTime += dt * this.timeScale;
+    const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
+    this.advance(dt * this.timeScale);
     const cam = this.env.engine.camera.position;
     this.sky.mesh.position.copy(cam);
-    const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
     // Aim the lens: the deflection is a fixed angular scale set by the
     // cluster's velocity dispersion, so it shrinks against the cluster's own
     // apparent size as you approach and only resolves from far away.
@@ -617,6 +740,203 @@ export class ClusterStage extends Stage {
     this.sky.aim(cam, this.root.position, cl.sigmaKms, coreKpc,
       this.env.controls.distance * 1000);
     this.sky.setFieldOfView((this.env.engine.camera.fov * Math.PI) / 180);
+  }
+
+  /**
+   * Move the cluster on by some megayears, and repaint what it has become.
+   *
+   * The integration is substepped so a dropped frame cannot turn into a bad
+   * orbit: leapfrog is stable but it is not magic, and a two-hundred-megayear
+   * jump through the core is a different trajectory from eighty small ones.
+   */
+  private advance(myr: number): void {
+    if (!this.orbits) return;
+    const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
+    if (myr > 0) {
+      const steps = Math.min(12, Math.max(1, Math.ceil(myr / 2.5)));
+      const h = myr / steps;
+      for (let k = 0; k < steps; k++) this.orbits.step(h);
+    }
+
+    const o = this.orbits;
+    this.stripped = 0;
+    for (let i = 0; i < o.length; i++) {
+      const x = o.pos[i * 3], y = o.pos[i * 3 + 1], z = o.pos[i * 3 + 2];
+      const vx = o.vel[i * 3], vy = o.vel[i * 3 + 1], vz = o.vel[i * 3 + 2];
+      this.positions[i].set(x, y, z);
+
+      // Only a galaxy that has just fallen into a stronger wind than it is
+      // used to is actually streaming gas, and only those grow a tail.
+      const want = this.gasBearing[i] ? o.strip[i] : 0;
+      // Eased, so a tail grows and fades rather than appearing between frames.
+      this.stripNow[i] += (want - this.stripNow[i]) * 0.06;
+      if (this.stripNow[i] > 0.12) this.stripped++;
+      const gas = this.gasBearing[i] ? o.gas[i] : 0;
+      this.sprites.setState(i, x, y, z, vx, vy, vz, gas, this.stripNow[i]);
+    }
+    this.sprites.commit();
+
+    this.aimSZ();
+
+    // The intracluster gas sloshes. A cluster that has swallowed a group is
+    // left with its atmosphere ringing for gigayears afterwards, and the cold
+    // fronts that ringing produces are visible in every deep X-ray image.
+    if (this.icm) {
+      const mat = this.icm.material as THREE.ShaderMaterial;
+      const t = this.simTime / 1000; // Gyr
+      const a = cl.radiusMpc * 0.06;
+      (mat.uniforms.uCentre.value as THREE.Vector3).set(
+        a * Math.sin(t * 1.7), a * 0.6 * Math.sin(t * 1.1 + 2.1), a * Math.cos(t * 1.3 + 0.7),
+      );
+      mat.uniforms.uStrength.value = Math.min(0.012, 0.0012 * Math.pow(cl.icmKeV, 0.8))
+        * (1 + 0.12 * Math.sin(t * 2.3));
+    }
+  }
+
+  /** How many galaxies are visibly losing their gas at this moment. */
+  get strippingCount(): number { return this.stripped; }
+
+  /**
+   * Observe the cluster in the microwave, where it is a hole in the beginning
+   * of time.
+   *
+   * Each press moves to the next Planck band and the fourth turns it off, so
+   * you go 100 - 143 - 217 - 353 GHz and watch the shadow deepen, vanish, and
+   * come back inverted. That inversion is the whole signature: nothing else in
+   * the sky is a cold spot on one side of 217 gigahertz and a hot spot on the
+   * other, and it is why these four bands exist.
+   *
+   * The vantage has to be a long way off, because the effect is a distortion
+   * of a background that is behind everything - from inside the cluster there
+   * is no "behind" to look at. So this backs off to a few hundred megaparsecs
+   * and narrows the field until the cluster subtends a few arcminutes, which
+   * is what a millimetre telescope actually sees.
+   */
+  cycleMicrowave(): number {
+    const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
+    const c = this.env.controls;
+    const cam = this.env.engine.camera;
+    const was = this.band;
+    this.band = was + 1 >= SZ.PLANCK_BANDS.length ? -1 : was + 1;
+
+    if (was < 0 && this.band >= 0) {
+      this.szSaved = { d: c.distance, theta: c.theta, phi: c.phi, fov: this.baseFov };
+      this.gas = SZ.clusterGas(cl.massMsun, cl.radiusMpc, cl.icmKeV);
+      // Frame it the way a survey does: a few arcminutes across.
+      this.baseFov = 1.6;
+      const want = (this.baseFov * Math.PI) / 180;
+      const D = cl.radiusMpc / (0.34 * want);
+      c.maxDistance = D * 3;
+      c.minDistance = D * 0.05;
+      c.snapTo(new THREE.Vector3(), D, c.theta, c.phi);
+      cam.near = D * 0.3; cam.far = D * 4;
+      if (!this.szSky) {
+        this.szSky = new CmbView({
+          cosmology: this.env.cosmology,
+          seed: this.env.universe.seed,
+          waves: this.env.quality() > 0.6 ? 640 : 400,
+          resolution: this.env.quality() > 0.6 ? 2560 : 1280,
+          ellRange: [90, 1400],
+          // A survey filters the large-scale primordial pattern out before it
+          // looks for clusters - it is a foreground to this measurement,
+          // however much it is the subject of every other one - so what is
+          // left of it here is a residual wash rather than the full 110
+          // microkelvin.
+          rmsMicroK: 45,
+        });
+        this.szSky.mesh.scale.setScalar(D * 40);
+        this.szSky.setDipole(0);
+        // The stretch is set by the cluster, not by the background: half a
+        // millikelvin runs the whole colour range, so the decrement saturates
+        // and the residual sky does not.
+        this.szSky.setRange(700);
+        this.szSky.setBrightness(0.075);
+      }
+      this.root.add(this.szSky.mesh);
+      this.sky.mesh.visible = false;
+      this.sprites.mesh.visible = false;
+      if (this.icm) this.icm.visible = false;
+    } else if (this.band < 0) {
+      if (this.szSky) this.root.remove(this.szSky.mesh);
+      this.sky.mesh.visible = true;
+      this.sprites.mesh.visible = true;
+      if (this.icm) this.icm.visible = true;
+      const v = this.szSaved ?? { d: cl.radiusMpc * 2.1, theta: 0.5, phi: 1.05, fov: 60 };
+      this.baseFov = v.fov;
+      c.maxDistance = cl.radiusMpc * 30;
+      c.minDistance = 0.001;
+      c.snapTo(new THREE.Vector3(), v.d, v.theta, v.phi);
+      cam.near = 1e-4; cam.far = cl.radiusMpc * 900;
+    }
+    cam.fov = this.baseFov;
+    cam.updateProjectionMatrix();
+    this.onResize();
+    return this.band;
+  }
+
+  /** The band being observed in, GHz, or 0 when the microwave view is off. */
+  get microwaveGHz(): number {
+    return this.band < 0 ? 0 : SZ.PLANCK_BANDS[this.band];
+  }
+
+  /** Point the shadow at the cluster and set its depth for this band. */
+  private aimSZ(): void {
+    if (this.band < 0 || !this.szSky) return;
+    this.szSky.render(this.env.engine.renderer);
+    const cam = this.env.engine.camera;
+    const dir = this.root.position.clone().sub(cam.position);
+    const D = Math.max(dir.length(), 1e-6);
+    this.szSky.mesh.position.copy(cam.position);
+
+    const ghz = SZ.PLANCK_BANDS[this.band];
+    const y0 = SZ.yAt(this.gas, 0);
+    const tau = SZ.tauAt(this.gas, 0);
+    // The cluster's own motion along the line of sight, from the halo it sits
+    // in: the same peculiar velocity that shifts every galaxy's redshift.
+    const vLos = this.env.universe.cluster(this.ctx.cluster ?? 0).members[0]?.vlos ?? 0;
+    this.szSky.setCluster(
+      dir,
+      SZ.thermalSZ(y0, ghz) * 1e6,
+      SZ.kineticSZ(tau, vLos * 1e3) * 1e6,
+      (this.gas.rcM / MPC) / D,
+      (this.gas.cutM / MPC) / D,
+    );
+  }
+
+  /** What the microwave view is showing, for the readout. */
+  private szRows(): Row[] {
+    const ghz = SZ.PLANCK_BANDS[this.band];
+    const y0 = SZ.yAt(this.gas, 0);
+    const tau = SZ.tauAt(this.gas, 0);
+    const dtUK = SZ.thermalSZ(y0, ghz) * 1e6;
+    const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
+    const vLos = cl.members[0]?.vlos ?? 0;
+    const kUK = SZ.kineticSZ(tau, vLos * 1e3) * 1e6;
+    const arcmin = ((this.gas.cutM / MPC) / this.env.controls.distance) * (180 / Math.PI) * 60;
+    return [
+      { k: 'observing', v: `${ghz} GHz`, accent: true },
+      {
+        k: 'thermal SZ',
+        v: `${dtUK >= 0 ? '+' : ''}${Math.abs(dtUK) < 1 ? dtUK.toFixed(2) : Math.round(dtUK)}`,
+        u: 'µK',
+        accent: true,
+      },
+      {
+        k: 'shows as',
+        // The band centre is half a gigahertz off the true null, which is why
+        // 217 GHz leaves a few microkelvin behind rather than exactly nothing.
+        v: Math.abs(dtUK) < 25 ? 'very nearly nothing'
+          : dtUK < 0 ? 'a cold spot' : 'a hot spot',
+      },
+      { k: 'Compton y', v: sig(y0, 3) },
+      { k: 'optical depth', v: `${(tau * 100).toFixed(2)}%` },
+      { k: 'kinetic SZ', v: `${kUK >= 0 ? '+' : ''}${kUK.toFixed(1)}`, u: 'µK' },
+      { k: 'gas temp', v: `${cl.icmKeV.toFixed(1)} keV`, u: `${sig((cl.icmKeV * 1.16045e7), 2)} K` },
+      { k: 'Y', v: sig(SZ.integratedYMpc2(this.gas), 3), u: 'Mpc²' },
+      { k: 'subtends', v: arcmin.toFixed(1), u: 'arcmin' },
+      { k: 'null at', v: SZ.SZ_NULL_GHZ.toFixed(1), u: 'GHz' },
+      { k: 'distance', v: 'does not enter' },
+    ];
   }
 
   /**
@@ -667,6 +987,7 @@ export class ClusterStage extends Stage {
   rows(): Row[] {
     const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
     const [dv, du] = formatDistance(this.env.controls.distance * MPC);
+    if (this.band >= 0) return this.szRows();
     if (this.deep) {
       const D = this.env.controls.distance;
       const fieldArcmin = this.baseFov * 60;
@@ -680,20 +1001,33 @@ export class ClusterStage extends Stage {
         { k: 'galaxies', v: commas(cl.richness) },
       ];
     }
+    // The dispersion the galaxies actually have, measured the way a
+    // spectroscopic survey measures it: the spread of one velocity component.
+    const measured = this.orbits ? this.orbits.dispersionKms() : cl.sigmaKms;
+    let quenched = 0;
+    if (this.orbits) {
+      for (let i = 0; i < this.orbits.length; i++) {
+        if (!this.gasBearing[i] || this.orbits.gas[i] < 0.35) quenched++;
+      }
+    }
     return [
       { k: 'cluster mass', v: sig(cl.massMsun, 3), u: 'M☉', accent: true },
       { k: 'virial radius', v: cl.radiusMpc.toFixed(2), u: 'Mpc' },
-      { k: 'dispersion', v: Math.round(cl.sigmaKms).toString(), u: 'km/s' },
+      { k: 'dispersion', v: Math.round(measured).toString(), u: 'km/s' },
       { k: 'ICM temp', v: cl.icmKeV.toFixed(2), u: 'keV' },
       { k: 'galaxies', v: commas(cl.richness) },
+      { k: 'red & dead', v: `${Math.round((100 * quenched) / Math.max(1, cl.richness))}%` },
+      { k: 'being stripped', v: commas(this.stripped), accent: this.stripped > 0 },
       // R / sigma, with 1 Mpc/(km/s) = 978 Gyr
       { k: 'crossing time', v: ((cl.radiusMpc / cl.sigmaKms) * 977.8).toFixed(2), u: 'Gyr' },
+      { k: 'elapsed', v: (this.simTime / 1000).toFixed(2), u: 'Gyr' },
       { k: 'field of view', v: dv, u: du },
     ];
   }
 
   scaleLabel(): string {
     const [v, u] = formatDistance(this.env.controls.distance * MPC);
+    if (this.band >= 0) return `${SZ.PLANCK_BANDS[this.band]} GHz · ${v} ${u}`;
     return `${v} ${u}`;
   }
 
@@ -704,23 +1038,35 @@ export class ClusterStage extends Stage {
     if (i === null) return null;
     const ci = this.ctx.cluster ?? 0;
     const g = this.env.universe.galaxy(ci, i);
-    const m = this.env.universe.cluster(ci).members[i];
+    const los = this.orbits.losKms(i);
+    const gas = this.gasBearing[i] ? this.orbits.gas[i] : 0;
+    const stripping = this.stripNow[i] > 0.08;
     return {
       title: g.name,
       kind: `${g.type} galaxy`,
       rows: [
         { k: 'stellar mass', v: sig(g.stellarMassMsun, 3), u: 'M☉' },
-        { k: 'halo mass', v: sig(m.haloMassMsun, 3), u: 'M☉' },
+        { k: 'halo mass', v: sig(this.orbits.mass[i], 3), u: 'M☉' },
         { k: 'radius', v: g.radiusKpc.toFixed(1), u: 'kpc' },
         { k: 'v(max)', v: Math.round(g.vMaxKms).toString(), u: 'km/s' },
         { k: 'star formation', v: g.sfrMsunYr.toFixed(2), u: 'M☉/yr' },
         { k: 'central BH', v: sig(g.blackHoleMsun, 2), u: 'M☉' },
         { k: 'metallicity', v: `${g.metallicity >= 0 ? '+' : ''}${g.metallicity.toFixed(2)}`, u: 'dex' },
-        { k: 'peculiar v', v: `${m.vlos >= 0 ? '+' : ''}${Math.round(m.vlos)}`, u: 'km/s' },
+        { k: 'speed', v: Math.round(this.orbits.speedKms(i)).toString(), u: 'km/s' },
+        { k: 'redshift v', v: `${los >= 0 ? '+' : ''}${Math.round(los)}`, u: 'km/s' },
+        { k: 'cluster-centric r', v: this.orbits.radius(i).toFixed(2), u: 'Mpc' },
+        { k: 'gas left', v: `${Math.round(gas * 100)}%`, accent: stripping },
       ],
-      note: g.type === 'E'
-        ? 'Red and dead: its gas was stripped by the cluster, and it has not formed a star in gigayears.'
-        : undefined,
+      note: stripping
+        ? 'Being stripped, now: the intracluster wind is stronger than its own '
+          + 'grip on its gas, and the gas is going out behind it in a tail.'
+        : gas < 0.05
+          ? 'Red and dead. Its gas was taken by the cluster on an earlier pass, '
+            + 'and it has not formed a star since.'
+          : g.type === 'E'
+            ? 'It arrived without gas. Ellipticals in clusters were quenched '
+              + 'long before they fell in, in whatever group brought them.'
+            : undefined,
     };
   }
 
@@ -875,7 +1221,14 @@ export class GalaxyStage extends Stage {
     this.catalogPoints = new THREE.Points(cg, new THREE.RawShaderMaterial({
       glslVersion: THREE.GLSL3,
       transparent: true, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false,
-      uniforms: { uOpacity: { value: 0.5 } },
+      // These are stars, not pins. Drawing them as rings said "you may enter
+      // here" clearly enough, but there are several hundred of them and a
+      // galaxy full of hollow circles stops looking like a galaxy - the
+      // markers were the brightest thing in the frame and the disc was behind
+      // them. So: a point of starlight with a halo, and the halo carries the
+      // hint. What tells you which ones you can go into is that they are the
+      // only ones that hold still and brighten when you point at them.
+      uniforms: { uOpacity: { value: 0.34 } },
       vertexShader: `precision highp float;
         uniform mat4 modelViewMatrix; uniform mat4 projectionMatrix;
         in vec3 position; in vec3 aColor; out vec3 vC;
@@ -883,7 +1236,7 @@ export class GalaxyStage extends Stage {
           vC = aColor;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
           gl_Position = projectionMatrix * mv;
-          gl_PointSize = clamp(90.0 / max(-mv.z, 0.02), 1.5, 7.0);
+          gl_PointSize = clamp(74.0 / max(-mv.z, 0.02), 1.5, 6.0);
         }`,
       fragmentShader: `precision highp float;
         in vec3 vC; out vec4 fragColor; uniform float uOpacity;
@@ -891,8 +1244,11 @@ export class GalaxyStage extends Stage {
           vec2 d = gl_PointCoord * 2.0 - 1.0;
           float r = length(d);
           if (r > 1.0) discard;
-          float ring = smoothstep(0.5, 0.75, r) * smoothstep(1.0, 0.8, r);
-          fragColor = vec4(vC * ring * uOpacity, 1.0);
+          // Monotone from the centre out. A bright core with a separate ring
+          // around it still reads as a ring, however faint the ring is - the
+          // eye finds the annulus - so there is no annulus: just a star.
+          float I = exp(-r * r * 3.4) * (1.0 - smoothstep(0.72, 1.0, r));
+          fragColor = vec4(vC * I * uOpacity, 1.0);
         }`,
     }));
     this.catalogPoints.frustumCulled = false;
@@ -950,6 +1306,8 @@ export class GalaxyStage extends Stage {
     this.view.setViewport(this.env.viewport()[1], this.env.engine.camera.fov);
     const c = this.env.controls;
     c.snapTo(new THREE.Vector3(), g.radiusKpc * 2.4, 0.45, 0.78);
+    // The disc turns on its own, so the view only needs a whisper of its own.
+    c.drift = 0.006;
     c.minDistance = 1e-7;
     c.maxDistance = g.radiusKpc * 40;
     const cam = this.env.engine.camera;
@@ -1774,6 +2132,7 @@ export class SystemStage extends Stage {
     const span = Math.max(outer, st.habitableZoneAu[1] * 1.1, system.snowLineAu * 0.9);
     const c = this.env.controls;
     c.snapTo(new THREE.Vector3(), span * 1.55, 0.5, 0.62);
+    c.drift = 0.010;
     c.minDistance = 1e-6;
     c.maxDistance = span * 40;
     const cam = this.env.engine.camera;
@@ -2434,6 +2793,8 @@ export class WorldStage extends Stage {
     const ang0 = p.elements.M0;
     const c = this.env.controls;
     c.snapTo(new THREE.Vector3(), 3.0, Math.PI / 2 - ang0 + 1.15, 1.28);
+    // The world turns beneath the view; the view itself barely moves.
+    c.drift = 0.004;
     c.minDistance = 1.02;
     c.maxDistance = Math.max(60, this.starDist * 0.02);
     const cam = this.env.engine.camera;
