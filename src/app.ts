@@ -747,6 +747,21 @@ export class App {
           break;
         }
         case 'KeyX': this.toggleViewfinder(); break;
+        case 'KeyQ': {
+          const st = this.stage as unknown as { togglePulsar?: () => boolean };
+          if (st.togglePulsar) {
+            const on = st.togglePulsar();
+            this.mark('KeyQ', on);
+            this.rebuildReadout();
+            this.flash(on
+              ? 'a neutron star, turning — press N to hear it'
+              : 'back to the galaxy');
+            if (on && !this.playing) this.togglePlay();
+          } else {
+            this.flash('pulsars are found from the galactic scale');
+          }
+          break;
+        }
         case 'KeyT': {
           const st = this.stage as unknown as { toggleTrueScale?: () => boolean };
           if (st.toggleTrueScale) {
@@ -1175,6 +1190,7 @@ const HELP_HTML = `
       <dt>K</dt><dd>show lensing critical curves</dd>
       <dt>M</dt><dd>collide this galaxy with another</dd>
       <dt>G</dt><dd>merge two black holes</dd>
+      <dt>Q</dt><dd>a pulsar, and the diagram it lives on</dd>
       <dt>D</dt><dd>Hertzsprung-Russell diagram</dd>
       <dt>N</dt><dd>hear the merger</dd>
       <dt>Y</dt><dd>run the star's whole life</dd>

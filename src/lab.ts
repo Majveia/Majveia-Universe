@@ -153,6 +153,63 @@ if (params.get('mode') === 'system') {
   (window as unknown as Record<string, unknown>).labSystem = sv;
 }
 
+// --- Optional subsystem: a pulsar, on its own.
+if (params.get('mode') === 'pulsar') {
+  const { PulsarView } = await import('./render/pulsarview');
+  const P = await import('./astro/pulsar');
+  const { SkyDome } = await import('./render/skydome');
+  engine.scene.remove(view.group);
+  engine.scene.add(new SkyDome({
+    brightness: 0.4, bandStrength: 0.008, seed, nebula: 0,
+  }).mesh);
+
+  const which = params.get('psr') ?? 'Crab';
+  const m = P.MEASURED.find((x) => x.name.toLowerCase().startsWith(which.toLowerCase()))
+    ?? P.MEASURED[0];
+  const psr = P.pulsar(m.periodS, P.fieldFromSpin(m.periodS, m.pdot), {
+    obliquity: Number(params.get('obl') ?? 0.9),
+    name: m.name,
+  });
+  const view2 = new PulsarView({
+    obliquity: psr.obliquity,
+    beamHalfAngle: P.beamAngle(psr.periodS),
+    lightCylinderR: P.lightCylinderCm(psr.periodS) / P.NS_RADIUS_CM,
+    capAngle: P.polarCapAngle(psr.periodS),
+    heat: Number(params.get('heat') ?? 0.8),
+    seed,
+  });
+  engine.scene.add(view2.group);
+
+  controls.snapTo(new THREE.Vector3(), Number(params.get('d') ?? 60),
+    Number(params.get('theta') ?? 0.7), Number(params.get('phi') ?? 1.15));
+  controls.minDistance = 2;
+  controls.maxDistance = 600;
+  engine.camera.near = 0.2;
+  engine.camera.far = 4000;
+  engine.camera.updateProjectionMatrix();
+
+  let t = 0;
+  const turns = Number(params.get('rate') ?? 0.55);
+  const fixed = params.has('phase') ? Number(params.get('phase')) : null;
+  const step = () => {
+    requestAnimationFrame(step);
+    t += 1 / 60;
+    view2.update(fixed ?? t * turns * Math.PI * 2, t, engine.camera);
+  };
+  requestAnimationFrame(step);
+  // eslint-disable-next-line no-console
+  console.info('[lab:pulsar]', psr.name,
+    `P=${psr.periodS.toFixed(6)}s Pdot=${psr.pdot.toExponential(2)}`,
+    `B=${psr.fieldG.toExponential(2)}G`,
+    `age=${P.characteristicAgeYears(psr).toExponential(2)}yr`,
+    `Edot=${P.spinDownPower(psr).toExponential(2)}erg/s`,
+    `Rlc=${(P.lightCylinderCm(psr.periodS) / P.NS_RADIUS_CM).toFixed(1)}R`,
+    `beam=${((P.beamAngle(psr.periodS) * 180) / Math.PI).toFixed(1)}deg`,
+    P.classify(psr).label);
+  (window as unknown as Record<string, unknown>).labPulsar = view2;
+  (window as unknown as Record<string, unknown>).lab = { ready: true, engine, controls };
+}
+
 // --- Optional subsystem: a planetary nebula, on its own.
 //
 // The ring is the thing to check here: it must come out of the path length

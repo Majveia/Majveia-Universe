@@ -741,7 +741,13 @@ body.touch .flash { bottom: calc(var(--shelf-peek) + 30px); }
    and it is scoped to exactly these. */
 body.touch .overlay-host > .layer {
   top: calc(max(var(--edge), var(--safe-t)) + 54px) !important;
-  max-width: calc(100vw - 2 * var(--edge) - var(--tap)) !important;
+  /* Centred in what is left after the ladder, not in the window. */
+  left: calc(50% - var(--tap) / 2) !important;
+  max-width: calc(100vw - var(--edge) - var(--tap)) !important;
+}
+body.touch .overlay-host canvas {
+  max-width: calc(100vw - var(--edge) - var(--tap));
+  height: auto;
 }
 
 body.touch .help { padding: max(var(--edge), var(--safe-t)) var(--edge)

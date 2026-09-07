@@ -27,6 +27,10 @@ import { peculiarVelocityFactor } from '../cosmology/zeldovich';
 import { CosmicWebRenderer } from '../render/cosmicweb';
 import { CmbView } from '../render/cmbview';
 import { MergerView } from '../render/mergerview';
+import { PulsarView } from '../render/pulsarview';
+import { PPDotDiagram } from '../ui/ppdot';
+import { PulseAudio } from '../ui/pulseaudio';
+import * as PSR from '../astro/pulsar';
 import { StrainTrace } from '../ui/strain';
 import { HRDiagram } from '../ui/hrdiagram';
 import { ChirpAudio } from '../ui/chirpaudio';
@@ -758,6 +762,15 @@ export class GalaxyStage extends Stage {
   private encounterCloud?: PointCloud;
   private encounterSteps = 0;
   private merger?: MergerView;
+  private pulsarView?: PulsarView;
+  private pulsar?: PSR.Pulsar;
+  private ppdot?: PPDotDiagram;
+  private pulseAudio?: PulseAudio;
+  /** Which of the measured pulsars is on show; -1 for one of this galaxy's own. */
+  private psrIndex = 0;
+  /** Rotation phase actually drawn, radians, and the slowdown it is drawn at. */
+  private psrPhase = 0;
+  private psrSlow = 1;
   private strain?: StrainTrace;
   private chirp?: ChirpAudio;
   private hr?: HRDiagram;
@@ -1019,6 +1032,112 @@ export class GalaxyStage extends Stage {
     return true;
   }
 
+  /**
+   * Look at a pulsar.
+   *
+   * What a star above eight solar masses leaves, once the envelope has gone as
+   * a supernova: a sphere twelve kilometres across holding one and a half suns,
+   * turning tens of times a second, with a magnetic field of a trillion gauss
+   * carried in from a core the size of the Earth. It is the most extreme object
+   * that can still be called a star, and it can be timed to a microsecond over
+   * decades.
+   *
+   * Pressing it again moves to the next one, and the last of the four is one
+   * this galaxy made rather than one the Earth has measured.
+   */
+  togglePulsar(): boolean {
+    if (this.pulsarView) {
+      this.psrIndex++;
+      if (this.psrIndex <= PSR.MEASURED.length) { this.mountPulsar(); return true; }
+      this.clearPulsar();
+      return false;
+    }
+    this.psrIndex = 0;
+    this.mountPulsar();
+    return true;
+  }
+
+  private clearPulsar(): void {
+    if (!this.pulsarView) return;
+    this.root.remove(this.pulsarView.group);
+    this.pulsarView.dispose();
+    this.pulsarView = undefined;
+    this.pulsar = undefined;
+    this.ppdot = undefined;
+    this.pulseAudio?.stop();
+    this.pulseAudio = undefined;
+    this.showGalaxy(true);
+    this.timeScale = this.baseTimeScale;
+    const c = this.env.controls;
+    c.snapTo(new THREE.Vector3(), this.params.radiusKpc * 2.4, 0.45, 0.78);
+    c.minDistance = 1e-7;
+    c.maxDistance = this.params.radiusKpc * 40;
+    const cam = this.env.engine.camera;
+    cam.near = 1e-5; cam.far = this.params.radiusKpc * 400;
+    cam.updateProjectionMatrix();
+  }
+
+  private mountPulsar(): void {
+    if (this.pulsarView) {
+      this.root.remove(this.pulsarView.group);
+      this.pulsarView.dispose();
+      this.pulsarView = undefined;
+    }
+    const rng = new RNG(this.params.seed ^ 0x50153);
+    const m = PSR.MEASURED[this.psrIndex];
+    if (m) {
+      this.pulsar = PSR.pulsar(m.periodS, PSR.fieldFromSpin(m.periodS, m.pdot), {
+        obliquity: 0.55 + 0.7 * ((this.psrIndex * 0.37) % 1),
+        name: m.name,
+        distancePc: 2000,
+      });
+    } else {
+      // One of this galaxy's own, drawn from the same population the diagram
+      // is plotted from.
+      const pop = PSR.population(400, () => rng.next()).filter((p) => p.alive);
+      this.pulsar = pop[Math.floor(rng.next() * pop.length)] ?? PSR.pulsar(0.7, 2e12);
+      this.pulsar.name = `PSR ${this.params.name ?? 'J'}-${(rng.next() * 9999).toFixed(0)}`;
+    }
+    const p = this.pulsar;
+    this.pulsarView = new PulsarView({
+      obliquity: p.obliquity,
+      beamHalfAngle: PSR.beamAngle(p.periodS),
+      lightCylinderR: PSR.lightCylinderCm(p.periodS) / PSR.NS_RADIUS_CM,
+      capAngle: PSR.polarCapAngle(p.periodS),
+      heat: Math.max(0.15, Math.min(1, 1 - Math.log10(Math.max(p.ageYears, 10)) / 7)),
+      seed: this.params.seed,
+    });
+    this.root.add(this.pulsarView.group);
+
+    // The whole population behind it, so one object can be seen as a member of
+    // a family rather than as a curiosity.
+    this.ppdot = new PPDotDiagram({ title: 'period against slowing' });
+    this.ppdot.setPopulation(PSR.population(1400, () => rng.next()));
+    this.ppdot.mark(p);
+    this.ppdot.setTrack(PPDotDiagram.history(p));
+
+    // Drawn slowly enough to be an image rather than an alias. The sound is
+    // not slowed.
+    this.psrSlow = Math.max(1, p.periodS > 0 ? 0.9 / p.periodS : 1);
+    this.psrPhase = 0;
+
+    if (this.pulseAudio?.on) this.pulseAudio.start(p.periodS, PSR.beamingFraction(p));
+
+    this.showGalaxy(false);
+    this.timeScale = 1;
+    // Framed on the magnetosphere, which is the only length in the problem:
+    // the Crab's light cylinder is a hundred and sixty stellar radii out and a
+    // millisecond pulsar's is seven, so one framing cannot serve both.
+    const rlc = PSR.lightCylinderCm(p.periodS) / PSR.NS_RADIUS_CM;
+    const c = this.env.controls;
+    c.snapTo(new THREE.Vector3(), Math.min(72, Math.max(22, rlc * 2.6)), 0.62, 1.12);
+    c.minDistance = 2.5;
+    c.maxDistance = 900;
+    const cam = this.env.engine.camera;
+    cam.near = 0.15; cam.far = 8000;
+    cam.updateProjectionMatrix();
+  }
+
   private showGalaxy(on: boolean): void {
     this.view.group.visible = on;
     this.catalogPoints.visible = on;
@@ -1029,6 +1148,7 @@ export class GalaxyStage extends Stage {
 
   override overlay(): HTMLElement | null {
     if (this.strain) return this.strain.el;
+    if (this.ppdot) { this.ppdot.draw(); return this.ppdot.el; }
     if (this.hr) { this.hr.draw(); return this.hr.el; }
     return null;
   }
@@ -1092,6 +1212,12 @@ export class GalaxyStage extends Stage {
    * oscillator runs at the frequency the waveform actually has.
    */
   toggleChirpAudio(): 'on' | 'off' | 'unavailable' {
+    if (this.pulsar) {
+      if (this.pulseAudio?.on) { this.pulseAudio.stop(); this.pulseAudio = undefined; return 'off'; }
+      this.pulseAudio = new PulseAudio();
+      return this.pulseAudio.start(this.pulsar.periodS, PSR.beamingFraction(this.pulsar))
+        ? 'on' : 'unavailable';
+    }
     if (!this.chirp) return 'unavailable';
     if (this.chirp.on) { this.chirp.stop(); return 'off'; }
     return this.chirp.start() ? 'on' : 'unavailable';
@@ -1101,6 +1227,12 @@ export class GalaxyStage extends Stage {
   markOnHR(s: Star | null): void { this.hr?.mark(s); }
 
   update(dt: number): void {
+    if (this.pulsarView && this.pulsar) {
+      this.psrPhase += (dt * this.timeScale * 2 * Math.PI) / (this.pulsar.periodS * this.psrSlow);
+      this.pulsarView.update(this.psrPhase, this.simTime, this.env.engine.camera);
+      this.sky.mesh.position.copy(this.env.engine.camera.position);
+      return;
+    }
     if (this.merger) {
       // timeScale is set to zero by the app while paused and multiplied by the
       // time warp, so reading it back is how the merger inherits both.
@@ -1227,6 +1359,7 @@ export class GalaxyStage extends Stage {
     const g = this.params;
     const rSun = 2.2 * g.discScaleKpc;
     const [dv, du] = formatDistance(this.env.controls.distance * 3.0857e19);
+    if (this.pulsar) return this.pulsarRows(this.pulsar);
     if (this.merger) return this.mergerRows(this.merger);
     if (this.encounter) {
       const e = this.encounter;
@@ -1261,6 +1394,43 @@ export class GalaxyStage extends Stage {
 
   override setBoost(beta: number, dir: THREE.Vector3): void {
     this.sky.setBoost(beta, dir);
+  }
+
+  /**
+   * What is known about a neutron star, and how.
+   *
+   * Only two of these are measured: the period and how fast it is lengthening.
+   * Everything else - the field, the age, the power, the size of the
+   * magnetosphere - is those two put through the vacuum dipole formula. The
+   * readout says so, because a plot of derived quantities that does not say
+   * which of them were observed is not a measurement, it is a claim.
+   */
+  private pulsarRows(p: PSR.Pulsar): Row[] {
+    const turns = 1 / p.periodS;
+    const age = PSR.characteristicAgeYears(p);
+    const cls = PSR.classify(p);
+    const rlc = PSR.lightCylinderCm(p.periodS) / 1e5;
+    const dm = PSR.dispersionMeasure(p.distancePc);
+    return [
+      { k: 'pulsar', v: p.name ?? cls.label, accent: true },
+      { k: 'kind', v: cls.label },
+      { k: 'period', v: p.periodS < 0.1
+        ? `${(p.periodS * 1e3).toFixed(3)} ms` : `${sig(p.periodS, 4)} s` },
+      { k: 'turns', v: turns > 1 ? `${sig(turns, 3)} a second` : `once every ${sig(p.periodS, 2)} s` },
+      { k: 'lengthening', v: `${p.pdot.toExponential(2)}`, u: 's/s' },
+      { k: 'field', v: `${p.fieldG.toExponential(2)} G · inferred` },
+      { k: 'age', v: age < 1e6
+        ? `${sig(age, 3)} yr` : `${sig(age / 1e6, 3)} Myr`, },
+      { k: 'spin-down', v: `${PSR.spinDownPower(p).toExponential(2)}`, u: 'erg/s' },
+      { k: 'light cylinder', v: `${sig(rlc, 3)} km · ${sig(rlc / 10, 2)} radii` },
+      { k: 'equator at', v: `${(PSR.surfaceBeta(p.periodS) * 100).toFixed(2)}% of c` },
+      { k: 'beam', v: `${((PSR.beamAngle(p.periodS) * 180) / Math.PI).toFixed(0)}° · `
+        + `${(PSR.beamingFraction(p) * 100).toFixed(0)}% of the sky` },
+      { k: 'dispersion', v: `${sig(dm, 3)} pc/cm³ · `
+        + `${sig(PSR.dispersionDelay(dm, 400, 800), 2)} s across a band` },
+      { k: 'shown at', v: this.psrSlow > 1.05
+        ? `1/${sig(this.psrSlow, 3)} speed · heard at its own` : 'its own rate' },
+    ];
   }
 
   private mergerRows(m: MergerView): Row[] {

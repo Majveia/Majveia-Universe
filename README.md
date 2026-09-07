@@ -290,6 +290,62 @@ the survival probability go back into the *opacity* of each point. The bright
 end of the diagram is faint for the same reason the sky has few blue giants in
 it.
 
+### Pulsars
+
+**Q** at the galactic scale looks at what a star above eight solar masses
+leaves. Its core collapses in about a second from the size of the Earth to the
+size of a city, and two things are conserved through that collapse, absurdly
+well. Angular momentum: a core turning once a month arrives turning a hundred
+times a second. Magnetic flux: a hundred gauss squeezed by ten thousand in
+radius arrives at a trillion. What is left is a magnet the size of a city
+spinning at propeller speeds, and a rotating magnet radiates.
+
+Almost everything follows from that. The star is braked by its own radiation,
+so it slows; the rate at which it slows measures the field, through
+
+    B = 3.2×10¹⁹ √(P Ṗ) gauss
+
+which is the vacuum dipole formula rearranged and is how every neutron-star
+field in the literature is actually known — nobody has measured one directly.
+Put the Crab's 33 milliseconds and its 4.2×10⁻¹³ s/s into it and 3.8 trillion
+gauss comes out, which is the catalogue value; its spin-down power comes out at
+4.5×10³⁸ erg/s, a hundred thousand suns, which is what lights the whole nebula
+around it. That nebula has no star heating it. It shines on the rotational
+energy of the corpse at its centre.
+
+The readout says which two numbers were measured and which eleven were derived
+from them, because a table of derived quantities that does not say so is not a
+measurement but a claim. The Crab's characteristic age comes out at 1257 years
+against a true age of 972 — the supernova was seen from China in 1054 — and it
+is *wrong in the direction the assumptions predict*, which is the only real
+check on a characteristic age that exists.
+
+The period–period-derivative diagram is the neutron star's HR diagram, and has
+the same two properties: the objects do not fill it, and where one sits says
+what it is. Constant field runs at slope −1, constant age at +1, and the death
+line at +3 — below it the field above the polar cap can no longer make
+electron-positron pairs, the cascade stops, and the star goes dark forever.
+Every pulsar drifts down and to the right all its life and every one of them
+crosses it. The population comes out in two clumps with a gulf between; the
+gulf is not something the surveys failed to look into, it is a fossil of there
+being two ways to make a pulsar and nothing in between.
+
+**N** plays it. Nothing is transposed: a pulsar turning once every one and a
+third seconds is a slow knock, the Crab at thirty a second is a buzz at the
+bottom of hearing, and a recycled millisecond pulsar at 642 turns a second is a
+musical note — because at that rate the pulses stop being events and become a
+pitch. The crossing happens at exactly the rate the ear stops counting and
+starts hearing.
+
+The beam is rendered as a volume rather than a cone, because a cone drawn as a
+surface has no geometry along its own axis — precisely where a beam is
+brightest. Integrating through the emitting region gets the axial brightening
+for nothing and the flash for nothing too: looking down the beam is a long path
+through dense material and looking across it is a short one, and that ratio
+*is* the pulse. The emitting region scales with the light cylinder, which is a
+hundred and sixty stellar radii for the Crab and seven for a millisecond
+pulsar, so the two look nothing like each other and do so for a reason.
+
 ### Planets
 
 Formation runs the physical sequence: a protoplanetary disc whose mass scales
@@ -500,6 +556,7 @@ looking at the output:
 | B | show the microwave background |
 | J | fly at a fraction of light speed |
 | G | merge two black holes |
+| Q | a pulsar, and the diagram it lives on |
 | D | Hertzsprung-Russell diagram |
 | N | hear the merger |
 | Y | run the star's whole life, to the nebula |
@@ -588,7 +645,7 @@ same planets - which is why a URL is enough to share a world.
 ```
 
 `lab.html` renders one subsystem at a time against a black background for
-tuning: `?mode=system|planet|nebula|pn|blackhole|merger|encounter`, plus every look parameter as a
+tuning: `?mode=system|planet|nebula|pn|pulsar|blackhole|merger|encounter`, plus every look parameter as a
 query argument. It is not part of the experience; it is how the experience got
 tuned.
 
@@ -602,12 +659,13 @@ src/
                 lensing, eclipses, magnetospheres
   camera/       the orbit and flight rigs, touch gestures, device orientation
   astro/        blackbody colour, stellar evolution, planet formation,
-                spectra, supernovae, planetary nebulae, binaries, comets
+                spectra, supernovae, planetary nebulae, pulsars,
+                binaries, comets
   galaxy/       kinematic density waves, population synthesis
   render/       the HDR engine and every shader
   sim/          the universe object graph and the scale ladder
   ui/           the interface
-tests/          397 tests against published measurements and against
+tests/          441 tests against published measurements and against
                 every edge of the gesture recogniser
 ```
 
@@ -624,8 +682,10 @@ coming out the same apparent size (which is why eclipses happen at all),
 Earth's magnetopause at
 ten radii and its auroral oval 19° from the pole, the solar CMB dipole at
 3.36 mK, the acoustic peaks at ℓ = 216, 504, 792, Ca II K coming out as the
-deepest line in a solar spectrum, and a planetary nebula reaching a light-year
-and a half across in ten thousand years — which is what the Helix measures.
+deepest line in a solar spectrum, a planetary nebula reaching a light-year and
+a half across in ten thousand years — which is what the Helix measures — and
+the Crab pulsar's 3.8 trillion gauss, its 4.5×10³⁸ erg/s, and a characteristic
+age that misses the true one by exactly as much as it should.
 
 Where the model is an approximation, it is one with a name and a range of
 validity. Zel'dovich is first-order Lagrangian perturbation theory: exact until
