@@ -63,7 +63,7 @@ import {
   circulation, itczLatitude, precipitation, type Circulation,
 } from './circulation';
 import {
-  dailyInsolation, globalMeanInsolation, lockedInsolation,
+  dailyInsolation, declination, globalMeanInsolation, lockedInsolation,
   longitudeAt, type OrbitGeometry,
 } from './insolation';
 
@@ -144,8 +144,10 @@ export interface Climate {
   seasonalK: number;
   /** Latitude of the annual-mean ice edge, rad. pi/2 means no permanent ice. */
   iceLineLat: number;
-  /** Fraction of the surface below freezing in the annual mean. */
+  /** Fraction of the surface below freezing for most of the year. */
   iceFraction: number;
+  /** Fraction that never thaws at all - the permanent caps and ice sheets. */
+  permanentIceFraction: number;
   /** Fraction of the surface where liquid water is possible at some point in the year. */
   liquidFraction: number;
   /** Fraction of surface-area times time that is habitable. */
@@ -169,6 +171,14 @@ export interface Climate {
   atmosphericCollapse: boolean;
   /** Seasonal temperature field, `seasons` rows of `bands` values, K. */
   field: Float32Array;
+  /**
+   * Relative precipitation on the same grid, global mean 1. The rain belt is
+   * not fixed: it follows the subsolar latitude through the year, lagging it,
+   * which is what a monsoon is.
+   */
+  precipField: Float32Array;
+  /** Subsolar latitude at each season, rad. */
+  subsolar: Float32Array;
   seasons: number;
   bandCount: number;
   /** Whether the coordinate is latitude (false) or angle from the substellar point (true). */
@@ -412,6 +422,7 @@ export function solveClimate(inp: ClimateInputs): Climate {
 
   const field = new Float32Array(ns * nb);
   const insol = new Float64Array(nb);
+  const subsolar = new Float32Array(ns);
 
   const period = Math.max(inp.periodS, 1);
   const dt = period / ns;
@@ -432,6 +443,7 @@ export function solveClimate(inp: ClimateInputs): Climate {
       for (let i = 0; i < nb; i++) S[i] = lockedInsolation(inp.irradiance, lat[i]);
     } else {
       const lambda = longitudeAt(t, period, orb);
+      subsolar[s] = declination(lambda, orb.obliquity);
       for (let i = 0; i < nb; i++) S[i] = dailyInsolation(inp.irradiance, lat[i], lambda, orb);
     }
 
@@ -489,18 +501,19 @@ export function solveClimate(inp: ClimateInputs): Climate {
   // the insolation that produced it.
   for (let s = 0; s < ns; s++) step((s + 0.5) * dt, true, s);
 
-  const out = summarise(inp, field, insol, lat, ns, nb, D, albedoModel, runaway, locked);
+  const out = summarise(inp, field, insol, subsolar, lat, ns, nb, D, albedoModel, runaway, locked);
   out.orbits = orbits;
   return out;
 }
 
 function summarise(
-  inp: ClimateInputs, field: Float32Array, insol: Float64Array, lat: Float64Array,
-  ns: number, nb: number, D: number, albedoModel: AlbedoModel, runaway: boolean, locked: boolean,
+  inp: ClimateInputs, field: Float32Array, insol: Float64Array, subsolar: Float32Array,
+  lat: Float64Array, ns: number, nb: number, D: number, albedoModel: AlbedoModel,
+  runaway: boolean, locked: boolean,
 ): Climate {
   const atm = inp.atmosphere;
   const bands: ClimateBand[] = [];
-  let mean = 0, seasonal = 0, ice = 0, liquid = 0, habitable = 0, albedoSum = 0;
+  let mean = 0, seasonal = 0, ice = 0, permanent = 0, liquid = 0, habitable = 0, albedoSum = 0;
 
   for (let i = 0; i < nb; i++) {
     let m = 0, hi = -Infinity, lo = Infinity, liq = 0, froz = 0;
@@ -517,6 +530,7 @@ function summarise(
     seasonal += hi - lo;
     liq /= ns; froz /= ns;
     if (froz > 0.5) ice++;
+    if (froz > 0.98) permanent++;
     if (liq > 0) liquid++;
     habitable += liq;
     albedoSum += albedoAt(m, albedoModel);
@@ -530,6 +544,7 @@ function summarise(
   // Cold is not the same as icy: Mercury's night side is 100 K and there is no
   // ice on it, because there is no water.
   const iceFraction = inp.oceanFraction > 0.005 ? ice / nb : 0;
+  const permanentIceFraction = inp.oceanFraction > 0.005 ? permanent / nb : 0;
   const liquidFraction = liquid / nb;
   // Water has to exist before it can be liquid: a bone-dry world in the
   // habitable zone is still bone dry.
@@ -564,11 +579,26 @@ function summarise(
     meanK: mean,
     scaleHeightM: scaleHeight(mean, inp.gravity, atm.molarMass),
   });
-  const itcz = itczLatitude(0, circ.hadleyEdge);
+  // Rain, through the year. The rising branch follows the subsolar point and
+  // lags it by about six weeks, which is why the monsoon arrives when it does
+  // rather than at the solstice.
+  const precipField = new Float32Array(ns * nb);
   let pSum = 0;
-  for (const bnd of bands) { bnd.precipitation = precipitation(bnd.lat, circ, itcz); pSum += bnd.precipitation; }
-  const pMean = pSum / nb || 1;
-  for (const bnd of bands) bnd.precipitation /= pMean;
+  for (let s = 0; s < ns; s++) {
+    const itcz = locked ? 0 : itczLatitude(subsolar[s], circ.hadleyEdge);
+    for (let i = 0; i < nb; i++) {
+      const v = precipitation(bands[i].lat, circ, itcz);
+      precipField[s * nb + i] = v;
+      pSum += v;
+    }
+  }
+  const pMean = pSum / (ns * nb) || 1;
+  for (let k = 0; k < precipField.length; k++) precipField[k] /= pMean;
+  for (let i = 0; i < nb; i++) {
+    let m = 0;
+    for (let s = 0; s < ns; s++) m += precipField[s * nb + i];
+    bands[i].precipitation = m / ns;
+  }
 
   // Atmospheric collapse: on a locked world, if the coldest place is below the
   // condensation point of the air itself, the atmosphere snows out there and
@@ -598,11 +628,12 @@ function summarise(
 
   return {
     bands, meanK: mean, gradientK: gradient, seasonalK: seasonal,
-    iceLineLat: iceLine, iceFraction, liquidFraction, habitability: habitable,
+    iceLineLat: iceLine, iceFraction, permanentIceFraction,
+    liquidFraction, habitability: habitable,
     state, diffusion: D, albedo: albedoSum / nb,
     effectiveK: emission, greenhouseK: greenhouse,
     circulation: circ, atmosphericCollapse: collapse,
-    field, seasons: ns, bandCount: nb, locked, orbits: 0,
+    field, precipField, subsolar, seasons: ns, bandCount: nb, locked, orbits: 0,
   };
 }
 

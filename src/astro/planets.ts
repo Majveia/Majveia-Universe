@@ -26,6 +26,8 @@ import { makeComet, type Comet } from './comet';
 import {
   carbonCycle, outgassingRate, solveClimate, thermostatSetpoint, type Climate,
 } from './climate';
+import { circulation } from './circulation';
+import { scaleHeight } from './radiation';
 import { irradiance } from './insolation';
 import {
   liquidWaterPossible, T_FREEZE, type Atmosphere,
@@ -130,6 +132,12 @@ export interface Planet {
   surfaceSeed: number;
   /** Magnetic field strength relative to Earth's. */
   magnetism: number;
+  /**
+   * Zonal jets from pole to pole, from the Rhines scale. Earth fits about
+   * three; Jupiter fits two dozen, and that is how many belts and zones you
+   * can count in a small telescope.
+   */
+  jets: number;
 }
 
 export interface PlanetarySystem {
@@ -568,6 +576,18 @@ function makePlanet(
       iceFraction = Math.min(1, waterInventory);
     }
   }
+  // How many jets the planet's rotation and size will support. A giant has no
+  // surface for the energy balance to be about, but it certainly has weather,
+  // so the contrast driving its winds is estimated from radiative equilibrium
+  // instead: an unlit pole sits at about the fourth root of 1/pi of the
+  // equator's temperature.
+  const gradientK = noSurface ? Math.max(2, teq * 0.25) : Math.max(2, Math.abs(surfaceK - teq));
+  const jets = circulation({
+    dayS, radiusM, gravity, pressureBar: Math.max(pressureBar, noSurface ? 1 : 0),
+    gradientK, meanK: Math.max(surfaceK, 30),
+    scaleHeightM: scaleHeight(Math.max(surfaceK, 30), gravity, air.molarMass),
+  }).jets;
+
   const teqForClass = noSurface ? teq : surfaceK;
   const cls = classify(mEarth, teqForClass, Math.max(ocean, iceFraction * 0.6), insideSnow,
     pressureBar, hydrogenEnvelope);
@@ -661,6 +681,7 @@ function makePlanet(
     color2: c2,
     surfaceSeed: rng.nextUint(),
     magnetism,
+    jets,
     elements: {
       a: au * AU,
       e: ecc,
@@ -727,7 +748,19 @@ export function planetClimate(p: Planet, star: Star, luminosityLsun: number): Cl
     gravity: p.gravity,
     radiusM: p.radiusM,
     oceanFraction: Math.max(p.waterInventory, p.oceanFraction),
-    albedo: p.albedo,
+    // The climate grows its own ice, so it has to be given the albedo of the
+    // world *without* any - and a measured Bond albedo already counts the caps
+    // that are there. Backing them out stops the model from icing a planet over
+    // on the strength of the ice it already has.
+    //
+    // The correction is small, and smaller than the area of the ice suggests,
+    // because a Bond albedo is weighted by the light that arrives: caps sit
+    // where the sun is lowest and only about 45% of the equatorial flux ever
+    // reaches them, so they reflect much less of the planet's budget than
+    // their share of its surface.
+    albedo: p.iceFraction > 0.01
+      ? Math.max(0.04, p.albedo - p.iceFraction * Math.max(0, 0.62 - p.albedo) * 0.45)
+      : p.albedo,
     tidallyLocked: p.tidallyLocked,
     starTeff: star.teff,
   });

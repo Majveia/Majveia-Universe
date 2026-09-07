@@ -25,7 +25,8 @@ import {
 } from '../core/constants';
 import { makeStar, type Star } from './stellar';
 import type { Moon, Planet, PlanetarySystem, PlanetClass, Ring } from './planets';
-import type { Atmosphere } from './radiation';
+import { scaleHeight, type Atmosphere } from './radiation';
+import { circulation } from './circulation';
 import { makeComet } from './comet';
 import { RNG } from '../core/rng';
 
@@ -130,7 +131,7 @@ const PLANETS: RealPlanet[] = [
     au: 1.52371034, e: 0.09339410, inc: 1.84969142, node: 49.55953891,
     peri: -23.94362959, meanLong: -4.55343205,
     dayHours: 24.6229, obliquity: 25.19, albedo: 0.25, teq: 210, surface: 210,
-    pressure: 0.00636, atmosphere: 'CO₂', ocean: 0, cloud: 0.05, biosphere: 0,
+    pressure: 0.00636, atmosphere: 'CO₂', ocean: 0, ice: 0.02, cloud: 0.05, biosphere: 0,
     color: [0.63, 0.36, 0.21], color2: [0.42, 0.24, 0.15],
     moons: [
       {
@@ -322,6 +323,13 @@ function buildPlanet(p: RealPlanet, index: number): Planet {
     color2: p.color2,
     surfaceSeed: 1000 + index * 7919,
     magnetism: SOLAR_MAGNETISM[p.name] ?? 0,
+    jets: circulation({
+      dayS: Math.abs(p.dayHours) * 3600, radiusM, gravity,
+      pressureBar: Math.max(p.pressure, p.atmosphere.includes('H₂') ? 1 : 0),
+      gradientK: Math.max(2, Math.abs(p.surface - p.teq) || p.teq * 0.25),
+      meanK: p.surface,
+      scaleHeightM: scaleHeight(p.surface, gravity, p.atmosphere.includes('H₂') ? 2.3 : 30),
+    }).jets,
   };
 }
 

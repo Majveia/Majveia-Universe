@@ -73,14 +73,31 @@ import {
 import {
   starLabel, makeStar, msLifetimeGyr, habitableZone, type Star,
 } from '../astro/stellar';
-import { CLASS_LABEL, type Planet, type PlanetarySystem } from '../astro/planets';
+import {
+  CLASS_LABEL, hasClimate, planetClimate, type Planet, type PlanetarySystem,
+} from '../astro/planets';
+import type { Climate } from '../astro/climate';
 import { solarSystem } from '../astro/solsystem';
 import { detectability } from '../astro/detection';
 import type { DetectionPlotOptions } from '../ui/detection';
 import { blackbodyRGB } from '../astro/blackbody';
+import { sampleClimate, seasonalIceEdge } from '../astro/climate';
 import { RNG, hash3 } from '../core/rng';
-import { AU, GYR, MPC, M_EARTH, M_JUPITER, MYR, R_EARTH, R_SUN, YEAR, DAY, G, M_SUN, LY } from '../core/constants';
+import {
+  AU, DEG, GYR, MPC, M_EARTH, M_JUPITER, MYR, R_EARTH, R_SUN, YEAR, DAY, G, M_SUN, LY,
+} from '../core/constants';
 import { sig, commas, formatDistance, formatTime } from '../ui/hud';
+
+/** One line for each way a climate can end up. */
+const CLIMATE_NOTE: Record<string, string> = {
+  snowball: 'snowball — frozen over',
+  frozen: 'frozen',
+  runaway: 'runaway greenhouse',
+  hot: 'past water\u2019s critical point',
+  airless: 'airless — no heat moves',
+  temperate: '',
+  giant: '',
+};
 
 export type ScaleId = 'cosmos' | 'cluster' | 'galaxy' | 'system' | 'world';
 
@@ -2289,6 +2306,7 @@ export class WorldStage extends Stage {
   title = 'World';
   subtitle = '';
   private planet!: Planet;
+  private climate?: Climate;
   private view!: PlanetView;
   private sky!: SkyDome;
   private starView!: StarView;
@@ -2325,8 +2343,18 @@ export class WorldStage extends Stage {
     this.sky.mesh.scale.setScalar(1e5);
     this.root.add(this.sky.mesh);
 
+    // Solve this world's climate before drawing it. It costs a few tens of
+    // milliseconds and it decides where the ice is, where the deserts are, how
+    // many bands a giant has, and what the readout can say - so it is worth
+    // paying for once, here, at the moment somebody actually arrives.
+    if (hasClimate(p)) this.climate = planetClimate(p, system.star, system.effectiveLuminosity);
+
     // The planet is drawn at unit radius; everything else is scaled to match.
-    this.view = new PlanetView(p, { radius: 1, segments: this.env.quality() > 0.6 ? 160 : 96 });
+    this.view = new PlanetView(p, {
+      radius: 1,
+      segments: this.env.quality() > 0.6 ? 160 : 96,
+      climate: this.climate,
+    });
     this.root.add(this.view.group);
 
     // Its star, at the correct angular size: the Sun is half a degree across
@@ -2484,6 +2512,7 @@ export class WorldStage extends Stage {
       { k: 'radius', v: (p.radiusM / R_EARTH).toFixed(2), u: 'R⊕' },
       { k: 'gravity', v: (p.gravity / 9.80665).toFixed(2), u: 'g' },
       { k: 'surface', v: `${p.surfaceK.toFixed(0)} K`, u: `${(p.surfaceK - 273.15).toFixed(0)} °C` },
+      ...this.climateRows(),
       { k: 'atmosphere', v: p.pressureBar < 1e-3 ? 'none' : `${sig(p.pressureBar, 2)} bar` },
       { k: 'day', v: p.tidallyLocked ? 'locked' : formatTime(Math.abs(p.dayS)).join(' ') },
       { k: 'year', v: formatTime(p.periodS).join(' ') },
@@ -2494,6 +2523,62 @@ export class WorldStage extends Stage {
       { k: 'elapsed', v: tv, u: tu },
       { k: 'altitude', v: dv, u: du },
     ];
+  }
+
+  /**
+   * What the energy balance found. These are the numbers that a single mean
+   * temperature cannot carry: how steeply the world runs from equator to pole,
+   * how far its seasons swing it, and where its ice stops.
+   */
+  private climateRows(): Row[] {
+    const cl = this.climate;
+    if (!cl) return [];
+    const rows: Row[] = [];
+    const here = sampleClimate(cl, 0, this.seasonPhase());
+    rows.push({
+      k: cl.locked ? 'substellar' : 'equator',
+      v: `${here.toFixed(0)} K`,
+      u: `pole ${cl.bands[0].meanK.toFixed(0)} K`,
+    });
+    rows.push({ k: 'gradient', v: `${Math.abs(cl.gradientK).toFixed(0)}`, u: 'K pole to pole' });
+    if (cl.seasonalK > 1.5) {
+      rows.push({ k: 'seasons', v: `±${(cl.seasonalK / 2).toFixed(0)}`, u: 'K' });
+    }
+    if (cl.iceFraction > 0.001) {
+      // Two different numbers, and the difference between them is the seasonal
+      // snow: what never thaws, and how far down the winter reaches today.
+      const edge = seasonalIceEdge(cl, this.seasonPhase(), true) / DEG;
+      rows.push({
+        k: 'ice',
+        v: cl.iceFraction > 0.97 ? 'pole to pole'
+          : `${(cl.iceFraction * 100).toFixed(0)}% of surface`,
+        u: cl.iceFraction > 0.97 ? undefined : `to ${edge.toFixed(0)}°`,
+        accent: cl.state === 'snowball',
+      });
+    }
+    if (cl.circulation.windSpeed > 1) {
+      rows.push({
+        k: 'winds',
+        v: `${cl.circulation.windSpeed.toFixed(0)} m/s`,
+        u: cl.circulation.jets > 2.5 ? `${Math.round(cl.circulation.jets)} jets` : undefined,
+      });
+    }
+    if (this.planet.co2Bar > 1e-6 && !this.planet.runaway) {
+      rows.push({
+        k: 'CO₂',
+        v: this.planet.co2Bar < 0.01
+          ? `${(this.planet.co2Bar * 1e6).toFixed(0)} ppm`
+          : `${sig(this.planet.co2Bar, 2)} bar`,
+      });
+    }
+    const note = CLIMATE_NOTE[cl.state];
+    if (note) rows.push({ k: 'state', v: note, accent: true });
+    return rows;
+  }
+
+  /** Where the planet is in its own year, 0 to 1. */
+  private seasonPhase(): number {
+    return (this.simTime / Math.max(this.planet.periodS, 1)) % 1;
   }
 
   /** " · total eclipse" and the like, when one is under way. */
