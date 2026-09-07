@@ -102,9 +102,10 @@ const COMMANDS: Command[] = [
 
   { key: 'KeyM', label: 'collide', rank: 30, live: has('toggleEncounter'), on: lit('KeyM') },
   { key: 'KeyG', label: 'black holes', rank: 31, live: has('toggleMerger'), on: lit('KeyG') },
-  { key: 'KeyQ', label: 'a pulsar', rank: 32, live: has('togglePulsar'), on: lit('KeyQ') },
-  { key: 'KeyD', label: 'H-R diagram', rank: 33, live: has('toggleHR'), on: lit('KeyD') },
-  { key: 'KeyN', label: 'listen', rank: 34, live: has('toggleChirpAudio'), on: lit('KeyN') },
+  { key: 'KeyZ', label: 'a pulsar', rank: 32, live: has('togglePulsar'), on: lit('KeyZ') },
+  { key: 'KeyI', label: 'torn apart', rank: 33, live: has('toggleTDE'), on: lit('KeyI') },
+  { key: 'KeyD', label: 'H-R diagram', rank: 34, live: has('toggleHR'), on: lit('KeyD') },
+  { key: 'KeyN', label: 'listen', rank: 35, live: has('toggleChirpAudio'), on: lit('KeyN') },
 
   { key: 'KeyY', label: 'a whole life', rank: 40, live: has('toggleEvolution'), on: lit('KeyY') },
   { key: 'KeyT', label: 'true scale', rank: 41, live: has('toggleTrueScale'), on: lit('KeyT') },

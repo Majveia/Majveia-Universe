@@ -121,6 +121,48 @@ export const eccentricFromTrue = (nu: number, e: number): number =>
  * Position and velocity in the parent's inertial frame at time t.
  * Handles elliptic (e < 1) and hyperbolic (e > 1) orbits.
  */
+/**
+ * Barker's equation, solved exactly.
+ *
+ * A parabolic orbit is the boundary case both Kepler solvers fall over on -
+ * the elliptic one divides by a semi-major axis that is infinite and the
+ * hyperbolic one by an eccentricity that is exactly one. It also happens to be
+ * the case that matters most often in practice, because anything falling in
+ * from a great distance arrives on very nearly a parabola: a star wandering
+ * toward a black hole, a comet on its first pass.
+ *
+ * Unlike the other two it needs no iteration at all. The time equation is a
+ * depressed cubic in tan(theta/2), and Cardano solved those in 1545.
+ *
+ * @param mp  the parabolic mean anomaly, t * sqrt(mu / 2 q^3)
+ * @returns   tan(theta/2), from which the true anomaly follows
+ */
+export function solveBarker(mp: number): number {
+  // D^3 + 3D - 3 mp = 0
+  const h = 1.5 * mp;
+  const r = Math.sqrt(h * h + 1);
+  return Math.cbrt(h + r) + Math.cbrt(h - r);
+}
+
+/**
+ * Where something on a parabolic orbit is, at a time relative to its closest
+ * approach. Returned in the orbital plane, with the pericentre along +x.
+ *
+ * @param q   pericentre distance, m
+ * @param mu  the central body's GM
+ * @param t   seconds from pericentre; negative is inbound
+ */
+export function parabolicState(
+  q: number, mu: number, t: number,
+): { x: number; y: number; r: number } {
+  const mp = t * Math.sqrt(mu / (2 * q * q * q));
+  const d = solveBarker(mp);
+  const r = q * (1 + d * d);
+  // From the conic r = q(1 + tan^2(nu/2)) and nu = 2 atan(d).
+  const nu = 2 * Math.atan(d);
+  return { x: r * Math.cos(nu), y: r * Math.sin(nu), r };
+}
+
 export function stateAt(el: OrbitalElements, muTotal: number, t: number, out?: StateVector): StateVector {
   const o = out ?? { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
   const dt = t - el.epoch;

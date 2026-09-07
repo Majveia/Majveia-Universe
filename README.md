@@ -292,7 +292,7 @@ it.
 
 ### Pulsars
 
-**Q** at the galactic scale looks at what a star above eight solar masses
+**Z** at the galactic scale looks at what a star above eight solar masses
 leaves. Its core collapses in about a second from the size of the Earth to the
 size of a city, and two things are conserved through that collapse, absurdly
 well. Angular momentum: a core turning once a month arrives turning a hundred
@@ -345,6 +345,62 @@ through dense material and looking across it is a short one, and that ratio
 *is* the pulse. The emitting region scales with the light cylinder, which is a
 hundred and sixty stellar radii for the Crab and seven for a millisecond
 pulsar, so the two look nothing like each other and do so for a reason.
+
+### A star torn apart
+
+**I** at the galactic scale feeds a star to the black hole at the centre. It is
+the third way a star can end, and unlike the other two it has nothing to do with
+the star's mass — only with where it happened to wander.
+
+Gravity alone would not tear a star apart; it would move it. What tears it apart
+is the *difference* in gravity across it, which grows as the inverse cube of the
+distance while the star's own self-gravity stays where it is. Set those equal:
+
+    r_t = R* (M_bh / M*)^(1/3)
+
+For the Sun and a million-solar-mass hole that is 0.47 AU — inside the orbit of
+Venus, from something four million times heavier than the Sun and no bigger.
+
+Three things follow, and the simulation gets all three for free from one number.
+The debris comes away with a spread of orbital energies straddling zero, because
+the near side of the star sat deeper in the potential than the far side. So
+**exactly half escapes**, at six thousand kilometres a second. The bound half
+returns most-tightly-bound-first, and because a flat spread in energy becomes a
+power law in period through Kepler's third law, it returns as **t^(−5/3)** — one
+of the cleanest predictions in astrophysics, seen in dozens of objects over
+decades. The first debris is back in **41 days** for a Sun and a million solar
+masses, which is why these are found by surveys that revisit the same sky every
+few nights, and were not found at all until such surveys existed.
+
+And there is a **heaviest black hole that can do it**. The tidal radius grows as
+the cube root of the mass and the horizon grows linearly, so above about 10⁸ M☉
+the tidal radius is *inside* the horizon: the star crosses it whole and nothing
+is seen. That is the Hills mass. Whether a given galaxy's hole can make a flare
+at all is therefore a fact about that galaxy, and the readout says which — a big
+elliptical's 6×10⁸ M☉ hole swallows a dwarf whole and can only ever be caught
+disrupting a *giant*, whose limit is two hundred times higher because it goes as
+R^(3/2).
+
+Nothing about the shape of the stream is drawn. Every one of sixteen thousand
+points is a piece of the star on its own Keplerian orbit, differing only in
+where in the star it came from; the stream, the escaping arm, the returning arm
+and the light curve are all that one difference, propagated. The star's approach
+is on a genuine parabola, solved exactly with Barker's equation — the boundary
+case both other Kepler solvers fall over on, and the one that matters, because
+anything falling in from a great distance arrives on very nearly a parabola.
+
+The event has two lengths — the pericentre and the most-bound apocentre, four
+orders of magnitude apart — and two timescales, the day it takes to cross the
+tidal radius and the thousand years before the debris returns. The camera frames
+the geometric mean and the clock runs in two beats, and the readout says which.
+
+One number is drawn differently from how it is reported, on purpose. A blackbody
+fit to a real flare gives an emitting radius of tens of astronomical units —
+thousands of times the horizon, larger than the returning stream, and far too
+cool for gas that close to a black hole. Something out there is reprocessing what
+the disc emits, which is why these flares are ultraviolet and not X-ray, and it
+is not settled. So the picture shows where the energy is released and the readout
+says how big the thing that radiates it appears to be.
 
 ### Planets
 
@@ -556,7 +612,8 @@ looking at the output:
 | B | show the microwave background |
 | J | fly at a fraction of light speed |
 | G | merge two black holes |
-| Q | a pulsar, and the diagram it lives on |
+| Z | a pulsar, and the diagram it lives on |
+| I | a star torn apart by a black hole |
 | D | Hertzsprung-Russell diagram |
 | N | hear the merger |
 | Y | run the star's whole life, to the nebula |
@@ -657,7 +714,7 @@ same planets - which is why a URL is enough to share a world.
 ```
 
 `lab.html` renders one subsystem at a time against a black background for
-tuning: `?mode=system|planet|nebula|pn|pulsar|blackhole|merger|encounter`, plus every look parameter as a
+tuning: `?mode=system|planet|nebula|pn|pulsar|tde|blackhole|merger|encounter`, plus every look parameter as a
 query argument. It is not part of the experience; it is how the experience got
 tuned.
 
@@ -672,12 +729,12 @@ src/
   camera/       the orbit and flight rigs, touch gestures, device orientation
   astro/        blackbody colour, stellar evolution, planet formation,
                 spectra, supernovae, planetary nebulae, pulsars,
-                binaries, comets
+                tidal disruption, binaries, comets
   galaxy/       kinematic density waves, population synthesis
   render/       the HDR engine and every shader
   sim/          the universe object graph and the scale ladder
   ui/           the interface
-tests/          447 tests against published measurements and against
+tests/          483 tests against published measurements and against
                 every edge of the gesture recogniser
 ```
 
@@ -696,8 +753,10 @@ ten radii and its auroral oval 19° from the pole, the solar CMB dipole at
 3.36 mK, the acoustic peaks at ℓ = 216, 504, 792, Ca II K coming out as the
 deepest line in a solar spectrum, a planetary nebula reaching a light-year and
 a half across in ten thousand years — which is what the Helix measures — and
-the Crab pulsar's 3.8 trillion gauss, its 4.5×10³⁸ erg/s, and a characteristic
-age that misses the true one by exactly as much as it should.
+the Crab pulsar's 3.8 trillion gauss, its 4.5×10³⁸ erg/s, a characteristic age
+that misses the true one by exactly as much as it should, and a tidally
+disrupted star whose first debris returns after 41 days and whose light curve
+falls as t^(−5/3).
 
 Where the model is an approximation, it is one with a name and a range of
 validity. Zel'dovich is first-order Lagrangian perturbation theory: exact until

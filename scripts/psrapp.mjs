@@ -15,7 +15,7 @@ await page.evaluate(() => window.majveia.travel('galaxy', { cluster: 0, member: 
 await page.waitForTimeout(9000);
 const n = +(args.n ?? 1);
 for (let i = 0; i < n; i++) {
-  await page.evaluate(() => window.majveia.app.runKey('KeyQ'));
+  await page.evaluate((k) => window.majveia.app.runKey(k), args.key ?? 'KeyZ');
   await page.waitForTimeout(+(args.settle ?? 5000));
   await page.evaluate(() => document.getElementById('ui').classList.remove('idle'));
   await page.screenshot({ path: `${args.out ?? 'psr'}-${i}.png` });

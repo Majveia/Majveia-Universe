@@ -1,3 +1,4 @@
+import { solveBarker, parabolicState } from '../src/physics/kepler';
 import { describe, it, expect } from 'vitest';
 import {
   NBody, plummerSphere, nfwAcceleration, erfApprox, dynamicalFriction, G_AU,
@@ -298,5 +299,52 @@ describe('galaxy encounter', () => {
     const e = new Encounter(gp, { seed: 6, tracers: 1200, pericentre: 0.4, separation: 3 });
     for (let i = 0; i < 1500; i++) e.step(e.dt);
     for (let i = 0; i < e.count * 3; i++) expect(Number.isFinite(e.pos[i])).toBe(true);
+  });
+});
+
+describe("Barker's equation", () => {
+  it('puts pericentre at time zero', () => {
+    const s = parabolicState(1e11, 1.3e26, 0);
+    expect(s.r).toBeCloseTo(1e11, 3);
+    expect(s.y).toBeCloseTo(0, 3);
+    expect(s.x).toBeCloseTo(1e11, 3);
+  });
+
+  it('is symmetric about pericentre, as a conic must be', () => {
+    const q = 1e11, mu = 1.3e26;
+    for (const t of [1e5, 1e6, 1e7]) {
+      const a = parabolicState(q, mu, -t);
+      const b = parabolicState(q, mu, t);
+      expect(a.r / b.r).toBeCloseTo(1, 9);
+      expect(a.x / b.x).toBeCloseTo(1, 9);
+      expect(a.y / b.y).toBeCloseTo(-1, 9);
+    }
+  });
+
+  it('never comes closer than the pericentre', () => {
+    const q = 4e11, mu = 1.3e26;
+    for (let t = -3e7; t <= 3e7; t += 1e6) {
+      expect(parabolicState(q, mu, t).r).toBeGreaterThanOrEqual(q * (1 - 1e-9));
+    }
+  });
+
+  it('conserves energy exactly: a parabola has none', () => {
+    // v^2/2 - mu/r = 0 for every point on a parabolic orbit. Differencing the
+    // position gives the speed, and it has to satisfy that everywhere.
+    const q = 2e11, mu = 1.3e26, h = 1;
+    for (const t of [-5e6, -1e5, 1e5, 5e6]) {
+      const a = parabolicState(q, mu, t - h);
+      const b = parabolicState(q, mu, t + h);
+      const v = Math.hypot(b.x - a.x, b.y - a.y) / (2 * h);
+      const r = parabolicState(q, mu, t).r;
+      expect((v * v) / 2 / (mu / r)).toBeCloseTo(1, 5);
+    }
+  });
+
+  it('solves the cubic it claims to solve', () => {
+    for (const mp of [-40, -1, -0.01, 0, 0.01, 1, 40, 1e4]) {
+      const d = solveBarker(mp);
+      expect(d ** 3 + 3 * d - 3 * mp).toBeCloseTo(0, 6);
+    }
   });
 });

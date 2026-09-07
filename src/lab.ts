@@ -153,6 +153,78 @@ if (params.get('mode') === 'system') {
   (window as unknown as Record<string, unknown>).labSystem = sv;
 }
 
+// --- Optional subsystem: a star being taken apart, on its own.
+if (params.get('mode') === 'tde') {
+  const { TDEView } = await import('./render/tdeview');
+  const T = await import('./astro/tidal');
+  const { BlackHoleView } = await import('./render/blackhole');
+  const { SkyDome } = await import('./render/skydome');
+  engine.scene.remove(view.group);
+  engine.scene.add(new SkyDome({
+    brightness: 0.34, bandStrength: 0.008, seed, nebula: 0,
+  }).mesh);
+
+  const mh = Number(params.get('mh') ?? 1e6);
+  const d = T.disruption(mh, Number(params.get('ms') ?? 1),
+    Number(params.get('rs') ?? 1), Number(params.get('beta') ?? 1.4));
+  const tde = new TDEView({ disruption: d, count: Number(params.get('n2') ?? 9000), seed });
+  engine.scene.add(tde.group);
+
+  const rsAu = T.horizonRadius(d.holeKg) / 1.495978707e11;
+  const bh = new BlackHoleView({
+    massMsun: mh,
+    gravitationalRadius: rsAu / 2,
+    diskInner: 6, diskOuter: 40,
+    diskBrightness: 0.35,
+    skyBrightness: 0.3,
+  });
+  engine.scene.add(bh.mesh);
+
+  const tmin = T.fallbackTime(d.holeKg, d.starKg, d.starR);
+  const d0 = Number(params.get('d') ?? tde.frameAu);
+  controls.snapTo(new THREE.Vector3(), d0,
+    Number(params.get('theta') ?? 0.6), Number(params.get('phi') ?? 0.9));
+  controls.minDistance = rsAu * 4;
+  controls.maxDistance = tde.reachAu * 40;
+  engine.camera.near = rsAu;
+  engine.camera.far = tde.reachAu * 400;
+  engine.camera.updateProjectionMatrix();
+
+  // Time in units of the first return, so the same numbers frame any hole.
+  let u = Number(params.get('t0') ?? -0.4);
+  const rate = Number(params.get('rate') ?? 0.12);
+  const fixed = params.has('t');
+  if (fixed) u = Number(params.get('t'));
+  const step = () => {
+    requestAnimationFrame(step);
+    if (!fixed) u += rate / 60;
+    tde.update(tde.timeFor(u), engine.camera);
+    bh.update(engine.camera.position, tde.timeFor(u));
+    if (params.has('probe') && Math.random() < 0.02) {
+      // eslint-disable-next-line no-console
+      console.info('[tde:probe]', `u=${u.toFixed(2)}`,
+        `drawn=${(tde as unknown as { cloud: { points: { geometry: { drawRange: { count: number } } } } }).cloud.points.geometry.drawRange.count}`,
+        `L=${tde.luminosity.toExponential(2)}W`,
+        `ret=${(tde.returnedFraction * 100).toFixed(1)}%`,
+        `camd=${controls.distance.toFixed(1)}`);
+    }
+  };
+  requestAnimationFrame(step);
+  // eslint-disable-next-line no-console
+  console.info('[lab:tde]', `${mh.toExponential(1)} Msun hole,`,
+    d.visible ? 'disrupts' : 'SWALLOWS WHOLE',
+    `rt=${(T.tidalRadius(d.holeKg, d.starKg, d.starR) / 1.496e11).toFixed(3)}AU`,
+    `rs=${rsAu.toFixed(4)}AU`,
+    `tmin=${(tmin / 86400).toFixed(1)}d`,
+    `vej=${(T.ejectaSpeed(d.holeKg, d.starKg, d.starR) / 1e3).toFixed(0)}km/s`,
+    `Lpeak=${(T.flareLuminosity(d, tmin * 1.2) * 1e7).toExponential(2)}erg/s`,
+    `T=${T.flareTemperature(d, tmin * 1.2).toExponential(2)}K`,
+    `reach=${tde.reachAu.toFixed(1)}AU`,
+    `apo(most bound)=${(T.debrisOrbit(d, -1).a * 2 / 1.496e11).toFixed(1)}AU`);
+  (window as unknown as Record<string, unknown>).labTDE = tde;
+  (window as unknown as Record<string, unknown>).lab = { ready: true, engine, controls };
+}
+
 // --- Optional subsystem: a pulsar, on its own.
 if (params.get('mode') === 'pulsar') {
   const { PulsarView } = await import('./render/pulsarview');

@@ -779,11 +779,28 @@ export class App {
           break;
         }
         case 'KeyX': this.toggleViewfinder(); break;
-        case 'KeyQ': {
+        case 'KeyI': {
+          const st = this.stage as unknown as { toggleTDE?: () => boolean };
+          if (st.toggleTDE) {
+            const on = st.toggleTDE();
+            this.mark('KeyI', on);
+            this.rebuildReadout();
+            const st2 = this.stage as unknown as { tdeVisible?: boolean };
+            this.flash(!on ? 'back to the galaxy'
+              : st2.tdeVisible === false
+                ? 'this hole is too big to tear a star apart — it swallows it whole'
+                : 'a star, torn apart by the hole at the centre');
+            if (on && !this.playing) this.togglePlay();
+          } else {
+            this.flash('this happens at a galaxy\u2019s centre');
+          }
+          break;
+        }
+        case 'KeyZ': {
           const st = this.stage as unknown as { togglePulsar?: () => boolean };
           if (st.togglePulsar) {
             const on = st.togglePulsar();
-            this.mark('KeyQ', on);
+            this.mark('KeyZ', on);
             this.rebuildReadout();
             this.flash(on
               ? 'a neutron star, turning — press N to hear it'
@@ -1222,7 +1239,8 @@ const HELP_HTML = `
       <dt>K</dt><dd>show lensing critical curves</dd>
       <dt>M</dt><dd>collide this galaxy with another</dd>
       <dt>G</dt><dd>merge two black holes</dd>
-      <dt>Q</dt><dd>a pulsar, and the diagram it lives on</dd>
+      <dt>Z</dt><dd>a pulsar, and the diagram it lives on</dd>
+      <dt>I</dt><dd>a star torn apart by a black hole</dd>
       <dt>D</dt><dd>Hertzsprung-Russell diagram</dd>
       <dt>N</dt><dd>hear the merger</dd>
       <dt>Y</dt><dd>run the star's whole life</dd>

@@ -28,6 +28,8 @@ import { CosmicWebRenderer } from '../render/cosmicweb';
 import { CmbView } from '../render/cmbview';
 import { MergerView } from '../render/mergerview';
 import { PulsarView } from '../render/pulsarview';
+import { TDEView } from '../render/tdeview';
+import * as TDE from '../astro/tidal';
 import { PPDotDiagram } from '../ui/ppdot';
 import { PulseAudio } from '../ui/pulseaudio';
 import * as PSR from '../astro/pulsar';
@@ -762,6 +764,12 @@ export class GalaxyStage extends Stage {
   private encounterCloud?: PointCloud;
   private encounterSteps = 0;
   private merger?: MergerView;
+  private tde?: TDEView;
+  private tdeDis?: TDE.Disruption;
+  /** Time since the disruption, in units of the first debris return. */
+  private tdeU = 0;
+  /** Whether this galaxy's hole is small enough to make a flare at all. */
+  get tdeVisible(): boolean { return this.tdeDis?.visible ?? false; }
   private pulsarView?: PulsarView;
   private pulsar?: PSR.Pulsar;
   private ppdot?: PPDotDiagram;
@@ -1138,6 +1146,75 @@ export class GalaxyStage extends Stage {
     cam.updateProjectionMatrix();
   }
 
+  /**
+   * Feed a star to the black hole at the centre.
+   *
+   * The third way a star can end, and the only one that has nothing to do with
+   * the star: a matter of where it happened to wander. Whether there is
+   * anything to see at all depends on this particular galaxy's hole - above
+   * about a hundred million solar masses the tidal radius is inside the
+   * horizon and the star goes in whole, with no flare, which is why the
+   * biggest black holes have never been caught doing this.
+   */
+  toggleTDE(): boolean {
+    if (this.tde) {
+      this.root.remove(this.tde.group);
+      this.tde.dispose();
+      this.tde = undefined;
+      this.tdeDis = undefined;
+      this.showGalaxy(true);
+      this.timeScale = this.baseTimeScale;
+      const c = this.env.controls;
+      c.snapTo(new THREE.Vector3(), this.params.radiusKpc * 2.4, 0.45, 0.78);
+      c.minDistance = 1e-7;
+      c.maxDistance = this.params.radiusKpc * 40;
+      const cam = this.env.engine.camera;
+      cam.near = 1e-5; cam.far = this.params.radiusKpc * 400;
+      cam.updateProjectionMatrix();
+      return false;
+    }
+    const rng = new RNG(this.params.seed ^ 0x7d13);
+    const beta = 0.9 + 1.4 * rng.next();
+    // Whatever wandered in. Most stars are small, so most of these are.
+    const ms = 0.3 + 1.4 * Math.pow(rng.next(), 2.2);
+    let d = TDE.disruption(this.params.blackHoleMsun, ms, Math.pow(ms, 0.85), beta);
+    if (!d.visible) {
+      // Too big a hole for a main-sequence star - but the limit goes as the
+      // three-halves power of the star's radius, so a giant is torn apart by a
+      // hole a couple of hundred times heavier than one that swallows a dwarf
+      // whole. Around the largest black holes, the only disruptions there can
+      // ever be are of giants, and that is a real selection and not a
+      // convenience: it is why the flares found around the heaviest holes are
+      // the long slow ones.
+      const giant = TDE.disruption(
+        this.params.blackHoleMsun, 1.1, 18 + 55 * rng.next(), beta,
+      );
+      if (giant.visible) d = giant;
+    }
+    this.tdeDis = d;
+    this.tde = new TDEView({
+      disruption: this.tdeDis,
+      count: this.env.quality() > 0.6 ? 14000 : 6000,
+      seed: this.params.seed,
+    });
+    this.tdeU = -1;
+    this.root.add(this.tde.group);
+    this.showGalaxy(false);
+    this.timeScale = 1;
+    const c = this.env.controls;
+    // Framed on the apocentre of the most bound debris, which is the only
+    // length in the picture that is not either the horizon or infinity.
+    const frame = this.tde.frameAu;
+    c.snapTo(new THREE.Vector3(), frame, 0.62, 0.95);
+    c.minDistance = frame * 1e-3;
+    c.maxDistance = this.tde.reachAu * 60;
+    const cam = this.env.engine.camera;
+    cam.near = frame * 1e-4;
+    cam.far = this.tde.reachAu * 600;
+    cam.updateProjectionMatrix();
+    return true;
+  }
+
   private showGalaxy(on: boolean): void {
     this.view.group.visible = on;
     this.catalogPoints.visible = on;
@@ -1227,6 +1304,19 @@ export class GalaxyStage extends Stage {
   markOnHR(s: Star | null): void { this.hr?.mark(s); }
 
   update(dt: number): void {
+    if (this.tde && this.tdeDis) {
+      // Time runs in units of the first debris return, so the same pacing
+      // works for a hole of any mass - which matters, because that return time
+      // is forty days for a small one and years for a large.
+      // The approach runs faster than the fallback, because it is: crossing
+      // the tidal radius takes a day and the first debris comes back a
+      // thousand years later.
+      this.tdeU += dt * this.timeScale * (this.tdeU < 0 ? 0.28 : 0.14);
+      if (this.tdeU > 7) this.tdeU = -1;
+      this.tde.update(this.tde.timeFor(this.tdeU), this.env.engine.camera);
+      this.sky.mesh.position.copy(this.env.engine.camera.position);
+      return;
+    }
     if (this.pulsarView && this.pulsar) {
       this.psrPhase += (dt * this.timeScale * 2 * Math.PI) / (this.pulsar.periodS * this.psrSlow);
       this.pulsarView.update(this.psrPhase, this.simTime, this.env.engine.camera);
@@ -1359,6 +1449,7 @@ export class GalaxyStage extends Stage {
     const g = this.params;
     const rSun = 2.2 * g.discScaleKpc;
     const [dv, du] = formatDistance(this.env.controls.distance * 3.0857e19);
+    if (this.tde && this.tdeDis) return this.tdeRows(this.tdeDis);
     if (this.pulsar) return this.pulsarRows(this.pulsar);
     if (this.merger) return this.mergerRows(this.merger);
     if (this.encounter) {
@@ -1405,6 +1496,44 @@ export class GalaxyStage extends Stage {
    * readout says so, because a plot of derived quantities that does not say
    * which of them were observed is not a measurement, it is a claim.
    */
+  /** What is happening to the star, and what could be measured about it. */
+  private tdeRows(d: TDE.Disruption): Row[] {
+    const v = this.tde;
+    const tmin = TDE.fallbackTime(d.holeKg, d.starKg, d.starR);
+    const days = (v ? v.timeFor(this.tdeU) : 0) / DAY;
+    const rt = TDE.tidalRadius(d.holeKg, d.starKg, d.starR) / AU;
+    const rs = TDE.horizonRadius(d.holeKg) / AU;
+    const hills = TDE.hillsMassKg(d.starKg, d.starR) / M_SUN;
+    const lum = v?.luminosity ?? 0;
+    const rows: Row[] = [
+      { k: 'event', v: this.tdeU < 0 ? 'a star, falling in'
+        : d.visible ? 'tidal disruption' : 'swallowed whole', accent: true },
+      { k: 'the star', v: `${sig(d.starKg / M_SUN, 2)} M☉ · ${sig(d.starR / R_SUN, 2)} R☉`
+        + (d.starR / R_SUN > 8 ? ' · a giant' : '') },
+      { k: 'the hole', v: `${sig(d.holeKg / M_SUN, 3)} M☉` },
+      { k: 'tidal radius', v: `${sig(rt, 3)} AU · ${sig(rt / rs, 2)} horizons` },
+      { k: 'heaviest that could', v: `${sig(hills, 2)} M☉ · `
+        + (d.visible ? 'this one can' : 'this one cannot') },
+      { k: 'closest approach', v: `${sig(rt / d.beta, 3)}`, u: 'AU' },
+      { k: 'first debris back', v: `${sig(tmin / DAY, 3)}`, u: 'days' },
+      { k: 'ejecta', v: `${sig(TDE.ejectaSpeed(d.holeKg, d.starKg, d.starR) / 1e3, 3)}`, u: 'km/s' },
+      { k: 'since disruption', v: this.tdeU < 0
+        ? `${sig(-days, 2)} days to go`
+        : Math.abs(days) > 400 ? `${sig(days / 365.25, 3)} yr` : `${sig(days, 3)} days` },
+    ];
+    if (this.tdeU > 0) {
+      rows.push(
+        { k: 'returned', v: `${((v?.returnedFraction ?? 0) * 100).toFixed(1)}% of the star` },
+        { k: 'luminosity', v: `${sig(lum * 1e7, 3)}`, u: 'erg/s' },
+        { k: 'against Eddington', v: `×${sig(lum / TDE.eddingtonLuminosity(d.holeKg), 2)}` },
+        { k: 'colour', v: `${sig(TDE.flareTemperature(d, this.tdeU * tmin), 3)} K · ultraviolet` },
+        { k: 'apparent size', v: `${sig(TDE.emittingRadius(d.holeKg) / AU, 2)} AU · `
+          + `${sig(TDE.emittingRadius(d.holeKg) / TDE.horizonRadius(d.holeKg), 2)} horizons` },
+      );
+    }
+    return rows;
+  }
+
   private pulsarRows(p: PSR.Pulsar): Row[] {
     const turns = 1 / p.periodS;
     const age = PSR.characteristicAgeYears(p);
@@ -1458,8 +1587,23 @@ export class GalaxyStage extends Stage {
   }
 
   scaleLabel(): string {
+    // Every one of the things that can be mounted at this scale brings its own
+    // ruler with it, because each has exactly one natural length: a black hole
+    // has its gravitational radius, a neutron star has its ten kilometres, a
+    // disrupted star has the astronomical unit, and the galaxy itself has the
+    // kiloparsec. Reporting one of those in another's units is how a readout
+    // starts saying a debris stream is twelve megaparsecs across.
     if (this.merger) {
       return `${(this.env.controls.distance * this.merger.rgM / 1e3).toFixed(0)} km`;
+    }
+    if (this.tde) {
+      const [v, u] = formatDistance(this.env.controls.distance * AU);
+      return `${v} ${u}`;
+    }
+    if (this.pulsarView) {
+      // Scene units are stellar radii, and a neutron star's is ten kilometres.
+      const [v, u] = formatDistance(this.env.controls.distance * (PSR.NS_RADIUS_CM / 100));
+      return `${v} ${u}`;
     }
     const [v, u] = formatDistance(this.env.controls.distance * 3.0857e19);
     return `${v} ${u}`;
