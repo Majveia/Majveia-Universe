@@ -42,6 +42,7 @@ import {
 } from '../physics/gwaves';
 import { peakMultipoles } from '../cosmology/cmb';
 import { GalaxySprites, type GalaxySpriteData } from '../render/galaxysprites';
+import { ClusterOrbits, bindingPressure, type Halo } from '../physics/clusterorbits';
 import { GalaxyView } from '../render/galaxyview';
 import { SystemView } from '../render/systemview';
 import { PlanetView } from '../render/planet';
@@ -486,6 +487,15 @@ export class ClusterStage extends Stage {
   private sky!: LensedField;
   private deep = false;
   private savedView: { d: number; theta: number; phi: number } | null = null;
+  /** The cluster's own dynamics: every galaxy on its own orbit in the halo. */
+  private orbits!: ClusterOrbits;
+  private halo!: Halo;
+  /** Which galaxies can show gas at all - ellipticals are already dead. */
+  private gasBearing: Uint8Array = new Uint8Array(0);
+  /** How hard each is being stripped right now, smoothed so tails do not blink. */
+  private stripNow: Float32Array = new Float32Array(0);
+  private bindOf: Float64Array = new Float64Array(0);
+  private stripped = 0;
 
   build(): void {
     const u = this.env.universe;
@@ -502,6 +512,20 @@ export class ClusterStage extends Stage {
     this.sky.mesh.scale.setScalar(cl.radiusMpc * 400);
     this.sky.setShape(0.62 + (cl.seed % 100) / 400, ((cl.seed % 628) / 100));
     this.root.add(this.sky.mesh);
+
+    // The halo, and the galaxies falling through it. Concentration falls with
+    // mass for the same reason it does in the universe's own generator: the
+    // big ones assembled late, when the universe was already thin.
+    this.halo = {
+      massMsun: cl.massMsun,
+      radiusMpc: cl.radiusMpc,
+      concentration: 9 * Math.pow(cl.massMsun / 1e12, -0.1),
+    };
+    this.orbits = new ClusterOrbits(this.halo, cl.members.length);
+    this.gasBearing = new Uint8Array(cl.members.length);
+    this.stripNow = new Float32Array(cl.members.length);
+    this.bindOf = new Float64Array(cl.members.length);
+    const vrng = new RNG(cl.seed ^ 0x5eed);
 
     const data: GalaxySpriteData[] = [];
     const rng = new RNG(cl.seed ^ 0x77);
@@ -528,7 +552,32 @@ export class ClusterStage extends Stage {
       });
       this.positions.push(new THREE.Vector3(m.x, m.y, m.z));
       this.radii.push(rMpc);
+
+      // Ellipticals have already lost whatever they had, long before the
+      // cluster got hold of them. Spirals arrive with a gas disc worth a tenth
+      // of their stars, and it is that disc the cluster takes.
+      const gasFrac = red ? 0.006 : g.type === 'Irr' ? 0.30 : 0.12;
+      this.gasBearing[m.index] = red ? 0 : 1;
+      // The disc's exponential scale length, which is what sets how hard it
+      // holds its gas - not its optical radius, which is three times larger
+      // and would make every galaxy in the cluster far too easy to strip.
+      const scaleMpc = Math.max(g.discScaleKpc, 0.2) / 1000;
+      this.bindOf[m.index] = bindingPressure(g.stellarMassMsun, scaleMpc, gasFrac);
+      this.orbits.place({
+        x: m.x, y: m.y, z: m.z,
+        haloMassMsun: m.haloMassMsun,
+        stellarMsun: g.stellarMassMsun,
+        radiusMpc: scaleMpc,
+        gasFraction: gasFrac,
+      }, () => vrng.next());
     }
+    // The brightest cluster galaxy sits in the middle and stays there - it is
+    // the one thing in a cluster that is not going anywhere.
+    if (cl.members.length > 0 && cl.members[0].environment >= 1) this.orbits.anchor(0);
+    // These galaxies have been here for gigayears already, not since the last
+    // frame: give each one the gas its orbit would have left it by now.
+    this.orbits.settle();
+
     this.sprites = new GalaxySprites(data);
     this.root.add(this.sprites.mesh);
 
@@ -565,8 +614,14 @@ export class ClusterStage extends Stage {
     this.icm.frustumCulled = false;
     this.root.add(this.icm);
 
+    // A cluster crosses itself in a couple of gigayears. At this rate that is
+    // half a minute, which is slow enough to watch an orbit and fast enough
+    // to see one finish.
+    this.timeScale = 90; // Myr per second
+
     const c = this.env.controls;
     c.snapTo(new THREE.Vector3(), cl.radiusMpc * 2.1, 0.5, 1.05);
+    c.drift = 0.014;
     c.minDistance = 0.001;
     c.maxDistance = cl.radiusMpc * 30;
     const cam = this.env.engine.camera;
@@ -583,9 +638,10 @@ export class ClusterStage extends Stage {
 
   update(dt: number): void {
     this.simTime += dt * this.timeScale;
+    const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
+    this.advance(dt * this.timeScale);
     const cam = this.env.engine.camera.position;
     this.sky.mesh.position.copy(cam);
-    const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
     // Aim the lens: the deflection is a fixed angular scale set by the
     // cluster's velocity dispersion, so it shrinks against the cluster's own
     // apparent size as you approach and only resolves from far away.
@@ -600,6 +656,58 @@ export class ClusterStage extends Stage {
       this.env.controls.distance * 1000);
     this.sky.setFieldOfView((this.env.engine.camera.fov * Math.PI) / 180);
   }
+
+  /**
+   * Move the cluster on by some megayears, and repaint what it has become.
+   *
+   * The integration is substepped so a dropped frame cannot turn into a bad
+   * orbit: leapfrog is stable but it is not magic, and a two-hundred-megayear
+   * jump through the core is a different trajectory from eighty small ones.
+   */
+  private advance(myr: number): void {
+    if (!this.orbits) return;
+    const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
+    if (myr > 0) {
+      const steps = Math.min(12, Math.max(1, Math.ceil(myr / 2.5)));
+      const h = myr / steps;
+      for (let k = 0; k < steps; k++) this.orbits.step(h);
+    }
+
+    const o = this.orbits;
+    this.stripped = 0;
+    for (let i = 0; i < o.length; i++) {
+      const x = o.pos[i * 3], y = o.pos[i * 3 + 1], z = o.pos[i * 3 + 2];
+      const vx = o.vel[i * 3], vy = o.vel[i * 3 + 1], vz = o.vel[i * 3 + 2];
+      this.positions[i].set(x, y, z);
+
+      // Only a galaxy that has just fallen into a stronger wind than it is
+      // used to is actually streaming gas, and only those grow a tail.
+      const want = this.gasBearing[i] ? o.strip[i] : 0;
+      // Eased, so a tail grows and fades rather than appearing between frames.
+      this.stripNow[i] += (want - this.stripNow[i]) * 0.06;
+      if (this.stripNow[i] > 0.12) this.stripped++;
+      const gas = this.gasBearing[i] ? o.gas[i] : 0;
+      this.sprites.setState(i, x, y, z, vx, vy, vz, gas, this.stripNow[i]);
+    }
+    this.sprites.commit();
+
+    // The intracluster gas sloshes. A cluster that has swallowed a group is
+    // left with its atmosphere ringing for gigayears afterwards, and the cold
+    // fronts that ringing produces are visible in every deep X-ray image.
+    if (this.icm) {
+      const mat = this.icm.material as THREE.ShaderMaterial;
+      const t = this.simTime / 1000; // Gyr
+      const a = cl.radiusMpc * 0.06;
+      (mat.uniforms.uCentre.value as THREE.Vector3).set(
+        a * Math.sin(t * 1.7), a * 0.6 * Math.sin(t * 1.1 + 2.1), a * Math.cos(t * 1.3 + 0.7),
+      );
+      mat.uniforms.uStrength.value = Math.min(0.012, 0.0012 * Math.pow(cl.icmKeV, 0.8))
+        * (1 + 0.12 * Math.sin(t * 2.3));
+    }
+  }
+
+  /** How many galaxies are visibly losing their gas at this moment. */
+  get strippingCount(): number { return this.stripped; }
 
   /**
    * Back off to a cosmological distance and narrow the field of view, which is
@@ -662,14 +770,26 @@ export class ClusterStage extends Stage {
         { k: 'galaxies', v: commas(cl.richness) },
       ];
     }
+    // The dispersion the galaxies actually have, measured the way a
+    // spectroscopic survey measures it: the spread of one velocity component.
+    const measured = this.orbits ? this.orbits.dispersionKms() : cl.sigmaKms;
+    let quenched = 0;
+    if (this.orbits) {
+      for (let i = 0; i < this.orbits.length; i++) {
+        if (!this.gasBearing[i] || this.orbits.gas[i] < 0.35) quenched++;
+      }
+    }
     return [
       { k: 'cluster mass', v: sig(cl.massMsun, 3), u: 'M☉', accent: true },
       { k: 'virial radius', v: cl.radiusMpc.toFixed(2), u: 'Mpc' },
-      { k: 'dispersion', v: Math.round(cl.sigmaKms).toString(), u: 'km/s' },
+      { k: 'dispersion', v: Math.round(measured).toString(), u: 'km/s' },
       { k: 'ICM temp', v: cl.icmKeV.toFixed(2), u: 'keV' },
       { k: 'galaxies', v: commas(cl.richness) },
+      { k: 'red & dead', v: `${Math.round((100 * quenched) / Math.max(1, cl.richness))}%` },
+      { k: 'being stripped', v: commas(this.stripped), accent: this.stripped > 0 },
       // R / sigma, with 1 Mpc/(km/s) = 978 Gyr
       { k: 'crossing time', v: ((cl.radiusMpc / cl.sigmaKms) * 977.8).toFixed(2), u: 'Gyr' },
+      { k: 'elapsed', v: (this.simTime / 1000).toFixed(2), u: 'Gyr' },
       { k: 'field of view', v: dv, u: du },
     ];
   }
@@ -686,23 +806,35 @@ export class ClusterStage extends Stage {
     if (i === null) return null;
     const ci = this.ctx.cluster ?? 0;
     const g = this.env.universe.galaxy(ci, i);
-    const m = this.env.universe.cluster(ci).members[i];
+    const los = this.orbits.losKms(i);
+    const gas = this.gasBearing[i] ? this.orbits.gas[i] : 0;
+    const stripping = this.stripNow[i] > 0.08;
     return {
       title: g.name,
       kind: `${g.type} galaxy`,
       rows: [
         { k: 'stellar mass', v: sig(g.stellarMassMsun, 3), u: 'M☉' },
-        { k: 'halo mass', v: sig(m.haloMassMsun, 3), u: 'M☉' },
+        { k: 'halo mass', v: sig(this.orbits.mass[i], 3), u: 'M☉' },
         { k: 'radius', v: g.radiusKpc.toFixed(1), u: 'kpc' },
         { k: 'v(max)', v: Math.round(g.vMaxKms).toString(), u: 'km/s' },
         { k: 'star formation', v: g.sfrMsunYr.toFixed(2), u: 'M☉/yr' },
         { k: 'central BH', v: sig(g.blackHoleMsun, 2), u: 'M☉' },
         { k: 'metallicity', v: `${g.metallicity >= 0 ? '+' : ''}${g.metallicity.toFixed(2)}`, u: 'dex' },
-        { k: 'peculiar v', v: `${m.vlos >= 0 ? '+' : ''}${Math.round(m.vlos)}`, u: 'km/s' },
+        { k: 'speed', v: Math.round(this.orbits.speedKms(i)).toString(), u: 'km/s' },
+        { k: 'redshift v', v: `${los >= 0 ? '+' : ''}${Math.round(los)}`, u: 'km/s' },
+        { k: 'cluster-centric r', v: this.orbits.radius(i).toFixed(2), u: 'Mpc' },
+        { k: 'gas left', v: `${Math.round(gas * 100)}%`, accent: stripping },
       ],
-      note: g.type === 'E'
-        ? 'Red and dead: its gas was stripped by the cluster, and it has not formed a star in gigayears.'
-        : undefined,
+      note: stripping
+        ? 'Being stripped, now: the intracluster wind is stronger than its own '
+          + 'grip on its gas, and the gas is going out behind it in a tail.'
+        : gas < 0.05
+          ? 'Red and dead. Its gas was taken by the cluster on an earlier pass, '
+            + 'and it has not formed a star since.'
+          : g.type === 'E'
+            ? 'It arrived without gas. Ellipticals in clusters were quenched '
+              + 'long before they fell in, in whatever group brought them.'
+            : undefined,
     };
   }
 

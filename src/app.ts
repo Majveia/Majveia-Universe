@@ -96,7 +96,15 @@ export class App {
   private bootLabel: HTMLElement;
 
   private epochA = 1;
-  private playing = false;
+  /**
+   * Time runs from the first frame.
+   *
+   * A simulation that opens paused is a picture of a simulation. Everything
+   * here has something it does - arms turn, planets go round, a cluster's
+   * galaxies swing through their orbits - and none of it was visible until
+   * somebody found the space bar.
+   */
+  private playing = true;
   private scrubbing = false;
   private warpIndex = 1;
   private boostIndex = 0;
@@ -226,7 +234,8 @@ export class App {
       rail.append(b);
       return b;
     };
-    this.playBtn = railBtn('▸ run time', () => this.togglePlay());
+    this.playBtn = railBtn('❚❚ pause time', () => this.togglePlay());
+    this.playBtn.classList.add('on');
     this.velBtn = railBtn('peculiar velocity', (b) => {
       if (this.stage instanceof CosmosStage) {
         this.stage.velocityTint = !this.stage.velocityTint;
