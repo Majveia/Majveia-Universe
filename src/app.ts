@@ -13,6 +13,7 @@ import './ui/styles.css';
 import { Engine } from './render/engine';
 import { Controls, tick as haptic } from './camera/controls';
 import { MobileUI, isTouchDevice } from './ui/mobile';
+import { DeviceOrientation } from './camera/orientation';
 import { Universe } from './sim/universe';
 import {
   Stage, ScaleId, StageCtx, Target, StageEnv, makeStage, SCALE_ORDER, CosmosStage,
@@ -115,6 +116,9 @@ export class App {
   private quality = 1;
   /** The touch interface, on devices driven by a finger. */
   private mobile: MobileUI | null = null;
+  /** The device's own attitude sensors, when the viewfinder is switched on. */
+  private gyro = new DeviceOrientation();
+  private aim = new THREE.Vector3();
   readonly touch: boolean;
   /**
    * Which toggles are currently on, keyed by the key that flips them. The
@@ -261,6 +265,7 @@ export class App {
           isOn: (k) => this.lit.has(k),
           depth: this.stack.length,
           hasChild: !!this.stage?.child(),
+          sensors: DeviceOrientation.supported,
         }),
         scales: () => this.scaleEntries(),
         goScale: (id) => this.jumpToScale(id as ScaleId),
@@ -741,6 +746,7 @@ export class App {
             : `boost · beta ${b} · gamma ${lorentz(b).toFixed(b < 0.99 ? 2 : 0)}`);
           break;
         }
+        case 'KeyX': this.toggleViewfinder(); break;
         case 'KeyT': {
           const st = this.stage as unknown as { toggleTrueScale?: () => boolean };
           if (st.toggleTrueScale) {
@@ -770,6 +776,51 @@ export class App {
           this.quality = Math.max(0.02, this.quality / 1.35); this.applyQuality(); break;
       default: break;
     }
+  }
+
+  /**
+   * Point the phone, and walk around what you are looking at.
+   *
+   * The permission can only be asked for from inside a user gesture, and asking
+   * outside one is refused silently and permanently - so this is only ever
+   * reached from a tap or a key, never from start-up.
+   */
+  private toggleViewfinder(): void {
+    if (this.controls.viewfinder) {
+      this.gyro.stop();
+      this.controls.viewfinder = false;
+      this.mark('KeyX', false);
+      this.flash('back to dragging');
+      return;
+    }
+    if (!DeviceOrientation.supported) {
+      this.flash('this device has no orientation sensors');
+      return;
+    }
+    this.flash('asking for the orientation sensors');
+    void this.gyro.start().then((state) => {
+      if (state === 'on') {
+        this.controls.viewfinder = true;
+        this.mark('KeyX', true);
+        this.flash('point it, and walk around what you are looking at');
+        // Permission granted is not the same as a sensor that reports. A
+        // device with no magnetometer, or one that has been sitting perfectly
+        // still, can leave the mode switched on and the camera frozen, and a
+        // frozen camera reads as a broken application rather than as a quiet
+        // one.
+        window.setTimeout(() => {
+          if (this.controls.viewfinder && !this.gyro.live) {
+            this.toggleViewfinder();
+            this.flash('the sensors are not reporting here');
+          }
+        }, 2600);
+      } else {
+        this.mark('KeyX', false);
+        this.flash(state === 'denied'
+          ? 'motion access was refused'
+          : 'this device has no orientation sensors');
+      }
+    });
   }
 
   private applyQuality(): void {
@@ -990,6 +1041,12 @@ export class App {
           ? `${warp.label} · ${this.stage.scaleLabel()}`
           : `paused · ${this.stage.scaleLabel()}`) + rel;
       }
+      // The sensor aims the camera before the rig is integrated, so a reading
+      // and the frame it affects are never one apart.
+      if (this.controls.viewfinder) {
+        const dir = this.gyro.direction(this.aim);
+        if (dir) this.controls.lookAlong(dir);
+      }
       this.controls.update(dt);
 
       // --- Relativistic flight. Beta is eased rather than jumped: the
@@ -1052,6 +1109,8 @@ const TOUCH_HELP_HTML = `
       <dt>double tap</dt><dd>go into it — a galaxy, a star, a world</dd>
       <dt>two-finger tap</dt><dd>come back out a scale</dd>
       <dt>hold</dt><dd>inspect without moving anything</dd>
+      <dt>look around</dt><dd>hold the phone up and turn: it aims the camera
+        with the same sensors that keep your screen the right way up</dd>
     </dl>
   </div>
   <div>
@@ -1124,6 +1183,7 @@ const HELP_HTML = `
       <dt>F</dt><dd>fullscreen</dd>
       <dt>T</dt><dd>true scale in a system</dd>
       <dt>J</dt><dd>fly at a fraction of light speed</dd>
+      <dt>X</dt><dd>aim with the device's own orientation, where it has one</dd>
       <dt>O</dt><dd>go to the Solar System</dd>
       <dt>P</dt><dd>save a frame</dd>
     </dl>

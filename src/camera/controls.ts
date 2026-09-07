@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import { GestureRecogniser, rubberBand, pinchAnchor, type GestureSink } from './gestures';
+import { orbitFromLook, shortestTurn } from './orientation';
 
 export type CameraMode = 'orbit' | 'fly';
 
@@ -51,6 +52,8 @@ export class Controls {
   locked = false;
   /** True while at least one finger is on the glass. */
   touching = false;
+  /** True while the device's own orientation is aiming the camera. */
+  viewfinder = false;
 
   /** Touch verbs the application answers: these have no camera meaning. */
   onTap?: (x: number, y: number) => void;
@@ -242,12 +245,32 @@ export class Controls {
    * which communicates the limit rather than merely enforcing it.
    */
   orbitBy(dx: number, dy: number): void {
-    if (this.locked) return;
+    // While the phone is aiming the camera, dragging it as well would fight
+    // the sensor and lose: the next reading would put it straight back.
+    if (this.locked || this.viewfinder) return;
     this.thetaTarget -= dx * this.rotateSpeed;
     const p = this.phiTarget;
     const over = p < PHI_MIN ? PHI_MIN - p : p > PHI_MAX ? p - PHI_MAX : 0;
     const next = p - dy * this.rotateSpeed * rubberBand(over);
     this.phiTarget = Math.max(PHI_MIN - PHI_OVER, Math.min(PHI_MAX + PHI_OVER, next));
+  }
+
+  /**
+   * Aim along a direction, as a viewfinder does.
+   *
+   * The azimuth accumulates without bound while a heading arrives wrapped into
+   * one turn, so it is moved to the nearest equivalent rather than assigned;
+   * otherwise the camera spins the long way round every time the phone passes
+   * north. The damping in `update` does the rest, which is also what keeps a
+   * hand's tremor out of the picture.
+   */
+  lookAlong(dir: THREE.Vector3): void {
+    if (this.locked) return;
+    const { theta, phi } = orbitFromLook(dir);
+    this.thetaTarget = shortestTurn(this.thetaTarget, theta);
+    this.phiTarget = Math.max(PHI_MIN, Math.min(PHI_MAX, phi));
+    this.spinX = 0;
+    this.spinY = 0;
   }
 
   /**

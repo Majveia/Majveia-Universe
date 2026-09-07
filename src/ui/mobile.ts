@@ -43,6 +43,8 @@ export interface StageProbe {
   depth: number;
   /** Whether there is something under the camera to descend into. */
   hasChild: boolean;
+  /** Whether the device has orientation sensors at all. */
+  sensors: boolean;
 }
 
 export interface ScaleEntry {
@@ -105,6 +107,11 @@ const COMMANDS: Command[] = [
 
   { key: 'KeyY', label: 'a whole life', rank: 40, live: has('toggleEvolution'), on: lit('KeyY') },
   { key: 'KeyT', label: 'true scale', rank: 41, live: has('toggleTrueScale'), on: lit('KeyT') },
+
+  {
+    key: 'KeyX', label: 'look around', rank: 3,
+    live: (p) => p.sensors, on: lit('KeyX'),
+  },
 
   { key: 'BracketLeft', label: 'slower', rank: 50, live: always },
   { key: 'BracketRight', label: 'faster', rank: 51, live: always },
