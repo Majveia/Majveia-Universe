@@ -720,13 +720,16 @@ body.touch .readout { position: static; }
 body.touch .masthead { top: max(var(--edge), var(--safe-t)); left: max(var(--edge), var(--safe-l)); }
 body.touch .masthead .seed { max-width: 62vw; }
 /* The inspector becomes a card that clears the ladder and the shelf. */
+/* Anchored low and kept small. It reports on the scene, so it must not sit
+   over the middle of it: a double tap that lands on a panel is a double tap
+   that never reaches the universe. */
 body.touch .inspector {
   top: auto;
-  bottom: calc(var(--shelf-peek) + 14px);
+  bottom: calc(var(--shelf-peek) + 12px);
   left: max(var(--edge), var(--safe-l));
   right: calc(var(--tap) + 10px);
   width: auto;
-  max-height: 46dvh;
+  max-height: 30dvh;
   overflow-y: auto;
   transform: translateY(10px);
   pointer-events: auto;

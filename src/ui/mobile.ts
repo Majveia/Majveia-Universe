@@ -151,11 +151,17 @@ export class MobileUI {
     this.root = el('div', 'm-root');
 
     // --- The ladder of scales, up the right edge where a thumb reaches.
+    //
+    // `data-chrome` marks the things a touch belongs to rather than to the
+    // universe underneath. Everything else that floats over the picture only
+    // reports on it, and must let a finger through.
     this.ladder = el('div', 'm-ladder');
+    this.ladder.dataset.chrome = '';
     this.root.append(this.ladder);
 
     // --- The shelf.
     this.shelf = el('div', 'm-shelf');
+    this.shelf.dataset.chrome = '';
     this.grip = el('div', 'm-grip');
     this.grip.append(el('i'));
     this.rail = el('div', 'm-rail');

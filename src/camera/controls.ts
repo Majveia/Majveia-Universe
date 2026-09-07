@@ -157,24 +157,42 @@ export class Controls {
     };
     this.touch = new GestureRecogniser(sink);
 
+    // Touches are taken from the window, not from the canvas.
+    //
+    // A gesture belongs to the scene unless it lands on something that is
+    // genuinely a control - the shelf, the ladder, the guide - and those are
+    // marked. Everything else that floats over the picture is a *report* on
+    // it: a readout, an inspector, a diagram. Listening on the canvas alone
+    // meant any of those, once open, silently ate the second half of a double
+    // tap, so descending worked or did not depending on where a panel happened
+    // to be. A panel that reports on the scene must not stand between a finger
+    // and the scene.
+    const onChrome = (e: Event): boolean => {
+      const t = e.target;
+      return t instanceof Element && !!t.closest('[data-chrome]');
+    };
+    /** Pointers being followed, so a move is not taken from a stray finger. */
+    const mine = new Set<number>();
     const tdown = (e: PointerEvent) => {
       if (e.pointerType !== 'touch' || !this.enabled) return;
+      if (onChrome(e)) return;
+      mine.add(e.pointerId);
       this.touching = true;
-      el.setPointerCapture(e.pointerId);
       this.touch.down(e.pointerId, e.clientX, e.clientY, e.timeStamp);
     };
     const tmove = (e: PointerEvent) => {
-      if (e.pointerType !== 'touch' || !this.enabled) return;
+      if (e.pointerType !== 'touch' || !this.enabled || !mine.has(e.pointerId)) return;
       this.touch.move(e.pointerId, e.clientX, e.clientY, e.timeStamp);
     };
     const tup = (e: PointerEvent) => {
-      if (e.pointerType !== 'touch') return;
+      if (e.pointerType !== 'touch' || !mine.has(e.pointerId)) return;
+      mine.delete(e.pointerId);
       this.touch.up(e.pointerId, e.clientX, e.clientY, e.timeStamp);
       this.touching = this.touch.active;
-      try { el.releasePointerCapture(e.pointerId); } catch { /* already gone */ }
     };
     const tcancel = (e: PointerEvent) => {
       if (e.pointerType !== 'touch') return;
+      mine.delete(e.pointerId);
       this.touch.cancel(e.pointerId);
       this.touching = this.touch.active;
     };
@@ -184,23 +202,17 @@ export class Controls {
     // taking over, a finger leaving by the edge of the screen, or the page
     // being backgrounded mid-drag all end a touch without the element hearing
     // about it. So the window is watched as well, and losing focus is a reset.
-    const forget = (e: PointerEvent) => {
-      if (e.pointerType !== 'touch') return;
-      this.touch.cancel(e.pointerId);
-      this.touching = this.touch.active;
-    };
-    const dropAll = () => { this.touch.reset(); this.touching = false; };
+    const dropAll = () => { this.touch.reset(); mine.clear(); this.touching = false; };
     // Safari on iOS fires its own pinch gestures over the page even when the
     // element says touch-action: none, and they zoom the document.
     const noGesture = (e: Event) => e.preventDefault();
 
-    el.addEventListener('pointerdown', tdown);
-    el.addEventListener('pointermove', tmove);
-    el.addEventListener('pointerup', tup);
-    el.addEventListener('pointercancel', tcancel);
+    window.addEventListener('pointerdown', tdown, true);
+    window.addEventListener('pointermove', tmove, true);
+    window.addEventListener('pointerup', tup, true);
+    window.addEventListener('pointercancel', tcancel, true);
     el.addEventListener('gesturestart', noGesture);
     el.addEventListener('gesturechange', noGesture);
-    window.addEventListener('pointercancel', forget, true);
     window.addEventListener('blur', dropAll);
     document.addEventListener('visibilitychange', dropAll);
     el.addEventListener('pointerdown', down);
@@ -214,13 +226,12 @@ export class Controls {
     window.addEventListener('blur', blur);
 
     this.disposers.push(() => {
-      el.removeEventListener('pointerdown', tdown);
-      el.removeEventListener('pointermove', tmove);
-      el.removeEventListener('pointerup', tup);
-      el.removeEventListener('pointercancel', tcancel);
+      window.removeEventListener('pointerdown', tdown, true);
+      window.removeEventListener('pointermove', tmove, true);
+      window.removeEventListener('pointerup', tup, true);
+      window.removeEventListener('pointercancel', tcancel, true);
       el.removeEventListener('gesturestart', noGesture);
       el.removeEventListener('gesturechange', noGesture);
-      window.removeEventListener('pointercancel', forget, true);
       window.removeEventListener('blur', dropAll);
       document.removeEventListener('visibilitychange', dropAll);
       el.removeEventListener('pointerdown', down);

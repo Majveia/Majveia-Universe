@@ -581,8 +581,8 @@ reaches exactly as far. One table backs both, so they cannot drift apart.
 | pinch | zoom, about the point between your fingers |
 | two fingers | slide to pan, twist to turn |
 | flick | let go while moving and it carries on |
-| tap / hold | inspect |
-| double tap | descend into it |
+| tap | inspect |
+| double tap | go in a scale |
 | two-finger tap | climb back out |
 | pull up the shelf | the numbers for wherever you are |
 | the marks, right edge | the five scales |
@@ -595,8 +595,20 @@ ratio — the same page runs on a phone with a three-times display and a GPU tha
 will not sustain it, and the cost changes by two orders of magnitude between
 the cosmic web and a planet's surface anyway.
 
+Double tap always goes in. It aims when a finger has something under it, but is
+never refused for want of a hit: on a phone the target is a few pixels of galaxy
+in a field of a hundred thousand, and a gesture that works only when it lands on
+one is a gesture that does not work.
+
+Touches are taken from the window rather than the canvas, and a gesture belongs
+to the scene unless it lands on something marked as a control — the shelf, the
+ladder, the scrub bar, the guide. Everything else that floats over the picture
+only *reports* on it, and must let a finger through; listening on the canvas
+alone meant any open panel silently ate the second half of a double tap, so
+descending worked or didn't depending on where a panel happened to be.
+
 The gestures are a state machine with no DOM in it, tested by being driven
-directly, which is how four bugs were found before any of it reached a phone —
+directly, which is how six bugs were found before any of it reached a phone —
 including the one that mattered: the hold timer runs on wall time, and wall
 time lies. When the main thread is busy building a new scale, a fifty
 millisecond tap has its release still in the queue when the timer fires, so
@@ -665,7 +677,7 @@ src/
   render/       the HDR engine and every shader
   sim/          the universe object graph and the scale ladder
   ui/           the interface
-tests/          441 tests against published measurements and against
+tests/          447 tests against published measurements and against
                 every edge of the gesture recogniser
 ```
 

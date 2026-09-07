@@ -188,6 +188,7 @@ export class App {
 
     // --- Ladder
     this.ladder = el('div', 'layer dimmable ladder');
+    this.ladder.dataset.chrome = '';
     for (const id of SCALE_ORDER) {
       const b = el('button', 'step');
       b.append(el('span', 'dot'), el('span', undefined, SCALE_LABELS[id]));
@@ -199,6 +200,15 @@ export class App {
     this.inspector = el('div', 'layer inspector');
     this.inspectorBody = el('div');
     this.inspector.append(this.inspectorBody);
+    if (this.touch) {
+      // Anything that can cover the scene has to be dismissible by touching it,
+      // or it is a trap: the gestures that matter all live on the canvas
+      // underneath.
+      this.inspector.addEventListener('pointerdown', (e) => {
+        if ((e.target as HTMLElement).closest('.descend')) return;
+        this.inspector.classList.remove('show');
+      });
+    }
 
     // --- Hint
     const hint = el('div', 'layer dimmable hint');
@@ -209,6 +219,7 @@ export class App {
 
     // --- Rail
     const rail = el('div', 'layer dimmable rail');
+    rail.dataset.chrome = '';
     const railBtn = (label: string, fn: (b: HTMLButtonElement) => void) => {
       const b = el('button', undefined, label);
       b.addEventListener('click', () => fn(b));
@@ -234,6 +245,7 @@ export class App {
 
     // --- Help
     this.helpEl = el('div', 'help');
+    this.helpEl.dataset.chrome = '';
     const panel = el('div', 'panel');
     // A phone has no shift key and no scroll wheel, so being told about them is
     // worse than being told nothing: it teaches that the thing in your hands is
@@ -435,10 +447,22 @@ export class App {
   /** True while a scale change is in flight. */
   get travelling(): boolean { return this.transitionT0 !== 0; }
 
+  /**
+   * Go in a scale.
+   *
+   * Aimed, when there is a cursor or a finger to aim with - but never refused
+   * for want of a hit. On a phone the target is a few pixels of galaxy in a
+   * field of a hundred thousand of them, and a gesture that works only when it
+   * lands on one is a gesture that does not work. So a miss falls back to
+   * whatever the stage would have picked for itself, which is always something:
+   * descending is the verb this whole application is about.
+   */
   descend(usePointer: boolean): void {
     if (!this.stage) return;
-    const t = this.stage.child(usePointer && this.pointerActive ? this.pointer : undefined);
-    if (!t) { this.flash('nothing to descend into'); return; }
+    const aimed = usePointer && this.pointerActive
+      ? this.stage.child(this.pointer) : null;
+    const t = aimed ?? this.stage.child();
+    if (!t) { this.flash('this is the smallest scale'); return; }
     this.travel(t);
   }
 
@@ -579,10 +603,18 @@ export class App {
     // tap to look at, double tap to go in, two fingers to come back out. The
     // last two are the map gestures everybody already has in their hands.
     this.controls.onTap = (x, y) => { this.aimAt(x, y); this.inspectHere(); };
-    this.controls.onLongPress = (x, y) => { this.aimAt(x, y); this.inspectHere(); haptic(11); };
+    // Nothing is bound to a hold.
+    //
+    // It used to inspect, which a tap already does, so it bought nothing - and
+    // it cost something real: a hold that fires when the thread stalls opens a
+    // panel under the finger, and the panel then swallows the second half of
+    // the double tap that was meant to descend. Four gestures that do four
+    // different things is a better set than five with an overlap in it.
     this.controls.onDoubleTap = (x, y) => {
       this.aimAt(x, y);
       haptic(14);
+      // Anything the last tap opened is in the way of what happens next.
+      this.inspector.classList.remove('show');
       this.descend(true);
     };
     this.controls.onTwoFingerTap = () => {
@@ -1123,7 +1155,7 @@ const TOUCH_HELP_HTML = `
       <dt>tap</dt><dd>look at what is under your finger</dd>
       <dt>double tap</dt><dd>go into it — a galaxy, a star, a world</dd>
       <dt>two-finger tap</dt><dd>come back out a scale</dd>
-      <dt>hold</dt><dd>inspect without moving anything</dd>
+      <dt>two fingers, apart</dt><dd>pinch to zoom, slide to pan, twist to turn</dd>
       <dt>look around</dt><dd>hold the phone up and turn: it aims the camera
         with the same sensors that keep your screen the right way up</dd>
     </dl>

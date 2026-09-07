@@ -65,6 +65,8 @@ export interface GestureOptions {
   tapMs?: number;
   /** Below this speed a release is a stop, not a flick, px/s. */
   flingMin?: number;
+  /** Wall clock, for the hold timer. Injectable so it can be tested. */
+  now?: () => number;
 }
 
 interface Contact {
@@ -88,6 +90,7 @@ const DEFAULTS: Required<GestureOptions> = {
   doubleTapSlop: 36,
   tapMs: 420,
   flingMin: 90,
+  now: () => (typeof performance !== 'undefined' ? performance.now() : Date.now()),
 };
 
 export class GestureRecogniser {
@@ -117,8 +120,12 @@ export class GestureRecogniser {
   private tapT = -1e9;
   private tapX = 0;
   private tapY = 0;
-  /** Suppress the tap that ends a double tap, so it does not fire twice. */
-  private swallowNextTap = false;
+  /**
+   * A tap that has happened but has not been reported yet, because it might
+   * still turn out to be the first half of a double.
+   */
+  private pendingTap: { x: number; y: number } | null = null;
+  private tapTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private out: GestureSink, opts: GestureOptions = {}) {
     this.opts = { ...DEFAULTS, ...opts };
@@ -150,13 +157,21 @@ export class GestureRecogniser {
       // themselves carry, which are truthful about when the finger moved; this
       // only exists so that a genuine hold feels immediate instead of waiting
       // for the finger to lift.
+      const due = this.opts.now() + this.opts.longPressMs;
       this.longTimer = setTimeout(() => {
         this.longTimer = null;
         const c = this.pts.get(id);
-        if (c && !c.moved && this.pts.size === 1) {
-          c.longFired = true;
-          this.out.longPress(c.x, c.y);
-        }
+        if (!c || c.moved || this.pts.size !== 1) return;
+        // A timer that fires late is itself the evidence that the thread was
+        // blocked, and a blocked thread means the release may already be in
+        // the queue behind it. When that has happened the notification is
+        // withheld and the decision is left to `up`, where the event
+        // timestamps can settle it properly. Being a little slow to show a
+        // hold is nothing; announcing one that never happened is a panel
+        // opening under a finger that was only tapping.
+        if (this.opts.now() - due > this.opts.longPressMs * 0.5) return;
+        c.longFired = true;
+        this.out.longPress(c.x, c.y);
       }, this.opts.longPressMs);
     } else if (this.pts.size >= 2) {
       this.phase = 'multi';
@@ -266,19 +281,36 @@ export class GestureRecogniser {
       // It really was held. If the timer never got a turn, say so now.
       if (!c.longFired) this.out.longPress(x, y);
     } else if (still && held < this.opts.tapMs && !c.moved) {
-      if (this.swallowNextTap) {
-        this.swallowNextTap = false;
-      } else if (t - this.tapT < this.opts.doubleTapMs
+      if (t - this.tapT < this.opts.doubleTapMs
         && Math.hypot(x - this.tapX, y - this.tapY) < this.opts.doubleTapSlop) {
         // Far in the past, not at zero: a third tap a quarter of a second
         // later must be a tap again, and zero is within the double-tap window
         // of every timestamp a page produces in its first few seconds.
         this.tapT = -1e9;
-        this.swallowNextTap = false;
+        this.cancelPendingTap();
         this.out.doubleTap(x, y);
       } else {
+        // A tap and a double tap are the same gesture until the window closes,
+        // so the single one waits.
+        //
+        // Reporting it immediately and then reporting the double as well is
+        // the cause of an entire family of bugs, and of one here in
+        // particular: the single tap opened a panel, the panel appeared under
+        // the finger, and the second tap of the pair landed on the panel and
+        // never reached the scene. Descending - the one verb on a phone with
+        // no keyboard behind it - simply stopped working at some scales and
+        // not others, depending on where the panel happened to be.
+        // A tap somewhere else, while one is still waiting out its window, is
+        // two taps and not one: report the first before taking the second.
+        this.flushPendingTap();
         this.tapT = t; this.tapX = x; this.tapY = y;
-        this.out.tap(x, y);
+        this.pendingTap = { x, y };
+        this.tapTimer = setTimeout(() => {
+          this.tapTimer = null;
+          const p = this.pendingTap;
+          this.pendingTap = null;
+          if (p) this.out.tap(p.x, p.y);
+        }, this.opts.doubleTapMs + 30);
       }
     }
     this.phase = 'idle';
@@ -295,9 +327,28 @@ export class GestureRecogniser {
   reset(): void {
     this.pts.clear();
     this.clearLongPress();
+    this.cancelPendingTap();
     this.phase = 'idle';
     this.lastDist = 0;
     this.twoUpAt = -1e9;
+    this.tapT = -1e9;
+  }
+
+  private cancelTapTimer(): void {
+    if (this.tapTimer !== null) { clearTimeout(this.tapTimer); this.tapTimer = null; }
+  }
+
+  private cancelPendingTap(): void {
+    this.cancelTapTimer();
+    this.pendingTap = null;
+  }
+
+  /** Report a waiting tap now, rather than losing it. */
+  private flushPendingTap(): void {
+    this.cancelTapTimer();
+    const p = this.pendingTap;
+    this.pendingTap = null;
+    if (p) this.out.tap(p.x, p.y);
   }
 
   private geometry(): { dist: number; angle: number; cx: number; cy: number } | null {

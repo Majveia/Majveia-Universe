@@ -59,6 +59,8 @@ export class Timeline {
     this.lRange = Math.log(this.aMax) - this.lMin;
 
     this.el = el('div', 'layer dimmable timeline');
+    // A control, not a report: a touch on the scrub bar belongs to it.
+    this.el.dataset.chrome = '';
     this.epochEl = el('div', 'epoch', '');
     this.track = el('div', 'track');
     const line = el('div', 'line');

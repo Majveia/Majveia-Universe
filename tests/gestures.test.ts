@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   GestureRecogniser, rubberBand, pinchAnchor, type GestureSink,
 } from '../src/camera/gestures';
@@ -22,14 +22,61 @@ function spy() {
   return { log, sink, kinds };
 }
 
+/**
+ * A tap is only reported once the double-tap window has closed, because until
+ * then it might be the first half of a double. So every test that expects one
+ * has to let the clock run out first.
+ */
+function settle(ms = 400): void { vi.advanceTimersByTime(ms); }
+
 describe('taps', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
   it('is a tap when the finger barely moves and lets go quickly', () => {
     const s = spy();
     const g = new GestureRecogniser(s.sink);
     g.down(1, 100, 100, 0);
     g.move(1, 102, 101, 40);
     g.up(1, 102, 101, 90);
+    settle();
     expect(s.kinds()).toEqual(['tap']);
+  });
+
+  it('holds the tap back until the double-tap window has closed', () => {
+    // The whole reason: a tap that fires at once opens a panel under the
+    // finger, and the second tap of a pair lands on the panel instead of the
+    // scene. Descending stops working, at some scales and not others.
+    const s = spy();
+    const g = new GestureRecogniser(s.sink, { doubleTapMs: 300 });
+    g.down(1, 100, 100, 0);
+    g.up(1, 100, 100, 50);
+    vi.advanceTimersByTime(200);
+    expect(s.kinds()).toEqual([]);
+    vi.advanceTimersByTime(200);
+    expect(s.kinds()).toEqual(['tap']);
+  });
+
+  it('never reports a single tap as part of a double', () => {
+    const s = spy();
+    const g = new GestureRecogniser(s.sink);
+    g.down(1, 200, 200, 0); g.up(1, 200, 200, 50);
+    vi.advanceTimersByTime(80);
+    g.down(2, 202, 199, 160); g.up(2, 202, 199, 210);
+    settle();
+    expect(s.kinds()).toEqual(['double']);
+  });
+
+  it('still reports the tap when the next thing is a drag, not a tap', () => {
+    const s = spy();
+    const g = new GestureRecogniser(s.sink);
+    g.down(1, 100, 100, 0); g.up(1, 100, 100, 50);
+    g.down(2, 300, 300, 120);
+    for (let i = 1; i <= 5; i++) g.move(2, 300 + i * 20, 300, 120 + i * 16);
+    g.up(2, 400, 300, 220);
+    settle();
+    expect(s.kinds()).toContain('tap');
+    expect(s.kinds()).toContain('orbit');
   });
 
   it('is not a tap once the finger has travelled past the slop', () => {
@@ -38,6 +85,7 @@ describe('taps', () => {
     g.down(1, 100, 100, 0);
     g.move(1, 140, 100, 40);
     g.up(1, 140, 100, 90);
+    settle();
     expect(s.kinds()).toContain('orbit');
     expect(s.kinds()).not.toContain('tap');
   });
@@ -52,37 +100,38 @@ describe('taps', () => {
     expect(s.kinds()).toEqual(['orbit']);
   });
 
-  it('does not tap after a long press has already fired', async () => {
-    vi.useFakeTimers();
+  it('does not tap after a long press has already fired', () => {
     const s = spy();
     const g = new GestureRecogniser(s.sink, { longPressMs: 100 });
     g.down(1, 50, 50, 0);
     vi.advanceTimersByTime(140);
     expect(s.kinds()).toEqual(['long']);
     g.up(1, 50, 50, 200);
+    settle();
     expect(s.kinds()).toEqual(['long']);
-    vi.useRealTimers();
   });
 
   it('cancels the long press as soon as the finger moves', () => {
-    vi.useFakeTimers();
     const s = spy();
     const g = new GestureRecogniser(s.sink, { longPressMs: 100, slop: 5 });
     g.down(1, 50, 50, 0);
     g.move(1, 90, 50, 30);
     vi.advanceTimersByTime(200);
     expect(s.kinds()).not.toContain('long');
-    vi.useRealTimers();
   });
 });
 
 describe('double tap', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
   it('fires on the second of two quick taps in the same place', () => {
     const s = spy();
     const g = new GestureRecogniser(s.sink);
     g.down(1, 200, 200, 0); g.up(1, 200, 200, 60);
     g.down(2, 203, 198, 160); g.up(2, 203, 198, 210);
-    expect(s.kinds()).toEqual(['tap', 'double']);
+    settle();
+    expect(s.kinds()).toEqual(['double']);
   });
 
   it('does not fire when the taps are far apart', () => {
@@ -90,6 +139,7 @@ describe('double tap', () => {
     const g = new GestureRecogniser(s.sink, { doubleTapSlop: 20 });
     g.down(1, 200, 200, 0); g.up(1, 200, 200, 60);
     g.down(2, 300, 200, 160); g.up(2, 300, 200, 210);
+    settle();
     expect(s.kinds()).toEqual(['tap', 'tap']);
   });
 
@@ -97,7 +147,9 @@ describe('double tap', () => {
     const s = spy();
     const g = new GestureRecogniser(s.sink, { doubleTapMs: 200 });
     g.down(1, 200, 200, 0); g.up(1, 200, 200, 60);
+    settle();
     g.down(2, 200, 200, 900); g.up(2, 200, 200, 950);
+    settle();
     expect(s.kinds()).toEqual(['tap', 'tap']);
   });
 
@@ -107,7 +159,8 @@ describe('double tap', () => {
     g.down(1, 10, 10, 0); g.up(1, 10, 10, 40);
     g.down(2, 10, 10, 120); g.up(2, 10, 10, 160);
     g.down(3, 10, 10, 240); g.up(3, 10, 10, 280);
-    expect(s.kinds()).toEqual(['tap', 'double', 'tap']);
+    settle();
+    expect(s.kinds()).toEqual(['double', 'tap']);
   });
 });
 
@@ -282,6 +335,7 @@ describe('when the main thread is busy', () => {
     vi.advanceTimersByTime(500);            // the timer fires, unavoidably
     expect(s.kinds()).toEqual(['long']);
     g.up(1, 100, 100, 1050);                // but the event says fifty ms
+    vi.advanceTimersByTime(400);
     expect(s.kinds()).toEqual(['long', 'tap']);
     vi.useRealTimers();
   });
@@ -296,6 +350,7 @@ describe('when the main thread is busy', () => {
     g.down(2, 201, 199, 1150);
     vi.advanceTimersByTime(600);
     g.up(2, 201, 199, 1190);
+    vi.advanceTimersByTime(400);
     expect(s.kinds().filter((k) => k === 'double')).toHaveLength(1);
     vi.useRealTimers();
   });
@@ -307,6 +362,7 @@ describe('when the main thread is busy', () => {
     g.down(1, 50, 50, 0);
     vi.advanceTimersByTime(260);
     g.up(1, 50, 50, 900);                   // held for most of a second
+    vi.advanceTimersByTime(400);
     expect(s.kinds()).toEqual(['long']);
     vi.useRealTimers();
   });
@@ -318,5 +374,52 @@ describe('when the main thread is busy', () => {
     g.down(1, 50, 50, 0);
     g.up(1, 50, 50, 800);
     expect(s.kinds()).toEqual(['long']);
+  });
+});
+
+describe('a hold timer that fires late', () => {
+  it('says nothing when the thread was blocked through the whole window', () => {
+    // The wall clock jumps past the deadline because the main thread spent the
+    // time building a scale. The finger may well have lifted already, and its
+    // release is sitting in the queue behind this timer.
+    vi.useFakeTimers();
+    let wall = 0;
+    const s = spy();
+    const g = new GestureRecogniser(s.sink, { longPressMs: 200, now: () => wall });
+    g.down(1, 40, 40, 0);
+    wall = 900;                       // the timer is 500 ms overdue
+    vi.advanceTimersByTime(260);
+    expect(s.kinds()).toEqual([]);
+    g.up(1, 40, 40, 60);              // and the events say it was a tap
+    vi.advanceTimersByTime(400);
+    expect(s.kinds()).toEqual(['tap']);
+    vi.useRealTimers();
+  });
+
+  it('still announces a hold when the timer was on time', () => {
+    vi.useFakeTimers();
+    let wall = 0;
+    const s = spy();
+    const g = new GestureRecogniser(s.sink, { longPressMs: 200, now: () => wall });
+    g.down(1, 40, 40, 0);
+    wall = 210;
+    vi.advanceTimersByTime(260);
+    expect(s.kinds()).toEqual(['long']);
+    vi.useRealTimers();
+  });
+
+  it('still gets the hold from the event timeline when the timer said nothing', () => {
+    vi.useFakeTimers();
+    let wall = 0;
+    const s = spy();
+    const g = new GestureRecogniser(s.sink, { longPressMs: 200, now: () => wall });
+    g.down(1, 40, 40, 0);
+    wall = 5000;
+    vi.advanceTimersByTime(260);
+    expect(s.kinds()).toEqual([]);
+    g.up(1, 40, 40, 1200);            // genuinely held for over a second
+    vi.advanceTimersByTime(400);
+    expect(s.kinds()).toEqual(['long']);
+    vi.useRealTimers();
   });
 });
