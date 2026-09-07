@@ -25,6 +25,7 @@ import {
 } from '../core/constants';
 import { makeStar, type Star } from './stellar';
 import type { Moon, Planet, PlanetarySystem, PlanetClass, Ring } from './planets';
+import type { Atmosphere } from './radiation';
 import { makeComet } from './comet';
 import { RNG } from '../core/rng';
 
@@ -63,6 +64,8 @@ interface RealPlanet {
   atmosphere: string;
   ocean: number;
   cloud: number;
+  /** Fraction of the surface under permanent ice. */
+  ice?: number;
   biosphere: number;
   color: [number, number, number];
   color2: [number, number, number];
@@ -113,7 +116,7 @@ const PLANETS: RealPlanet[] = [
     au: 1.00000261, e: 0.01671123, inc: -0.00001531, node: 0,
     peri: 102.93768193, meanLong: 100.46457166,
     dayHours: 23.9345, obliquity: 23.44, albedo: 0.306, teq: 254, surface: 288,
-    pressure: 1.014, atmosphere: 'N₂ / O₂', ocean: 0.708, cloud: 0.67,
+    pressure: 1.014, atmosphere: 'N₂ / O₂', ocean: 0.708, cloud: 0.67, ice: 0.10,
     biosphere: 1,
     color: [0.34, 0.42, 0.24], color2: [0.05, 0.16, 0.34],
     moons: [{
@@ -298,6 +301,7 @@ function buildPlanet(p: RealPlanet, index: number): Planet {
     elements: {
       a, e: p.e, i: p.inc * DEG, Omega: p.node * DEG, omega, M0, epoch: 0,
     },
+    ...measuredAtmosphere(p),
     au: p.au,
     periodS: 2 * Math.PI * Math.sqrt(a ** 3 / (G * M_SUN)),
     dayS: p.dayHours * 3600,
@@ -318,6 +322,45 @@ function buildPlanet(p: RealPlanet, index: number): Planet {
     color2: p.color2,
     surfaceSeed: 1000 + index * 7919,
     magnetism: SOLAR_MAGNETISM[p.name] ?? 0,
+  };
+}
+
+/**
+ * The measured column, in the form the radiation and climate models want.
+ *
+ * The temperatures here stay measured - the greenhouse warming of a real
+ * planet is an observation, not a prediction, and the point of this file is to
+ * be the thing the generator is checked against. What is derived is only the
+ * *composition*, so the same climate solver that runs on invented worlds can be
+ * pointed at these and asked where their ice lines are.
+ */
+function measuredAtmosphere(p: RealPlanet): {
+  effectiveK: number; greenhouseK: number; co2Bar: number; air: Atmosphere;
+  waterInventory: number; iceFraction: number; runaway: boolean;
+} {
+  const hydrogen = p.atmosphere.includes('H₂');
+  const carbon = p.atmosphere.startsWith('CO₂');
+  const fraction = p.pressure <= 0 ? 0 : hydrogen ? 1e-3 : carbon ? 0.95 : 4.2e-4;
+  return {
+    effectiveK: p.teq,
+    // Measured, not modelled: Venus's 505 K and Earth's 33 K are what the
+    // thermometers say, and the model has to answer to them rather than the
+    // other way round.
+    greenhouseK: p.surface - p.teq,
+    co2Bar: p.pressure * fraction,
+    air: {
+      pressureBar: p.pressure,
+      greenhouseFraction: fraction,
+      molarMass: hydrogen ? 2.3 : carbon ? 43.4 : 28.97,
+      cp: hydrogen ? 12000 : carbon ? 850 : 1004,
+      water: p.ocean > 0.01 || (p.ice ?? 0) > 0.005,
+      humidity: hydrogen ? 0 : 0.7,
+    },
+    waterInventory: Math.max(p.ocean, p.ice ?? 0),
+    iceFraction: p.ice ?? (p.surface < 273 ? p.ocean : 0),
+    // Venus did this, and the evidence is the hundred-fold deuterium excess in
+    // what water it has left: an ocean's worth of hydrogen went to space.
+    runaway: p.name === 'Venus',
   };
 }
 

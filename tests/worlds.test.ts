@@ -101,7 +101,14 @@ describe('planetary systems', () => {
         expect(p.density).toBeCloseTo(rho, 5);
         expect(p.gravity).toBeGreaterThan(0);
         expect(p.escapeVelocity).toBeGreaterThan(0);
-        expect(p.surfaceK).toBeGreaterThanOrEqual(p.teqK);
+        // An atmosphere can only ever warm the ground it sits under, so the
+        // greenhouse is never negative. The surface temperature itself is
+        // *not* bounded below by the equilibrium temperature: on a world with
+        // no air to move heat around, the area-weighted mean sits below it,
+        // because emission goes as the fourth power and the hot side does all
+        // the radiating.
+        expect(p.greenhouseK).toBeGreaterThanOrEqual(-1e-6);
+        expect(p.surfaceK).toBeGreaterThan(0);
         expect(Number.isFinite(p.periodS)).toBe(true);
       }
     }

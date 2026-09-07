@@ -16,13 +16,20 @@
 
 import {
   AU, DEG, G, K_B, M_EARTH, M_JUPITER, M_PROTON, M_SUN, R_EARTH, R_JUPITER, R_SUN,
-  YEAR, rocheLimit,
+  SIGMA_SB, YEAR, rocheLimit,
 } from '../core/constants';
 import { RNG, derive } from '../core/rng';
 import type { Star } from './stellar';
 import { hillRadius, period, tidalLockingTimeYears, type OrbitalElements } from '../physics/kepler';
 import { planetRegion, combinedLuminosity, type Companion, type PlanetHost } from './binary';
 import { makeComet, type Comet } from './comet';
+import {
+  carbonCycle, outgassingRate, solveClimate, thermostatSetpoint, type Climate,
+} from './climate';
+import { irradiance } from './insolation';
+import {
+  liquidWaterPossible, T_FREEZE, type Atmosphere,
+} from './radiation';
 
 export type PlanetClass =
   | 'iron' | 'rocky' | 'desert' | 'ocean' | 'terrestrial' | 'lava' | 'carbon'
@@ -77,14 +84,34 @@ export interface Planet {
   albedo: number;
   /** Equilibrium temperature with no atmosphere, K. */
   teqK: number;
-  /** Surface temperature including greenhouse forcing, K. */
+  /**
+   * Global mean surface temperature, K, from an energy balance rather than an
+   * offset: absorbed sunlight against what the atmosphere can radiate.
+   */
   surfaceK: number;
+  /** Temperature the planet radiates at, K - what an infrared telescope sees. */
+  effectiveK: number;
+  /** Greenhouse warming, K. Earth's is 33; Venus's is 505. */
+  greenhouseK: number;
   /** Surface pressure, bar. 0 means airless. */
   pressureBar: number;
+  /** Partial pressure of CO2, bar, as the carbonate-silicate cycle left it. */
+  co2Bar: number;
+  /** The column, in the form the radiation and climate models need. */
+  air: Atmosphere;
   /** Dominant atmospheric species. */
   atmosphere: string;
+  /**
+   * Water accreted at formation, as the fraction of the surface it would cover
+   * if it were all liquid. What state it is in now is the climate's business.
+   */
+  waterInventory: number;
   /** Fraction of the surface covered by liquid. */
   oceanFraction: number;
+  /** Fraction of the surface covered by ice. */
+  iceFraction: number;
+  /** Whether this world lost its oceans to a runaway greenhouse. */
+  runaway: boolean;
   /** Fractional cloud cover. */
   cloudCover: number;
   /** Whether the planet keeps one face to its star. */
@@ -354,6 +381,8 @@ function makePlanet(
 
   // First pass at temperature with a provisional albedo, then refine, because
   // albedo depends on what condenses and what condenses depends on temperature.
+  // This albedo is the *surface* one - rock, ice, ocean, cloud - with the sky's
+  // own scattering added afterwards, once the atmosphere is known.
   let albedo = 0.3;
   let teq = equilibriumTemperature(L, au, albedo);
   const isGiant = mEarth > 12;
@@ -365,53 +394,184 @@ function makePlanet(
 
   const gravity = (G * massKg) / (radiusM * radiusM);
   const vEsc = Math.sqrt((2 * G * massKg) / radiusM);
+  const irr = irradiance(L, au);
+  const ecc = Math.min(0.6, Math.abs(rng.normal(0, isGiant ? 0.04 : 0.07)));
 
-  // --- Atmosphere. Retention is decided by the Jeans parameter for the
-  //     lightest species the planet could plausibly hold.
-  let pressureBar = 0;
-  let atmosphere = 'none';
-  let greenhouse = 0;
+  // --- Water delivered at formation.
+  //
+  // The snow line decides this and almost nothing else does. A core assembled
+  // beyond it is a quarter ice by mass; one assembled inside it is dry rock,
+  // and whatever water it has arrived afterwards on things that fell in from
+  // further out. The Earth's oceans are two parts in ten thousand of its mass
+  // and none of that water formed where it now sits.
+  const waterInventory = isGiant ? 1
+    : waterRich ? rng.range(0.6, 1)
+    : insideSnow ? Math.max(0, rng.normal(0.22, 0.32))
+    : rng.range(0.35, 0.95);
+
+  // --- What the planet can hold on to, by the Jeans parameter per species.
   const lamH2 = jeansParameter(massKg, radiusM, teq, 2);
   const lamN2 = jeansParameter(massKg, radiusM, teq, 28);
   const lamCO2 = jeansParameter(massKg, radiusM, teq, 44);
-  if (isGiant || lamH2 > 40) {
-    pressureBar = isGiant ? 1e5 : rng.range(1, 200);
+
+  // The non-condensing background: hydrogen if the planet was big enough and
+  // cold enough to keep the disc's own gas, otherwise outgassed nitrogen in
+  // proportion to the mantle available to degas it.
+  let backgroundBar = 0;
+  let atmosphere = 'none';
+  let molarMass = 28.0;
+  let cp = 1040;
+  /** Mole fraction of whatever in the column absorbs in the infrared. */
+  let greenhouseGas = 0;
+  const hydrogenEnvelope = isGiant || lamH2 > 40;
+  if (hydrogenEnvelope) {
+    backgroundBar = isGiant ? 1e5 : rng.range(1, 200);
     atmosphere = 'H₂ / He';
-    greenhouse = 0;
-  } else if (lamCO2 > 25) {
-    const runaway = teq > 300 && rng.chance(0.45);
-    pressureBar = runaway ? rng.range(20, 95) : rng.logNormal(0.9, 1.5);
-    atmosphere = runaway ? 'CO₂ (runaway)' : lamN2 > 30 ? 'N₂ / CO₂' : 'CO₂';
-    // Greenhouse forcing rises steeply with column mass
-    greenhouse = Math.min(520, 33 * Math.pow(Math.max(pressureBar, 1e-3), 0.55) * (runaway ? 3.4 : 1));
+    // Hydrogen has no infrared bands of its own, but two hydrogen molecules
+    // colliding do: the pair has a fleeting dipole for as long as the collision
+    // lasts, and collision-induced absorption goes as the square of the
+    // density. It is the dominant opacity in every giant atmosphere there is.
+    molarMass = 2.3; cp = 12000; greenhouseGas = 0.08;
+  } else if (lamN2 > 30) {
+    backgroundBar = Math.min(40, 0.9 * mEarth * rng.logNormal(1, 0.9));
+    atmosphere = 'N₂';
+  } else if (lamCO2 > 22) {
+    backgroundBar = Math.min(6, 0.12 * mEarth * rng.logNormal(1, 1.1));
+    atmosphere = 'CO₂';
+    molarMass = 44.01; cp = 846; greenhouseGas = 0.9;
   } else if (lamCO2 > 12) {
-    pressureBar = rng.range(0.001, 0.02);
+    backgroundBar = rng.range(0.0008, 0.02);
     atmosphere = 'trace CO₂';
-    greenhouse = 2;
+    molarMass = 44.01; cp = 846; greenhouseGas = 0.9;
   }
 
-  const surfaceK = teq + greenhouse;
+  // How hard the interior is still working. Everything about the carbon cycle
+  // follows from this: what there is to outgas, how fast it comes out, and
+  // therefore where the thermostat sits.
+  const outgassing = outgassingRate(mEarth, star.ageGyr) * rng.logNormal(1, 0.5);
 
-  // --- Water. Liquid needs the right temperature and enough pressure that it
-  //     does not simply sublimate.
-  let ocean = 0;
-  const hydro = atmosphere.includes('H₂') && pressureBar > 8;
-  if (!isGiant && !hydro && surfaceK > 245 && surfaceK < 380 && pressureBar > 0.006) {
-    ocean = Math.min(1, (waterRich ? rng.range(0.6, 1) : rng.range(0, 0.9)));
-  } else if (!isGiant && !hydro && surfaceK <= 245) {
-    ocean = waterRich ? rng.range(0.3, 1) : rng.range(0, 0.4); // frozen
-  }
+  // Carbon inventory, as the surface pressure it would make if every gram of
+  // it were in the air at once. The Earth's carbonate rock holds about sixty
+  // bars of carbon dioxide; Venus's sky holds ninety. A planet whose interior
+  // has gone cold cannot get at its own carbon, however much of it there is.
+  const carbonBar = backgroundBar > 0 && !hydrogenEnvelope
+    ? 60 * Math.pow(mEarth, 0.9) * Math.min(1, outgassing) * rng.logNormal(1, 0.4) : 0;
 
-  const cls = classify(mEarth, teq, ocean, insideSnow, pressureBar, atmosphere.includes('H₂'));
-  const [c1, c2] = PALETTE[cls];
-
-  // --- Rotation and tides.
+  // --- Rotation and tides, needed before the climate: a locked world has a
+  //     different climate problem from a spinning one.
   const periodS = period(au * AU, G * (star.currentMassMsun * M_SUN + massKg));
   const lockYears = tidalLockingTimeYears(au * AU, massKg, radiusM, star.currentMassMsun * M_SUN);
   const locked = lockYears < star.ageGyr * 1e9;
   let dayS = locked ? periodS : rng.logNormal(isGiant ? 3.6e4 : 9e4, 0.8);
   if (!locked && rng.chance(0.06)) dayS = -dayS;  // retrograde, as Venus is
   const obliquity = rng.chance(0.05) ? rng.range(60, 120) * DEG : Math.abs(rng.normal(0, 22)) * DEG;
+
+  // --- Temperature, from an energy budget rather than an offset.
+  let pressureBar = backgroundBar;
+  let surfaceK: number;
+  let effectiveK: number;
+  let greenhouseK = 0;
+  let ocean = 0;
+  let iceFraction = 0;
+  let co2Bar = 0;
+  let runaway = false;
+  let air: Atmosphere = {
+    pressureBar, greenhouseFraction: 0, molarMass, cp,
+    water: false, humidity: 0.7,
+  };
+
+  // Somewhere under a hundred bars of hydrogen the idea of a surface stops
+  // meaning anything: there is no line where the air ends and the ground
+  // begins, only gas getting steadily denser until it is a fluid. For those
+  // worlds the number worth quoting is the temperature at one bar.
+  const noSurface = isGiant || (hydrogenEnvelope && backgroundBar > 8);
+
+  if (noSurface) {
+    // There is no surface, so there is no surface temperature - only the
+    // temperature at one bar, and it is not set by sunlight alone. A giant is
+    // still shrinking, and the gravitational energy it releases doing so comes
+    // out as heat: Jupiter radiates two-thirds again as much as it absorbs, so
+    // it is 15 K warmer than the Sun could make it.
+    const tInt = 100 * Math.pow(Math.max(mEarth / 317.8, 0.02), 0.45)
+      * Math.pow(Math.max(star.ageGyr, 0.05) / 4.5, -0.3);
+    effectiveK = Math.pow(teq ** 4 + tInt ** 4, 0.25);
+    // The one-bar level sits under about a bar of hydrogen, and that bar has a
+    // greenhouse of its own. Jupiter radiates at 124 K and is 165 K where the
+    // pressure reads one atmosphere; the gap is collision-induced absorption.
+    const tau1bar = 4.229 * Math.pow(0.08, 0.390);
+    surfaceK = effectiveK * Math.pow(1 + 0.75 * tau1bar, 0.25);
+    greenhouseK = surfaceK - effectiveK;
+    pressureBar = backgroundBar;
+    air = {
+      pressureBar: backgroundBar, greenhouseFraction: 0.08,
+      molarMass: 2.3, cp: 12000, water: false, humidity: 0,
+    };
+  } else if (backgroundBar <= 0) {
+    // Airless: every point sits in its own radiative equilibrium, and the
+    // global mean of T is well below the temperature of the mean flux, because
+    // emission goes as the fourth power and the hot side does the radiating.
+    surfaceK = teq * 0.82;
+    effectiveK = teq;
+    air = { ...air, pressureBar: 0 };
+  } else {
+    const surfaceAlbedo = albedo;
+    const base: Atmosphere = {
+      pressureBar: backgroundBar, greenhouseFraction: greenhouseGas, molarMass, cp,
+      water: waterInventory > 0.01, humidity: hydrogenEnvelope ? 0 : 0.7,
+    };
+    // Where the thermostat sits is not a constant. It is where this planet's
+    // volcanoes and this planet's rain come into balance.
+    const setpoint = thermostatSetpoint(outgassing, 1 - Math.min(waterInventory, 0.98));
+    let cycle = carbonCycle(
+      irr, ecc, base, surfaceAlbedo, waterInventory, carbonBar, star.teff, setpoint);
+
+    if (cycle.limit === 'runaway') {
+      // The inner edge, reached. The ocean boils; with no rain there is no
+      // weathering; with no weathering nothing buries carbon, so every gram
+      // the planet ever outgassed ends up in the sky and stays there. This is
+      // the whole of Venus, and it is three lines because the physics that
+      // does it is three lines.
+      runaway = true;
+      cycle = carbonCycle(
+        irr, ecc, { ...base, water: false, humidity: 0 },
+        Math.min(surfaceAlbedo + 0.35, 0.78), 0, carbonBar, star.teff, setpoint);
+      atmosphere = 'CO₂ (runaway)';
+    }
+    co2Bar = cycle.co2Bar;
+    pressureBar = cycle.pressureBar;
+    air = {
+      pressureBar,
+      greenhouseFraction: Math.max(cycle.fraction, greenhouseGas * backgroundBar / Math.max(pressureBar, 1e-9)),
+      molarMass: (molarMass * backgroundBar + 44.01 * co2Bar) / Math.max(pressureBar, 1e-9),
+      cp: (cp * backgroundBar + 846 * co2Bar) / Math.max(pressureBar, 1e-9),
+      water: !runaway && waterInventory > 0.01,
+      humidity: hydrogenEnvelope ? 0 : 0.7,
+    };
+    if (!hydrogenEnvelope && co2Bar > backgroundBar * 0.5 && !runaway) {
+      atmosphere = co2Bar > backgroundBar * 8 ? 'CO₂' : 'N₂ / CO₂';
+    }
+    // The albedo the cycle actually settled on - ground, sky and ice together -
+    // is the one the emission temperature has to be worked out from, or a
+    // frozen world comes back claiming a negative greenhouse.
+    albedo = cycle.albedo;
+    surfaceK = cycle.tempK;
+    effectiveK = Math.pow(Math.max(irr * (1 - albedo) / 4, 1e-9) / SIGMA_SB, 0.25);
+    greenhouseK = surfaceK - effectiveK;
+  }
+
+  // --- Water, now that the temperature is known. The inventory decides how
+  //     much there is; the climate decides how much of it is liquid.
+  if (!noSurface && !hydrogenEnvelope && waterInventory > 0.005) {
+    if (liquidWaterPossible(surfaceK, pressureBar)) {
+      ocean = Math.min(1, waterInventory);
+    } else if (surfaceK <= T_FREEZE && surfaceK > 30) {
+      iceFraction = Math.min(1, waterInventory);
+    }
+  }
+  const teqForClass = noSurface ? teq : surfaceK;
+  const cls = classify(mEarth, teqForClass, Math.max(ocean, iceFraction * 0.6), insideSnow,
+    pressureBar, hydrogenEnvelope);
+  const [c1, c2] = PALETTE[cls];
 
   // Dynamo: needs a molten conducting core and fast rotation.
   const magnetism = isGiant ? rng.range(2, 20)
@@ -451,8 +611,11 @@ function makePlanet(
     }
   }
 
-  const habitable = !isGiant && cls !== 'mini-neptune' && cls !== 'ice-giant'
-    && surfaceK > 260 && surfaceK < 330 && ocean > 0.05
+  // Habitable means what it says: liquid water sitting on a surface, under a
+  // pressure a body could stand in, on a world that has not lost its oceans.
+  const habitable = !noSurface && !hydrogenEnvelope && !runaway
+    && cls !== 'mini-neptune' && cls !== 'ice-giant'
+    && liquidWaterPossible(surfaceK, pressureBar) && ocean > 0.05
     && pressureBar > 0.08 && pressureBar < 12;
   const biosphere = habitable
     ? Math.max(0, Math.min(1, rng.normal(0.5, 0.32))) * (star.ageGyr > 1 ? 1 : 0.2)
@@ -478,9 +641,16 @@ function makePlanet(
     albedo,
     teqK: teq,
     surfaceK,
+    effectiveK,
+    greenhouseK,
     pressureBar,
+    co2Bar,
+    air,
     atmosphere,
+    waterInventory,
     oceanFraction: ocean,
+    iceFraction,
+    runaway,
     cloudCover,
     tidallyLocked: locked,
     habitable,
@@ -493,7 +663,7 @@ function makePlanet(
     magnetism,
     elements: {
       a: au * AU,
-      e: Math.min(0.6, Math.abs(rng.normal(0, isGiant ? 0.04 : 0.07))),
+      e: ecc,
       i: Math.abs(rng.normal(0, 1.8)) * DEG,
       Omega: rng.range(0, Math.PI * 2),
       omega: rng.range(0, Math.PI * 2),
@@ -523,3 +693,48 @@ export const CLASS_LABEL: Record<PlanetClass, string> = {
 };
 
 export { M_JUPITER, R_JUPITER, YEAR };
+
+
+// ---------------------------------------------------------------------------
+// The full climate, on demand
+// ---------------------------------------------------------------------------
+
+/**
+ * Every planet gets a global mean surface temperature at formation, because
+ * that is cheap and the classification needs it. Almost none of them ever get
+ * looked at closely. So the latitude-by-season model - which costs a hundred
+ * times as much and answers questions nobody asks of a planet seen as a dot -
+ * is run only when somebody actually goes there, and remembered afterwards.
+ */
+const CLIMATE_CACHE = new WeakMap<Planet, Climate>();
+
+/** The seasonal, latitude-resolved climate of a world. Solved once, then kept. */
+export function planetClimate(p: Planet, star: Star, luminosityLsun: number): Climate {
+  const hit = CLIMATE_CACHE.get(p);
+  if (hit) return hit;
+  const cl = solveClimate({
+    irradiance: irradiance(luminosityLsun, p.au),
+    periodS: p.periodS,
+    dayS: p.dayS,
+    obliquity: p.obliquity,
+    eccentricity: p.elements.e,
+    // The longitude of periapsis relative to the equinox is not tracked as an
+    // orbital element here, so it comes from the argument of periapsis - which
+    // is the same angle measured from the node instead of the equinox, and for
+    // a planet with a small inclination the difference is small.
+    precession: p.elements.omega,
+    atmosphere: p.air,
+    gravity: p.gravity,
+    radiusM: p.radiusM,
+    oceanFraction: Math.max(p.waterInventory, p.oceanFraction),
+    albedo: p.albedo,
+    tidallyLocked: p.tidallyLocked,
+    starTeff: star.teff,
+  });
+  CLIMATE_CACHE.set(p, cl);
+  return cl;
+}
+
+/** Whether the full model has anything to say about this world. */
+export const hasClimate = (p: Planet): boolean =>
+  p.pressureBar > 1e-4 && p.massKg < 12 * M_EARTH;
