@@ -2658,16 +2658,33 @@ export function describePlanet(p: Planet, _system: string, star?: Star): Inspect
     { k: 'surface', v: `${p.surfaceK.toFixed(0)}`, u: 'K' },
     { k: 'atmosphere', v: p.pressureBar < 1e-3 ? 'none' : `${sig(p.pressureBar, 2)} bar ${p.atmosphere}` },
   ];
+  if (p.greenhouseK > 0.5) {
+    rows.push({ k: 'greenhouse', v: `+${p.greenhouseK.toFixed(0)}`, u: 'K' });
+  }
+  if (p.co2Bar > 1e-7) {
+    rows.push({
+      k: 'CO₂',
+      v: p.co2Bar < 0.01 ? `${(p.co2Bar * 1e6).toFixed(0)} ppm` : `${sig(p.co2Bar, 2)} bar`,
+    });
+  }
   if (p.oceanFraction > 0.01) rows.push({ k: 'liquid', v: `${(p.oceanFraction * 100).toFixed(0)}`, u: '% cover' });
+  if (p.iceFraction > 0.01) rows.push({ k: 'ice', v: `${(p.iceFraction * 100).toFixed(0)}`, u: '% cover' });
   if (p.moons.length) rows.push({ k: 'moons', v: p.moons.length.toString() });
   if (p.rings.length) rows.push({ k: 'rings', v: `${(p.rings[0].iceFraction * 100).toFixed(0)}% ice` });
   if (p.elements.e > 0.05) rows.push({ k: 'eccentricity', v: p.elements.e.toFixed(3) });
 
   let note: string | undefined;
-  if (p.habitable) {
+  if (p.runaway) {
+    // The most consequential sentence any of these planets has.
+    note = 'Absorbed more than a wet atmosphere can radiate, so its oceans '
+      + 'boiled. With no rain there was no weathering, with no weathering '
+      + 'nothing buried carbon, and every gram it ever outgassed is still in '
+      + 'the sky. This is what happened to Venus.';
+  } else if (p.habitable) {
     note = p.biosphere > 0.5
       ? 'Liquid water, a breathable pressure, and a biosphere old enough to have changed the atmosphere.'
-      : 'Liquid water on the surface, inside the conservative habitable zone.';
+      : 'Liquid water on the surface, held there by a carbonate-silicate cycle '
+        + 'that has been topping up its carbon dioxide for as long as its volcanoes have run.';
   } else if (p.cls === 'lava') {
     note = 'Close enough that the surface never solidifies. The glow is the rock itself.';
   } else if (p.tidallyLocked) {

@@ -24,7 +24,7 @@ import * as THREE from 'three';
 import { NOISE_GLSL } from './shaders/noise';
 import { ECLIPSE_GLSL } from './shaders/eclipse';
 import type { Planet } from '../astro/planets';
-import type { Climate } from '../astro/climate';
+import { condensationTemperature, type Climate } from '../astro/climate';
 import { climateTexture, type ClimateTexture } from './climatetex';
 import { moistLapseRate } from '../astro/radiation';
 import { R_EARTH } from '../core/constants';
@@ -64,6 +64,8 @@ uniform float uTime;
 uniform float uOcean;        // sea-level fraction 0..1
 uniform float uIce;          // ice-cap extent 0..1
 uniform float uCloud;        // cloud cover 0..1
+uniform float uIceThreshold; // K below which there is ice here
+uniform float uFrostK;       // K at which the air itself frosts onto the ground
 uniform float uType;         // 0 rocky, 1 gas giant, 2 ice, 3 lava, 4 living
 uniform float uRoughness;
 uniform float uAtmoDensity;
@@ -251,7 +253,16 @@ void main() {
     float capNoise = fbm(q * 3.0 + vec3(51.0), 4, 2.0, 0.5) * 3.5;
     float icy;
     if (uHasClimate > 0.5) {
-      icy = smoothstep(274.5, 270.5, surfK + capNoise) * step(0.001, uIce);
+      // Cold is not enough. There has to be water here to freeze, and a world
+      // with only a trace of it can only whiten its very coldest ground - so
+      // the threshold is the temperature below which this planet's own water
+      // inventory runs out, not the freezing point. Mars is below freezing
+      // everywhere and is not a white planet.
+      icy = smoothstep(uIceThreshold + 2.0, uIceThreshold - 2.0, surfK + capNoise);
+      // Below the frost point the atmosphere itself snows onto the ground,
+      // water or no water. That is what the bright winter cap on Mars is:
+      // carbon dioxide, out of the air, a metre thick, gone again by spring.
+      icy = max(icy, smoothstep(uFrostK + 1.5, uFrostK - 1.5, surfK + capNoise * 0.5));
     } else {
       float cn = capNoise * 0.045;
       icy = smoothstep(1.0 - uIce - 0.12, 1.0 - uIce + 0.06, abs(lat) + cn)
@@ -562,6 +573,8 @@ export class PlanetView {
         uOcean: { value: planet.oceanFraction },
         uIce: { value: iceExtent },
         uCloud: { value: planet.cloudCover },
+        uIceThreshold: { value: -1 },
+        uFrostK: { value: -1 },
         uType: { value: typeCode },
         uRoughness: { value: 0.8 },
         uAtmoDensity: { value: Math.min(1, planet.pressureBar) },
@@ -607,6 +620,14 @@ export class PlanetView {
       // rate is the planet's own - moist where there is water to condense,
       // dry where there is not - so a thin-aired world's mountains are colder
       // than a thick-aired one's by the ratio of their gravities.
+      // How cold it has to be here before there is ice on the ground. Every
+      // point of the seasonal field is ranked by temperature and the coldest
+      // share of it equal to the planet's water inventory is what freezes; if
+      // there is more water than there is cold ground, the threshold is simply
+      // the freezing point and every cold place is white.
+      u.uIceThreshold.value = iceThreshold(cl, planet.waterInventory);
+      u.uFrostK.value = planet.pressureBar > 1e-4
+        ? condensationTemperature(planet.air) : -1;
       const relief = 6000;
       const lapse = planet.pressureBar > 0.01
         ? moistLapseRate(planet.gravity, cl.meanK, planet.pressureBar, planet.air.cp)
@@ -820,3 +841,23 @@ export function atmosphereBeta(p: Planet): [number, number, number] {
 }
 
 export { R_EARTH };
+
+
+/**
+ * The temperature below which a world actually has ice on the ground.
+ *
+ * Being below freezing is necessary and nowhere near sufficient: the whole of
+ * Mars is below freezing and the whole of Mars is not white, because there is
+ * almost no water on it to freeze. So every point of the seasonal field is
+ * ranked by temperature, and the coldest share of it equal to the planet's
+ * water inventory is what ends up covered. A world with oceans has more water
+ * than cold ground and the answer comes back as the freezing point; a world
+ * with a trace has only its poles.
+ */
+export function iceThreshold(cl: Climate, waterInventory: number): number {
+  const w = Math.min(1, Math.max(0, waterInventory));
+  if (w <= 0.002) return -1;
+  const sorted = Float32Array.from(cl.field).sort();
+  const k = Math.min(sorted.length - 1, Math.floor(w * sorted.length));
+  return Math.min(273.15, sorted[k]);
+}
