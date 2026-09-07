@@ -43,6 +43,7 @@ import {
 import { peakMultipoles } from '../cosmology/cmb';
 import { GalaxySprites, type GalaxySpriteData } from '../render/galaxysprites';
 import { ClusterOrbits, bindingPressure, type Halo } from '../physics/clusterorbits';
+import * as SZ from '../astro/sz';
 import { GalaxyView } from '../render/galaxyview';
 import { SystemView } from '../render/systemview';
 import { PlanetView } from '../render/planet';
@@ -554,6 +555,11 @@ export class ClusterStage extends Stage {
   private stripNow: Float32Array = new Float32Array(0);
   private bindOf: Float64Array = new Float64Array(0);
   private stripped = 0;
+  /** The microwave view: -1 off, otherwise an index into SZ.PLANCK_BANDS. */
+  private band = -1;
+  private gas!: SZ.ClusterGas;
+  private szSky?: CmbView;
+  private szSaved: { d: number; theta: number; phi: number; fov: number } | null = null;
 
   build(): void {
     const u = this.env.universe;
@@ -693,7 +699,9 @@ export class ClusterStage extends Stage {
     this.sprites.setViewport(this.env.viewport()[1], this.env.engine.camera.fov);
   }
 
-  override dispose(): void { this.sky.dispose(); this.sprites.dispose(); super.dispose(); }
+  override dispose(): void {
+    this.sky.dispose(); this.sprites.dispose(); this.szSky?.dispose(); super.dispose();
+  }
 
   update(dt: number): void {
     this.simTime += dt * this.timeScale;
@@ -750,6 +758,8 @@ export class ClusterStage extends Stage {
     }
     this.sprites.commit();
 
+    this.aimSZ();
+
     // The intracluster gas sloshes. A cluster that has swallowed a group is
     // left with its atmosphere ringing for gigayears afterwards, and the cold
     // fronts that ringing produces are visible in every deep X-ray image.
@@ -767,6 +777,149 @@ export class ClusterStage extends Stage {
 
   /** How many galaxies are visibly losing their gas at this moment. */
   get strippingCount(): number { return this.stripped; }
+
+  /**
+   * Observe the cluster in the microwave, where it is a hole in the beginning
+   * of time.
+   *
+   * Each press moves to the next Planck band and the fourth turns it off, so
+   * you go 100 - 143 - 217 - 353 GHz and watch the shadow deepen, vanish, and
+   * come back inverted. That inversion is the whole signature: nothing else in
+   * the sky is a cold spot on one side of 217 gigahertz and a hot spot on the
+   * other, and it is why these four bands exist.
+   *
+   * The vantage has to be a long way off, because the effect is a distortion
+   * of a background that is behind everything - from inside the cluster there
+   * is no "behind" to look at. So this backs off to a few hundred megaparsecs
+   * and narrows the field until the cluster subtends a few arcminutes, which
+   * is what a millimetre telescope actually sees.
+   */
+  cycleMicrowave(): number {
+    const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
+    const c = this.env.controls;
+    const cam = this.env.engine.camera;
+    const was = this.band;
+    this.band = was + 1 >= SZ.PLANCK_BANDS.length ? -1 : was + 1;
+
+    if (was < 0 && this.band >= 0) {
+      this.szSaved = { d: c.distance, theta: c.theta, phi: c.phi, fov: this.baseFov };
+      this.gas = SZ.clusterGas(cl.massMsun, cl.radiusMpc, cl.icmKeV);
+      // Frame it the way a survey does: a few arcminutes across.
+      this.baseFov = 1.6;
+      const want = (this.baseFov * Math.PI) / 180;
+      const D = cl.radiusMpc / (0.34 * want);
+      c.maxDistance = D * 3;
+      c.minDistance = D * 0.05;
+      c.snapTo(new THREE.Vector3(), D, c.theta, c.phi);
+      cam.near = D * 0.3; cam.far = D * 4;
+      if (!this.szSky) {
+        this.szSky = new CmbView({
+          cosmology: this.env.cosmology,
+          seed: this.env.universe.seed,
+          waves: this.env.quality() > 0.6 ? 640 : 400,
+          resolution: this.env.quality() > 0.6 ? 2560 : 1280,
+          ellRange: [90, 1400],
+          // A survey filters the large-scale primordial pattern out before it
+          // looks for clusters - it is a foreground to this measurement,
+          // however much it is the subject of every other one - so what is
+          // left of it here is a residual wash rather than the full 110
+          // microkelvin.
+          rmsMicroK: 45,
+        });
+        this.szSky.mesh.scale.setScalar(D * 40);
+        this.szSky.setDipole(0);
+        // The stretch is set by the cluster, not by the background: half a
+        // millikelvin runs the whole colour range, so the decrement saturates
+        // and the residual sky does not.
+        this.szSky.setRange(700);
+        this.szSky.setBrightness(0.075);
+      }
+      this.root.add(this.szSky.mesh);
+      this.sky.mesh.visible = false;
+      this.sprites.mesh.visible = false;
+      if (this.icm) this.icm.visible = false;
+    } else if (this.band < 0) {
+      if (this.szSky) this.root.remove(this.szSky.mesh);
+      this.sky.mesh.visible = true;
+      this.sprites.mesh.visible = true;
+      if (this.icm) this.icm.visible = true;
+      const v = this.szSaved ?? { d: cl.radiusMpc * 2.1, theta: 0.5, phi: 1.05, fov: 60 };
+      this.baseFov = v.fov;
+      c.maxDistance = cl.radiusMpc * 30;
+      c.minDistance = 0.001;
+      c.snapTo(new THREE.Vector3(), v.d, v.theta, v.phi);
+      cam.near = 1e-4; cam.far = cl.radiusMpc * 900;
+    }
+    cam.fov = this.baseFov;
+    cam.updateProjectionMatrix();
+    this.onResize();
+    return this.band;
+  }
+
+  /** The band being observed in, GHz, or 0 when the microwave view is off. */
+  get microwaveGHz(): number {
+    return this.band < 0 ? 0 : SZ.PLANCK_BANDS[this.band];
+  }
+
+  /** Point the shadow at the cluster and set its depth for this band. */
+  private aimSZ(): void {
+    if (this.band < 0 || !this.szSky) return;
+    this.szSky.render(this.env.engine.renderer);
+    const cam = this.env.engine.camera;
+    const dir = this.root.position.clone().sub(cam.position);
+    const D = Math.max(dir.length(), 1e-6);
+    this.szSky.mesh.position.copy(cam.position);
+
+    const ghz = SZ.PLANCK_BANDS[this.band];
+    const y0 = SZ.yAt(this.gas, 0);
+    const tau = SZ.tauAt(this.gas, 0);
+    // The cluster's own motion along the line of sight, from the halo it sits
+    // in: the same peculiar velocity that shifts every galaxy's redshift.
+    const vLos = this.env.universe.cluster(this.ctx.cluster ?? 0).members[0]?.vlos ?? 0;
+    this.szSky.setCluster(
+      dir,
+      SZ.thermalSZ(y0, ghz) * 1e6,
+      SZ.kineticSZ(tau, vLos * 1e3) * 1e6,
+      (this.gas.rcM / MPC) / D,
+      (this.gas.cutM / MPC) / D,
+    );
+  }
+
+  /** What the microwave view is showing, for the readout. */
+  private szRows(): Row[] {
+    const ghz = SZ.PLANCK_BANDS[this.band];
+    const y0 = SZ.yAt(this.gas, 0);
+    const tau = SZ.tauAt(this.gas, 0);
+    const dtUK = SZ.thermalSZ(y0, ghz) * 1e6;
+    const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
+    const vLos = cl.members[0]?.vlos ?? 0;
+    const kUK = SZ.kineticSZ(tau, vLos * 1e3) * 1e6;
+    const arcmin = ((this.gas.cutM / MPC) / this.env.controls.distance) * (180 / Math.PI) * 60;
+    return [
+      { k: 'observing', v: `${ghz} GHz`, accent: true },
+      {
+        k: 'thermal SZ',
+        v: `${dtUK >= 0 ? '+' : ''}${Math.abs(dtUK) < 1 ? dtUK.toFixed(2) : Math.round(dtUK)}`,
+        u: 'µK',
+        accent: true,
+      },
+      {
+        k: 'shows as',
+        // The band centre is half a gigahertz off the true null, which is why
+        // 217 GHz leaves a few microkelvin behind rather than exactly nothing.
+        v: Math.abs(dtUK) < 25 ? 'very nearly nothing'
+          : dtUK < 0 ? 'a cold spot' : 'a hot spot',
+      },
+      { k: 'Compton y', v: sig(y0, 3) },
+      { k: 'optical depth', v: `${(tau * 100).toFixed(2)}%` },
+      { k: 'kinetic SZ', v: `${kUK >= 0 ? '+' : ''}${kUK.toFixed(1)}`, u: 'µK' },
+      { k: 'gas temp', v: `${cl.icmKeV.toFixed(1)} keV`, u: `${sig((cl.icmKeV * 1.16045e7), 2)} K` },
+      { k: 'Y', v: sig(SZ.integratedYMpc2(this.gas), 3), u: 'Mpc²' },
+      { k: 'subtends', v: arcmin.toFixed(1), u: 'arcmin' },
+      { k: 'null at', v: SZ.SZ_NULL_GHZ.toFixed(1), u: 'GHz' },
+      { k: 'distance', v: 'does not enter' },
+    ];
+  }
 
   /**
    * Back off to a cosmological distance and narrow the field of view, which is
@@ -816,6 +969,7 @@ export class ClusterStage extends Stage {
   rows(): Row[] {
     const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
     const [dv, du] = formatDistance(this.env.controls.distance * MPC);
+    if (this.band >= 0) return this.szRows();
     if (this.deep) {
       const D = this.env.controls.distance;
       const fieldArcmin = this.baseFov * 60;
@@ -855,6 +1009,7 @@ export class ClusterStage extends Stage {
 
   scaleLabel(): string {
     const [v, u] = formatDistance(this.env.controls.distance * MPC);
+    if (this.band >= 0) return `${SZ.PLANCK_BANDS[this.band]} GHz · ${v} ${u}`;
     return `${v} ${u}`;
   }
 

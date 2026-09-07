@@ -818,6 +818,27 @@ export class App {
           } else this.flash('deep fields are observed from a cluster');
           break;
         }
+        case 'Semicolon': {
+          // The microwave view. It lives on a punctuation key because every
+          // letter on the board is already spoken for, and it belongs next to
+          // the deep field and the critical curves rather than anywhere else.
+          const c = this.stage as unknown as {
+            cycleMicrowave?: () => number; microwaveGHz?: number;
+          };
+          if (!c.cycleMicrowave) { this.flash('the microwave sky is observed from a cluster'); break; }
+          const band = c.cycleMicrowave();
+          this.mark('Semicolon', band >= 0);
+          this.rebuildReadout();
+          const ghz = c.microwaveGHz ?? 0;
+          this.flash(band < 0
+            ? 'back to the cluster'
+            : ghz < 200
+              ? `${ghz} GHz · the cluster is a hole in the background`
+              : ghz < 250
+                ? `${ghz} GHz · the null: the gas is invisible here`
+                : `${ghz} GHz · past the null, the same gas is a hot spot`);
+          break;
+        }
         case 'KeyK': {
           const c = this.stage as unknown as { toggleCriticalCurves?: () => boolean };
           if (c.toggleCriticalCurves) {
@@ -1389,6 +1410,7 @@ const HELP_HTML = `
     <dl>
       <dt>V</dt><dd>tint by peculiar velocity</dd>
       <dt>L</dt><dd>observe a cluster as a deep field</dd>
+      <dt>;</dt><dd>observe a cluster in the microwave · 100 · 143 · 217 · 353 GHz</dd>
       <dt>K</dt><dd>show lensing critical curves</dd>
       <dt>M</dt><dd>collide this galaxy with another</dd>
       <dt>G</dt><dd>merge two black holes</dd>
