@@ -350,6 +350,23 @@ export class Controls {
     }
   }
 
+  /**
+   * Set the distance directly, with no easing, keeping the current focus.
+   *
+   * For a scripted move that is already easing itself and does not want the
+   * controls easing it a second time.
+   */
+  setDistance(distance: number): void {
+    const d = Math.max(this.minDistance, Math.min(this.maxDistance, distance));
+    this.dTarget = d;
+    this.distance = d;
+  }
+
+  /** Ease the distance toward a value, the way a scroll wheel would. */
+  glideTo(distance: number): void {
+    this.dTarget = Math.max(this.minDistance, Math.min(this.maxDistance, distance));
+  }
+
   /** Snap immediately, with no easing (used when changing scale). */
   snapTo(p: THREE.Vector3, distance: number, theta?: number, phi?: number): void {
     this.spinX = 0; this.spinY = 0;

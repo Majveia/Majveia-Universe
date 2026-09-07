@@ -65,7 +65,34 @@ const WARPS: TimeWarp[] = [
  */
 const BOOSTS = [0, 0.5, 0.9, 0.99, 0.9999, 0.99999, 0.999999, 0.99999999];
 
+/**
+ * The opening run through cosmic history.
+ *
+ * `from` is where on the timeline it starts, which is the dark ages: there is
+ * nothing to look at yet and that is the point, because what follows only
+ * means anything by contrast. `after` is the rate cosmic time keeps at once
+ * the run is over - slow, but never zero, because structure at the present day
+ * is still growing and a frozen web is a photograph.
+ */
+const OVERTURE = {
+  seconds: 26,
+  /** Where on the timeline the growth starts: cosmic dawn, not the void. */
+  from: 0.26,
+  /** Fraction of the run spent on the microwave sky before the web takes over. */
+  sky: 0.20,
+  /** How far the aperture is opened at the start, closing to 1 by the end. */
+  gain: 16,
+  zoom: 0.36,
+  after: 0.0016,
+};
+
 const lorentz = (b: number): number => 1 / Math.sqrt(Math.max(1 - b * b, 1e-18));
+
+/** Ken Perlin's smootherstep, clamped: zero slope and zero curvature at both ends. */
+const smoothStep = (x: number): number => {
+  const t = Math.min(1, Math.max(0, x));
+  return t * t * t * (t * (t * 6 - 15) + 10);
+};
 
 export class App {
   readonly engine: Engine;
@@ -106,6 +133,15 @@ export class App {
    */
   private playing = true;
   private scrubbing = false;
+  /**
+   * Seconds into the opening run, or -1 once it is done.
+   *
+   * Armed at start-up and re-armed for a new universe, because a universe
+   * nobody has watched grow is worth watching grow.
+   */
+  private overtureT = -1;
+  /** The point on the timeline the opening run stops at: the present day. */
+  private overtureU1 = 1;
   private warpIndex = 1;
   private boostIndex = 0;
   /** Beta actually applied, eased toward the selected preset. */
@@ -185,7 +221,9 @@ export class App {
     // --- Timeline
     this.timeline = new Timeline(120, 8);
     this.timeline.onChange = (a) => { this.epochA = a; };
-    this.timeline.onScrubStart = () => { this.scrubbing = true; this.playing = false; };
+    this.timeline.onScrubStart = () => {
+      this.scrubbing = true; this.playing = false; this.endOverture(true);
+    };
     this.timeline.onScrubEnd = () => { this.scrubbing = false; };
     this.timeline.setA(1);
 
@@ -334,6 +372,15 @@ export class App {
     this.boot.classList.add('done');
     setTimeout(() => this.boot.remove(), 1400);
     this.flash(`${commas(field.count)} particles · ${field.knots.length} haloes`);
+    // Arm the opening run. The timeline knows where the present day is; find
+    // it once, then wind back to before there was anything to see.
+    if (this.params.get('intro') !== '0') {
+      this.timeline.setA(1);
+      this.overtureU1 = this.timeline.u;
+      this.timeline.setU(OVERTURE.from);
+      this.epochA = this.timeline.a;
+      this.overtureT = 0;
+    }
     requestAnimationFrame((t) => this.tick(t));
   }
 
@@ -432,6 +479,7 @@ export class App {
       this.stack.push({ id: target.id, ctx: target.ctx, label: target.label });
     }
 
+    if (stage.id !== 'cosmos') this.endOverture(true);
     this.titleEl.textContent = stage.title;
     this.subEl.textContent = stage.subtitle;
     this.updateCrumb();
@@ -544,6 +592,70 @@ export class App {
     this.flashEl.classList.add('on');
     window.clearTimeout(this.flashTimer);
     this.flashTimer = window.setTimeout(() => this.flashEl.classList.remove('on'), 1900);
+  }
+
+  /**
+   * The opening: thirteen point eight billion years, in about a quarter of a
+   * minute, once.
+   *
+   * You arrive in the dark ages, before there is anything to see, and the web
+   * assembles around you while the view pulls back to take it in. It is the
+   * one thing in this application that has to be watched rather than driven,
+   * because the growth of structure is a story with an order to it and nobody
+   * scrubbing a slider for the first time will find that order by accident.
+   *
+   * Interruptible: touch the timeline, or press a key that moves time, and it
+   * stands down for good and hands you the controls.
+   */
+  private runOverture(dt: number): void {
+    const st = this.stage as CosmosStage;
+    const was = this.overtureT;
+    this.overtureT += dt;
+    const k = Math.min(1, this.overtureT / OVERTURE.seconds);
+
+    // It opens on the microwave sky, because that is where the structure
+    // comes from and because a screen with nothing on it is a poor first
+    // impression of a universe. The pattern in that sky is a hundred and ten
+    // microkelvin of sound waves in a plasma that had not yet become atoms,
+    // and every filament that follows grew out of it.
+    const sky = 1 - smoothStep(k / OVERTURE.sky);
+    st.fadeCmb(sky > 0.002 ? sky : 0);
+    if (was === 0) this.flash('the sky at four hundred thousand years old');
+    else if (was < OVERTURE.seconds * OVERTURE.sky
+      && this.overtureT >= OVERTURE.seconds * OVERTURE.sky) {
+      this.flash('and what gravity made of it, over thirteen billion years');
+    }
+
+    // Slow through the dark ages where nothing is happening, quick through
+    // assembly, and easing to a stop at the present rather than arriving at it.
+    const e = smoothStep(k);
+    this.timeline.setU(OVERTURE.from + (this.overtureU1 - OVERTURE.from) * e);
+    this.epochA = this.timeline.a;
+
+    // Open the aperture early and close it as the contrast arrives, so the
+    // first structure is visible while it is still only a few per cent.
+    st.exposure = 1 + (OVERTURE.gain - 1) * Math.pow(1 - e, 1.7);
+
+    // Pulling back as it grows, so the first thing you see is a filament and
+    // the last is the whole box.
+    if (st.restDistance > 0) {
+      this.controls.setDistance(st.restDistance * (OVERTURE.zoom + (1 - OVERTURE.zoom) * e));
+    }
+    if (k >= 1) this.endOverture(false);
+  }
+
+  /** Stop the opening run, either because it finished or because it was cut. */
+  private endOverture(interrupted: boolean): void {
+    if (this.overtureT < 0) return;
+    this.overtureT = -1;
+    if (this.stage instanceof CosmosStage) {
+      this.stage.fadeCmb(0);
+      this.stage.exposure = 1;
+    }
+    if (interrupted) {
+      const st = this.stage as CosmosStage | undefined;
+      if (st?.id === 'cosmos' && st.restDistance > 0) this.controls.glideTo(st.restDistance);
+    }
   }
 
   private togglePlay(): void {
@@ -830,16 +942,19 @@ export class App {
         }
         case 'KeyR':
           if (this.stage?.id === 'cosmos') {
+            this.endOverture(true);
             this.timeline.setA(1 / 101); this.epochA = this.timeline.a; this.flash('rewound to the dark ages');
           }
           break;
         case 'BracketLeft':
           if (this.stage?.id === 'cosmos') {
+            this.endOverture(true);
             this.timeline.setU(Math.max(0, this.timeline.u - 0.035)); this.epochA = this.timeline.a;
           } else { this.warpIndex = Math.max(0, this.warpIndex - 1); }
           break;
         case 'BracketRight':
           if (this.stage?.id === 'cosmos') {
+            this.endOverture(true);
             this.timeline.setU(Math.min(1, this.timeline.u + 0.035)); this.epochA = this.timeline.a;
           } else { this.warpIndex = Math.min(WARPS.length - 1, this.warpIndex + 1); }
           break;
@@ -1092,10 +1207,13 @@ export class App {
     // --- Time
     if (this.stage) {
       if (this.stage.id === 'cosmos') {
-        if (this.playing && !this.scrubbing) {
-          this.timeline.setU(this.timeline.u + dt * 0.02);
+        if (this.overtureT >= 0 && this.playing && !this.scrubbing) this.runOverture(dt);
+        else if (this.playing && !this.scrubbing) {
+          // Once the opening run is over, cosmic time keeps going, slowly.
+          // Structure at the present day is still growing, and a cosmic web
+          // held at a fixed scale factor is a photograph.
+          this.timeline.setU(Math.min(1, this.timeline.u + dt * OVERTURE.after));
           this.epochA = this.timeline.a;
-          if (this.timeline.u >= 1) this.togglePlay();
         }
         this.stage.timeScale = 0;
         this.stage.update(dt);

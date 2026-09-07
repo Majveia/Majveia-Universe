@@ -208,6 +208,9 @@ export abstract class Stage {
 // COSMOS
 // ---------------------------------------------------------------------------
 
+/** Brightness the microwave sky is drawn at when it is fully shown. */
+const CMB_BRIGHT = 0.075;
+
 export class CosmosStage extends Stage {
   readonly id = 'cosmos' as const;
   readonly title = 'Cosmic web';
@@ -218,9 +221,24 @@ export class CosmosStage extends Stage {
   private nodeCount = 0;
   velocityTint = false;
   brightness = 0.55;
+  /**
+   * Extra exposure, for the opening run.
+   *
+   * Structure at cosmic dawn really is faint: the density contrast at z = 20
+   * is a few per cent, and shown at the same stretch as the present day it is
+   * an empty screen. Every visualisation of structure formation ever made
+   * opens the aperture early and closes it as the contrast arrives, and this
+   * is that - a change of exposure, not of physics, and it is over by the time
+   * anything is being measured.
+   */
+  exposure = 1;
   private cmb?: CmbView;
   /** 0 off, 1 as observed with the dipole, 2 with the dipole removed. */
   private cmbMode: 0 | 1 | 2 = 0;
+  /** The distance the view settles at once the opening run is over. */
+  restDistance = 1;
+  /** Strength of the last-scattering sky while the opening run dissolves it. */
+  private cmbFade = 0;
 
   build(): void {
     const field = this.env.universe.field;
@@ -284,8 +302,10 @@ export class CosmosStage extends Stage {
     this.root.add(this.markers);
 
     const box = field.boxMpc;
+    this.restDistance = box * 0.42;
     const c = this.env.controls;
-    c.snapTo(new THREE.Vector3(box / 2, box / 2, box / 2), box * 0.42, 0.7, 1.15);
+    c.snapTo(new THREE.Vector3(box / 2, box / 2, box / 2), this.restDistance, 0.7, 1.15);
+    c.drift = 0.008;
     c.minDistance = 0.4;
     c.maxDistance = box * 6;
     const cam = this.env.engine.camera;
@@ -331,6 +351,44 @@ export class CosmosStage extends Stage {
     return this.cmbMode;
   }
 
+  /**
+   * Show the last-scattering surface at a given strength, for the opening run.
+   *
+   * The same sky `cycleCmb` shows, but faded rather than switched, so it can
+   * dissolve into the structure that grew out of it. Zero takes it away again
+   * and leaves the key-driven mode exactly as it was.
+   */
+  fadeCmb(strength: number): void {
+    if (strength <= 0) {
+      if (this.cmbFade > 0 && this.cmb) {
+        this.root.remove(this.cmb.mesh);
+        this.cmb.setBrightness(CMB_BRIGHT);
+        this.cmbMode = 0;
+      }
+      this.cmbFade = 0;
+      return;
+    }
+    if (!this.cmb) {
+      this.cmb = new CmbView({
+        cosmology: this.env.cosmology,
+        seed: this.env.universe.seed,
+        waves: this.env.quality() > 0.6 ? 640 : 400,
+        resolution: this.env.quality() > 0.6 ? 2560 : 1280,
+      });
+      this.cmb.mesh.scale.setScalar(this.env.universe.field.boxMpc * 40);
+    }
+    if (this.cmbFade <= 0) {
+      this.root.add(this.cmb.mesh);
+      // The pattern, not our own motion through it: the dipole is thirty times
+      // larger and it is not what the structure grew from.
+      this.cmb.setDipole(0);
+      this.cmb.setRange(340);
+      this.cmbMode = 2;
+    }
+    this.cmbFade = strength;
+    this.cmb.setBrightness(CMB_BRIGHT * strength);
+  }
+
   /** Scales of the last-scattering surface, for the readout. */
   get cmbScales(): CmbView['scales'] | null {
     return this.cmbMode > 0 && this.cmb ? this.cmb.scales : null;
@@ -343,7 +401,7 @@ export class CosmosStage extends Stage {
     const field = this.env.universe.field;
     this.web.setGrowth(D);
     this.web.setCamera(this.env.engine.camera.position);
-    if (this.cmbMode > 0 && this.cmb) {
+    if ((this.cmbMode > 0 || this.cmbFade > 0) && this.cmb) {
       this.cmb.render(this.env.engine.renderer);
       this.cmb.mesh.position.copy(this.env.engine.camera.position);
     }
@@ -356,7 +414,7 @@ export class CosmosStage extends Stage {
       nearFade: depth * 0.16,
       fadeStart: depth * 0.30,
       fadeEnd: depth,
-      brightness: this.brightness * (cell / depth) * (this.cmbMode > 0 ? 0.75 : 1),
+      brightness: this.brightness * this.exposure * (cell / depth) * (this.cmbFade > 0 ? 0.75 : 1),
       velocityTint: this.velocityTint ? 1 : 0,
       velocityFactor: this.velocityTint ? peculiarVelocityFactor(this.env.cosmology, a) : 0,
     });
@@ -1064,6 +1122,8 @@ export class GalaxyStage extends Stage {
     this.view.setViewport(this.env.viewport()[1], this.env.engine.camera.fov);
     const c = this.env.controls;
     c.snapTo(new THREE.Vector3(), g.radiusKpc * 2.4, 0.45, 0.78);
+    // The disc turns on its own, so the view only needs a whisper of its own.
+    c.drift = 0.006;
     c.minDistance = 1e-7;
     c.maxDistance = g.radiusKpc * 40;
     const cam = this.env.engine.camera;
@@ -1888,6 +1948,7 @@ export class SystemStage extends Stage {
     const span = Math.max(outer, st.habitableZoneAu[1] * 1.1, system.snowLineAu * 0.9);
     const c = this.env.controls;
     c.snapTo(new THREE.Vector3(), span * 1.55, 0.5, 0.62);
+    c.drift = 0.010;
     c.minDistance = 1e-6;
     c.maxDistance = span * 40;
     const cam = this.env.engine.camera;
@@ -2535,6 +2596,8 @@ export class WorldStage extends Stage {
     const ang0 = p.elements.M0;
     const c = this.env.controls;
     c.snapTo(new THREE.Vector3(), 3.0, Math.PI / 2 - ang0 + 1.15, 1.28);
+    // The world turns beneath the view; the view itself barely moves.
+    c.drift = 0.004;
     c.minDistance = 1.02;
     c.maxDistance = Math.max(60, this.starDist * 0.02);
     const cam = this.env.engine.camera;
