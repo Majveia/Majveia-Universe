@@ -505,9 +505,56 @@ looking at the output:
 | Y | run the star's whole life, to the nebula |
 | O | go to the Solar System |
 | T | true scale in a system |
+| X | aim with the device's own orientation |
 | U | hide the interface |
 | P | save a frame |
 | H | all of the above |
+
+### On a phone
+
+Not the same interface with things removed. A keyboard has to offer every
+command at once because it cannot tell which are meaningful; the shelf along
+the bottom is built at the moment of use, asks the current scale what it is
+capable of, and shows only that — so it is smaller than the keyboard and
+reaches exactly as far. One table backs both, so they cannot drift apart.
+
+| | |
+|---|---|
+| drag | orbit |
+| pinch | zoom, about the point between your fingers |
+| two fingers | slide to pan, twist to turn |
+| flick | let go while moving and it carries on |
+| tap / hold | inspect |
+| double tap | descend into it |
+| two-finger tap | climb back out |
+| pull up the shelf | the numbers for wherever you are |
+| the marks, right edge | the five scales |
+
+Pinch zooms about the point between the fingers rather than the middle of the
+screen, which is the difference between grabbing the sky and operating a
+slider; on the plane through the focus it is exact. The poles give rather than
+stop. Resolution is found by measurement, not guessed from the device's pixel
+ratio — the same page runs on a phone with a three-times display and a GPU that
+will not sustain it, and the cost changes by two orders of magnitude between
+the cosmic web and a planet's surface anyway.
+
+The gestures are a state machine with no DOM in it, tested by being driven
+directly, which is how four bugs were found before any of it reached a phone —
+including the one that mattered: the hold timer runs on wall time, and wall
+time lies. When the main thread is busy building a new scale, a fifty
+millisecond tap has its release still in the queue when the timer fires, so
+taps became holds and double-tap-to-descend stopped working on exactly the slow
+devices that need it. Every decision now comes from the timestamps the events
+carry.
+
+**X** on a phone hands the camera to the orientation sensors. The angles a
+browser reports are intrinsic Z-X'-Y'' Tait-Bryan rotations; after them come a
+quarter turn about x, because the device frame has z out of the screen and a
+camera looks along −z, and a roll by the screen orientation, because turning a
+phone into landscape changes which way is up on the display and nothing at all
+about the sensors, which are bolted to the case. The mapping is absolute, so
+there is nothing to drift and turning the whole way round brings you back
+exactly where you began.
 
 Five scales, each about a thousand times smaller than the one above:
 
@@ -553,13 +600,15 @@ src/
   cosmology/    LambdaCDM, the power spectrum, FFT, Zel'dovich, the worker
   physics/      Kepler solvers, orbital elements, relativity, N-body,
                 lensing, eclipses, magnetospheres
+  camera/       the orbit and flight rigs, touch gestures, device orientation
   astro/        blackbody colour, stellar evolution, planet formation,
                 spectra, supernovae, planetary nebulae, binaries, comets
   galaxy/       kinematic density waves, population synthesis
   render/       the HDR engine and every shader
   sim/          the universe object graph and the scale ladder
   ui/           the interface
-tests/          353 tests against published measurements
+tests/          397 tests against published measurements and against
+                every edge of the gesture recogniser
 ```
 
 ## Accuracy
