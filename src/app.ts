@@ -11,7 +11,8 @@ import * as THREE from 'three';
 import './ui/styles.css';
 
 import { Engine } from './render/engine';
-import { Controls } from './camera/controls';
+import { Controls, tick as haptic } from './camera/controls';
+import { MobileUI, isTouchDevice } from './ui/mobile';
 import { Universe } from './sim/universe';
 import {
   Stage, ScaleId, StageCtx, Target, StageEnv, makeStage, SCALE_ORDER, CosmosStage,
@@ -112,11 +113,31 @@ export class App {
   private pointer = new THREE.Vector2(0, 0);
   private pointerActive = false;
   private quality = 1;
+  /** The touch interface, on devices driven by a finger. */
+  private mobile: MobileUI | null = null;
+  readonly touch: boolean;
+  /**
+   * Which toggles are currently on, keyed by the key that flips them. The
+   * keyboard does not need this - a key has no state to show - but a button
+   * that cannot say whether it is on is only half a control.
+   */
+  private lit = new Set<string>();
+  /**
+   * Resolution scale, found by measurement rather than assumed from the device.
+   * A phone's pixel ratio says nothing about how fast its GPU is.
+   */
+  private renderScale = 1;
+  private frameAcc = 0;
+  private frameN = 0;
+  private adaptAt = 0;
+  private mobileAt = 0;
 
   readonly seedText: string;
 
   constructor(readonly params: URLSearchParams) {
     this.seedText = params.get('seed') ?? randomSeedText();
+    this.touch = isTouchDevice(params);
+    if (this.touch) document.body.classList.add('touch');
     this.canvas = document.getElementById('stage') as HTMLCanvasElement;
     this.engine = new Engine({ canvas: this.canvas });
     this.controls = new Controls(this.engine.camera, this.canvas);
@@ -158,9 +179,8 @@ export class App {
 
     // --- Time warp readout (non-cosmos scales)
     this.warpEl = el('div', 'layer dimmable warp');
-    this.warpEl.style.cssText =
-      'left:50%;bottom:var(--edge);transform:translateX(-50%);text-align:center;' +
-      'font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:rgba(255,255,255,.4)';
+    // Positioned from the stylesheet, not from here: the touch layout has to
+    // move it clear of the shelf, and an inline style cannot be overridden.
 
     // --- Ladder
     this.ladder = el('div', 'layer dimmable ladder');
@@ -196,6 +216,7 @@ export class App {
       if (this.stage instanceof CosmosStage) {
         this.stage.velocityTint = !this.stage.velocityTint;
         b.classList.toggle('on', this.stage.velocityTint);
+        this.mark('KeyV', this.stage.velocityTint);
       }
     });
     railBtn('cosmology', () => this.cycleCosmology());
@@ -210,24 +231,54 @@ export class App {
     // --- Help
     this.helpEl = el('div', 'help');
     const panel = el('div', 'panel');
-    panel.innerHTML = HELP_HTML;
+    // A phone has no shift key and no scroll wheel, so being told about them is
+    // worse than being told nothing: it teaches that the thing in your hands is
+    // the lesser version.
+    panel.innerHTML = this.touch ? TOUCH_HELP_HTML : HELP_HTML;
     this.helpEl.append(panel);
+    if (this.touch) {
+      this.helpEl.addEventListener('click', () => {
+        this.helpEl.classList.remove('show');
+        this.mark('KeyH', false);
+      });
+    }
 
     // --- Flash
     this.flashEl = el('div', 'layer flash');
-    this.flashEl.style.cssText =
-      'left:50%;bottom:calc(var(--edge) + 62px);transform:translateX(-50%);font-size:10px;' +
-      'letter-spacing:.22em;text-transform:uppercase;color:rgba(232,184,122,.92);opacity:0;' +
-      'transition:opacity 300ms;pointer-events:none;text-align:center';
 
     // Where a stage can mount an instrument of its own - a strain trace, say.
-    this.overlayHost = el('div');
+    this.overlayHost = el('div', 'overlay-host');
     this.uiRoot.append(masthead, this.readout.el, this.timeline.el, this.warpEl,
       this.ladder, this.inspector, hint, rail, this.overlayHost, this.flashEl);
     document.body.append(this.helpEl);
 
+    if (this.touch) {
+      this.mobile = new MobileUI({
+        run: (k) => this.runKey(k),
+        probe: () => ({
+          id: this.stage?.id ?? 'cosmos',
+          can: (m) => typeof (this.stage as unknown as Record<string, unknown>)?.[m] === 'function',
+          isOn: (k) => this.lit.has(k),
+          depth: this.stack.length,
+          hasChild: !!this.stage?.child(),
+        }),
+        scales: () => this.scaleEntries(),
+        goScale: (id) => this.jumpToScale(id as ScaleId),
+        tick: () => haptic(7),
+      });
+      // The readout and the timeline move into the shelf: on a phone the bottom
+      // of the screen is the only place a thumb reaches, and it cannot hold
+      // three separate things.
+      this.mobile.adoptAbove(this.timeline.el);
+      this.mobile.adopt(this.readout.el);
+      this.uiRoot.append(this.mobile.root);
+    }
+
     this.bindEvents();
     this.resize();
+    // Once layout has actually happened: the first pass runs before the fonts
+    // have settled and before the shelf has a height.
+    requestAnimationFrame(() => this.mobile?.onResize());
   }
 
   private playBtn: HTMLButtonElement;
@@ -412,6 +463,18 @@ export class App {
     this.crumbEl.textContent = `${this.seedText}  ·  ${parts.join('  ›  ')}`;
   }
 
+  /** The scale ladder, as data, for whichever interface is drawing it. */
+  private scaleEntries(): { id: string; label: string; reachable: boolean; here: boolean }[] {
+    const here = this.stage ? SCALE_ORDER.indexOf(this.stage.id) : 0;
+    return SCALE_ORDER.map((id, i) => ({
+      id,
+      label: SCALE_LABELS[id],
+      // One below the deepest visited scale is reachable: that is the descent.
+      reachable: i <= this.stack.length,
+      here: i === here,
+    }));
+  }
+
   private updateLadder(): void {
     const here = this.stage ? SCALE_ORDER.indexOf(this.stage.id) : 0;
     const steps = Array.from(this.ladder.children) as HTMLElement[];
@@ -440,15 +503,21 @@ export class App {
   private flashTimer?: number;
   flash(msg: string): void {
     this.flashEl.textContent = msg;
-    this.flashEl.style.opacity = '1';
+    this.flashEl.classList.add('on');
     window.clearTimeout(this.flashTimer);
-    this.flashTimer = window.setTimeout(() => { this.flashEl.style.opacity = '0'; }, 1900);
+    this.flashTimer = window.setTimeout(() => this.flashEl.classList.remove('on'), 1900);
   }
 
   private togglePlay(): void {
     this.playing = !this.playing;
     this.playBtn.classList.toggle('on', this.playing);
     this.playBtn.textContent = this.playing ? '❚❚ pause time' : '▸ run time';
+    this.mark('Space', this.playing);
+  }
+
+  /** Record that a toggle is on, so a button can show it. */
+  private mark(code: string, on: boolean): void {
+    if (on) this.lit.add(code); else this.lit.delete(code);
   }
 
   private cycleCosmology(): void {
@@ -465,6 +534,10 @@ export class App {
 
   private bindEvents(): void {
     window.addEventListener('resize', () => this.resize());
+    // A phone changes the size of its viewport without firing a window resize:
+    // the toolbar slides away, the keyboard comes up, the device is rotated.
+    window.visualViewport?.addEventListener('resize', () => this.resize());
+    window.addEventListener('orientationchange', () => setTimeout(() => this.resize(), 120));
     this.controls.onInteract = () => this.wake();
 
     for (const ev of ['pointermove', 'pointerdown', 'wheel', 'keydown'] as const) {
@@ -482,25 +555,65 @@ export class App {
     let downAt = 0;
     let downPos = { x: 0, y: 0 };
     this.canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'touch') return;
       downAt = performance.now();
       downPos = { x: e.clientX, y: e.clientY };
     });
     this.canvas.addEventListener('pointerup', (e) => {
+      if (e.pointerType === 'touch') return;
       const dt = performance.now() - downAt;
       const moved = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
       if (dt < 350 && moved < 5) this.onClick(e);
     });
     this.canvas.addEventListener('dblclick', () => this.descend(true));
 
+    // --- The touch verbs.
+    //
+    // A finger has no hover and no buttons, so the three things a mouse does
+    // with a cursor and two buttons have to be told apart by rhythm instead:
+    // tap to look at, double tap to go in, two fingers to come back out. The
+    // last two are the map gestures everybody already has in their hands.
+    this.controls.onTap = (x, y) => { this.aimAt(x, y); this.inspectHere(); };
+    this.controls.onLongPress = (x, y) => { this.aimAt(x, y); this.inspectHere(); haptic(11); };
+    this.controls.onDoubleTap = (x, y) => {
+      this.aimAt(x, y);
+      haptic(14);
+      this.descend(true);
+    };
+    this.controls.onTwoFingerTap = () => {
+      if (this.stack.length < 2) { this.flash('this is the largest scale'); return; }
+      haptic(14);
+      this.ascend();
+    };
+
     window.addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement) return;
-      switch (e.code) {
-        case 'Space': e.preventDefault(); this.togglePlay(); break;
+      // Space scrolls a page and Backspace navigates back; neither is wanted
+      // over a canvas that fills the window.
+      if (e.code === 'Space' || e.code === 'Backspace') e.preventDefault();
+      this.runKey(e.code);
+    });
+  }
+
+  /**
+   * Every command in the application, addressed by the key that runs it.
+   *
+   * There is one table rather than two because there are two ways in: a
+   * keyboard, and a row of buttons under a thumb. If those diverged, the
+   * touch build would quietly be missing features, which is the usual way a
+   * phone version ends up being the lesser one. Here it cannot: the dock is
+   * built by asking this table what the current scale can do.
+   */
+  runKey(code: string): void {
+    switch (code) {
+        case 'Space': this.togglePlay(); break;
         case 'Enter': this.descend(true); break;
-        case 'Backspace': e.preventDefault(); this.ascend(); break;
-        case 'KeyH': case 'Slash': this.helpEl.classList.toggle('show'); break;
+        case 'Backspace': this.ascend(); break;
+        case 'KeyH': case 'Slash':
+          this.mark('KeyH', this.helpEl.classList.toggle('show'));
+          break;
         case 'Escape': this.helpEl.classList.remove('show'); this.inspector.classList.remove('show'); break;
-        case 'KeyU': this.uiRoot.classList.toggle('hidden'); break;
+        case 'KeyU': this.mark('KeyU', this.uiRoot.classList.toggle('hidden')); break;
         case 'KeyV': this.velBtn.click(); break;
         case 'KeyC': this.cycleCosmology(); break;
         case 'KeyF':
@@ -513,6 +626,7 @@ export class App {
           const c = this.stage as unknown as { observeDeepField?: () => boolean };
           if (c.observeDeepField) {
             const on = c.observeDeepField();
+            this.mark('KeyL', on);
             this.rebuildReadout();
             this.flash(on
               ? 'deep field · 1 Gpc · the cluster is lensing what is behind it'
@@ -523,7 +637,8 @@ export class App {
         case 'KeyK': {
           const c = this.stage as unknown as { toggleCriticalCurves?: () => boolean };
           if (c.toggleCriticalCurves) {
-            this.flash(c.toggleCriticalCurves()
+            this.mark('KeyK', c.toggleCriticalCurves());
+            this.flash(this.lit.has('KeyK')
               ? 'critical curves — where magnification diverges'
               : 'critical curves hidden');
           }
@@ -533,6 +648,7 @@ export class App {
           const g = this.stage as unknown as { toggleEncounter?: () => boolean };
           if (g.toggleEncounter) {
             const on = g.toggleEncounter();
+            this.mark('KeyM', on);
             this.rebuildReadout();
             this.flash(on ? 'gravitational encounter — running' : 'encounter ended');
             if (on && !this.playing) this.togglePlay();
@@ -545,6 +661,7 @@ export class App {
           const st = this.stage as unknown as { toggleEvolution?: () => boolean };
           if (st.toggleEvolution) {
             const on = st.toggleEvolution();
+            this.mark('KeyY', on);
             this.flash(on ? 'running the star\u2019s whole life' : 'back to the present');
             if (on && !this.playing) this.togglePlay();
           } else {
@@ -556,6 +673,7 @@ export class App {
           const st = this.stage as unknown as
             { toggleChirpAudio?: () => 'on' | 'off' | 'unavailable' };
           const r = st.toggleChirpAudio?.() ?? 'unavailable';
+          this.mark('KeyN', r === 'on');
           this.flash(r === 'on'
             ? 'the chirp, at its real frequencies — nothing transposed'
             : r === 'off' ? 'sound off' : 'there is nothing to hear here');
@@ -564,7 +682,8 @@ export class App {
         case 'KeyD': {
           const st = this.stage as unknown as { toggleHR?: () => boolean };
           if (st.toggleHR) {
-            this.flash(st.toggleHR()
+            this.mark('KeyD', st.toggleHR());
+            this.flash(this.lit.has('KeyD')
               ? 'Hertzsprung-Russell: this galaxy\u2019s own stars'
               : 'diagram closed');
           } else {
@@ -576,6 +695,7 @@ export class App {
           const st = this.stage as unknown as { toggleMerger?: () => boolean };
           if (st.toggleMerger) {
             const on = st.toggleMerger();
+            this.mark('KeyG', on);
             this.flash(on
               ? 'two black holes, eleven seconds from merging — press N to hear it'
               : 'back to the galaxy');
@@ -599,6 +719,7 @@ export class App {
         case 'KeyB': {
           if (this.stage instanceof CosmosStage) {
             const mode = this.stage.cycleCmb();
+            this.mark('KeyB', mode !== 0);
             this.flash(mode === 1
               ? 'the microwave sky as observed — almost all of it is our own motion'
               : mode === 2
@@ -615,6 +736,7 @@ export class App {
           // few decimal places of beta mean anything.
           this.boostIndex = (this.boostIndex + 1) % BOOSTS.length;
           const b = BOOSTS[this.boostIndex];
+          this.mark('KeyJ', b > 0);
           this.flash(b === 0 ? 'back to rest'
             : `boost · beta ${b} · gamma ${lorentz(b).toFixed(b < 0.99 ? 2 : 0)}`);
           break;
@@ -622,7 +744,8 @@ export class App {
         case 'KeyT': {
           const st = this.stage as unknown as { toggleTrueScale?: () => boolean };
           if (st.toggleTrueScale) {
-            this.flash(st.toggleTrueScale() ? 'true scale' : 'apparent-size floor restored');
+            this.mark('KeyT', st.toggleTrueScale());
+            this.flash(this.lit.has('KeyT') ? 'true scale' : 'apparent-size floor restored');
           }
           break;
         }
@@ -645,9 +768,8 @@ export class App {
           this.quality = Math.min(1, this.quality * 1.35); this.applyQuality(); break;
         case 'Minus': case 'NumpadSubtract':
           this.quality = Math.max(0.02, this.quality / 1.35); this.applyQuality(); break;
-        default: break;
-      }
-    });
+      default: break;
+    }
   }
 
   private applyQuality(): void {
@@ -659,11 +781,25 @@ export class App {
     }
   }
 
-  private onClick(e: PointerEvent): void {
-    if (!this.stage) return;
+  /** Point the shared cursor at a client coordinate, as a mouse move would. */
+  private aimAt(x: number, y: number): void {
     const r = this.canvas.getBoundingClientRect();
-    const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1,
-      -((e.clientY - r.top) / r.height) * 2 + 1);
+    this.pointer.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
+    this.pointerActive = true;
+  }
+
+  private inspectHere(): void {
+    this.showInspection(this.pointer.clone());
+  }
+
+  private onClick(e: PointerEvent): void {
+    const r = this.canvas.getBoundingClientRect();
+    this.showInspection(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1,
+      -((e.clientY - r.top) / r.height) * 2 + 1));
+  }
+
+  private showInspection(ndc: THREE.Vector2): void {
+    if (!this.stage) return;
     const info = this.stage.inspect(ndc);
     if (!info) { this.inspector.classList.remove('show'); return; }
     this.inspectorBody.innerHTML = '';
@@ -732,9 +868,43 @@ export class App {
 
   private resize(): void {
     const dprCap = this.params.has('dpr') ? Number(this.params.get('dpr')) : 2;
-    const dpr = Math.min(window.devicePixelRatio || 1, dprCap);
-    this.engine.setSize(window.innerWidth, window.innerHeight, dpr);
+    const dpr = Math.min(window.devicePixelRatio || 1, dprCap) * this.renderScale;
+    // visualViewport is the part actually on screen: on a phone, innerHeight
+    // includes the space under a toolbar that is currently covering it.
+    const vv = window.visualViewport;
+    const w = Math.round(vv?.width ?? window.innerWidth);
+    const h = Math.round(vv?.height ?? window.innerHeight);
+    this.engine.setSize(w, h, dpr);
     this.stage?.onResize();
+    this.mobile?.onResize();
+  }
+
+  /**
+   * Hold the frame rate by changing how many pixels are drawn.
+   *
+   * Nothing here can be decided in advance. The same page runs on a phone with
+   * a three-times pixel ratio and a GPU that will not sustain it, and on a
+   * workstation that would render four times the area without noticing; and
+   * the cost changes by two orders of magnitude between the cosmic web and a
+   * planet's surface anyway. So it is measured, adjusted slowly, and given a
+   * wide dead band, because a resolution that hunts is worse than one that is
+   * simply a little low.
+   */
+  private adapt(now: number, dt: number): void {
+    if (this.transitionT0 !== 0) { this.frameAcc = 0; this.frameN = 0; return; }
+    this.frameAcc += dt;
+    this.frameN++;
+    if (now - this.adaptAt < 1400 || this.frameN < 20) return;
+    this.adaptAt = now;
+    const mean = this.frameAcc / this.frameN;
+    this.frameAcc = 0;
+    this.frameN = 0;
+    const before = this.renderScale;
+    if (mean > 1 / 26) this.renderScale = Math.max(0.45, this.renderScale * 0.84);
+    else if (mean < 1 / 56 && this.renderScale < 1) {
+      this.renderScale = Math.min(1, this.renderScale * 1.1);
+    }
+    if (Math.abs(this.renderScale - before) > 1e-3) this.resize();
   }
 
   // -------------------------------------------------------------------------
@@ -748,6 +918,16 @@ export class App {
     this.frame++;
     this.idle += dt;
     if (this.idle > 3.4) this.uiRoot.classList.add('idle');
+    this.adapt(now, dt);
+
+    // The shelf asks the current scale what it can do. Four times a second is
+    // often enough to feel immediate and rare enough that the question - which
+    // includes a ray cast for whether there is anything to descend into - never
+    // shows up in a frame budget.
+    if (this.mobile && now - this.mobileAt > 240) {
+      this.mobileAt = now;
+      this.mobile.refresh();
+    }
 
     // --- Scale transition.
     //
@@ -854,6 +1034,48 @@ export class App {
   /** Growth factor at the current epoch, for external readouts. */
   get growth(): number { return growthFactor(this.cosmology, this.epochA); }
 }
+
+const TOUCH_HELP_HTML = `
+  <div>
+    <h3>Move</h3>
+    <dl>
+      <dt>drag</dt><dd>orbit whatever is in the middle</dd>
+      <dt>pinch</dt><dd>zoom, exponentially, about the point between your fingers</dd>
+      <dt>two fingers</dt><dd>slide to pan, twist to turn</dd>
+      <dt>flick</dt><dd>let go while moving and it keeps going</dd>
+    </dl>
+  </div>
+  <div>
+    <h3>Explore</h3>
+    <dl>
+      <dt>tap</dt><dd>look at what is under your finger</dd>
+      <dt>double tap</dt><dd>go into it — a galaxy, a star, a world</dd>
+      <dt>two-finger tap</dt><dd>come back out a scale</dd>
+      <dt>hold</dt><dd>inspect without moving anything</dd>
+    </dl>
+  </div>
+  <div>
+    <h3>The shelf</h3>
+    <dl>
+      <dt>pull up</dt><dd>the numbers for wherever you are</dd>
+      <dt>the row</dt><dd>everything this scale can do, and only that — it
+        changes as you descend</dd>
+      <dt>the marks</dt><dd>up the right edge: the five scales, from the cosmic
+        web down to a planet's surface</dd>
+    </dl>
+  </div>
+  <div>
+    <h3>Where you are</h3>
+    <dl>
+      <dt>cosmos</dt><dd>600 megaparsecs of cosmic web, growing under gravity</dd>
+      <dt>cluster</dt><dd>a bound halo, lensing what is behind it</dd>
+      <dt>galaxy</dt><dd>a hundred billion stars, turning</dd>
+      <dt>system</dt><dd>one star, its planets, its comets</dd>
+      <dt>world</dt><dd>weather, moons, eclipses, aurorae</dd>
+    </dl>
+  </div>
+  <div class="close">tap anywhere to return</div>
+`;
 
 const HELP_HTML = `
   <div>

@@ -15,6 +15,17 @@
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
   --edge: clamp(16px, 2.4vw, 34px);
+  /* Notches, home indicators and rounded corners. Zero on everything else. */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  /* The smallest a finger may be asked to hit. */
+  --tap: 44px;
+  /* How much of the shelf shows when it is down. Measured at runtime, because
+     it depends on the safe area and on whether a timeline is in it; this is
+     only the value the first frame is laid out with. */
+  --shelf-peek: 92px;
   --fade: 620ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
@@ -24,11 +35,19 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
+  /* The dynamic unit, so the layout does not jump by the height of the
+     browser's own toolbar every time it hides itself on a scroll. */
+  height: 100dvh;
   background: #000;
   color: rgb(var(--ink));
   font-family: var(--sans);
   overflow: hidden;
   overscroll-behavior: none;
+  touch-action: none;
+  /* A stray double tap must not zoom the document out from under the canvas,
+     and a long press must not offer to copy the interface. */
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -459,11 +478,279 @@ html, body {
 
 /* --- Scale-transition and stage chrome ------------------------------------ */
 .warp {
+  left: 50%;
+  bottom: var(--edge);
+  transform: translateX(-50%);
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(var(--ink), 0.4);
   font-variant-numeric: tabular-nums;
 }
+.flash {
+  left: 50%;
+  bottom: calc(var(--edge) + 62px);
+  transform: translateX(-50%);
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(var(--accent), 0.92);
+  opacity: 0;
+  transition: opacity 300ms;
+  pointer-events: none;
+}
+.flash.on { opacity: 1; }
 .ladder .step span:last-child { white-space: nowrap; }
 .inspector .descend:hover { color: rgba(255, 236, 214, 1); }
 .masthead .seed {
   max-width: 44ch;
   line-height: 1.7;
+}
+
+/* ===========================================================================
+   The touch interface.
+
+   Same material as the rest: hairlines, micro-type in monospace, and gold used
+   for exactly one thing - what is switched on right now. The difference is
+   that everything here is at least a finger wide, and everything sits where a
+   thumb can reach it without the hand leaving the phone.
+   =========================================================================== */
+
+.m-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* --- The shelf ------------------------------------------------------------ */
+
+.m-shelf {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* Parked with only the grip and the dock above the fold; the tray hangs
+     below the screen until it is pulled up. */
+  top: 100%;
+  margin-top: calc(0px - var(--shelf-peek));
+  pointer-events: auto;
+  transition: transform 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: transform;
+}
+/* The scrim. A gradient rather than a blur: a backdrop filter over a live
+   WebGL canvas costs a full-screen readback every frame on mobile hardware,
+   and this does the same job for nothing. Measured in pixels down from the
+   shelf's top edge, not in percentages of it, because the shelf is three times
+   taller when it is open and a percentage would put the fade in mid-air. */
+.m-shelf::before {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 0; bottom: -40vh;
+  pointer-events: none;
+  background: linear-gradient(to bottom,
+    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0.55) 34px,
+    rgba(0, 0, 0, 0.88) 78px,
+    rgba(0, 0, 0, 0.93) 120px,
+    rgba(0, 0, 0, 0.95) 100%);
+}
+.m-shelf > * { position: relative; }
+.m-shelf.dragging { transition: none; }
+
+.m-grip {
+  height: 30px;
+  display: grid;
+  place-items: center;
+  touch-action: none;
+  cursor: grab;
+}
+.m-grip i {
+  display: block;
+  width: 34px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(var(--ink), 0.32);
+  transition: background 240ms, width 240ms;
+}
+.m-shelf.open .m-grip i { background: rgba(var(--accent), 0.5); width: 22px; }
+
+/* The row of commands. Scrolls sideways when there are more than fit, with the
+   scrollbar hidden - the fade at the right edge is the affordance. */
+.m-dock {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  /* The home-indicator inset belongs here rather than on the shelf: below the
+     tray it would sit off-screen and lift nothing. */
+  padding: 0 max(var(--edge), var(--safe-r)) max(11px, var(--safe-b))
+    max(var(--edge), var(--safe-l));
+  scroll-padding-inline: var(--edge);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px,
+    #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 14px,
+    #000 calc(100% - 22px), transparent 100%);
+}
+.m-dock::-webkit-scrollbar { display: none; }
+.m-gap { flex: 0 0 1px; height: 20px; background: rgba(var(--ink), 0.14); margin: 0 3px; }
+
+.m-chip {
+  flex: 0 0 auto;
+  min-height: var(--tap);
+  padding: 0 15px;
+  border: 1px solid rgba(var(--ink), 0.13);
+  border-radius: 999px;
+  background: rgba(var(--ink), 0.02);
+  color: rgba(var(--ink), 0.66);
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  scroll-snap-align: start;
+  transition: color 200ms, border-color 200ms, background 200ms;
+  -webkit-tap-highlight-color: transparent;
+}
+.m-chip:active { background: rgba(var(--ink), 0.09); }
+.m-chip.on {
+  color: rgb(var(--accent));
+  border-color: rgba(var(--accent), 0.5);
+  background: rgba(var(--accent), 0.07);
+}
+.m-chip.nav { color: rgba(var(--hot), 0.9); border-color: rgba(var(--ink), 0.2); }
+.m-chip.nav:disabled { color: rgba(var(--ink), 0.2); border-color: rgba(var(--ink), 0.07); }
+.m-chip:disabled { pointer-events: none; }
+
+/* The readout, folded under the dock. */
+.m-tray {
+  padding: 2px max(var(--edge), var(--safe-r)) 18px max(var(--edge), var(--safe-l));
+  max-height: 52dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.m-tray::-webkit-scrollbar { display: none; }
+/* Anything the application hands to the shelf was authored as a free-floating
+   layer pinned to a corner of the window. Inside the shelf it has to be a
+   block in a column instead. The `#ui` is not decoration: the rule these
+   override carries an id, and a class selector cannot outrank one. */
+#ui .m-shelf .layer {
+  position: static;
+  transform: none;
+  left: auto; right: auto; top: auto; bottom: auto;
+  opacity: 1;
+}
+#ui .m-tray > .readout { min-width: 0; }
+#ui .m-rail > .timeline { width: 100%; margin-bottom: 2px; }
+
+/* The scrub bar sits above the commands, not folded away with the numbers:
+   at the cosmic scale it is the primary control, and a control you have to
+   pull a drawer open to reach is not a primary control. */
+.m-rail {
+  padding: 0 max(var(--edge), var(--safe-r)) 2px max(var(--edge), var(--safe-l));
+}
+.m-rail:empty { display: none; }
+
+/* --- The ladder of scales ------------------------------------------------- */
+
+.m-ladder {
+  position: absolute;
+  right: max(6px, var(--safe-r));
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  gap: 2px;
+  pointer-events: auto;
+}
+.m-rung {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  height: var(--tap);
+  /* Exactly a finger wide, and no wider. The label overhangs to the left
+     without taking any of the screen with it, because the right edge at
+     mid-height is also where a thumb lands to pinch, and a control should
+     never claim more of the glass than it can be tapped on. */
+  width: var(--tap);
+  position: relative;
+  padding: 0 10px 0 0;
+  border: 0;
+  background: none;
+  color: rgba(var(--ink), 0.5);
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  transition: color 260ms;
+  -webkit-tap-highlight-color: transparent;
+}
+.m-rung .lab {
+  opacity: 0;
+  transform: translateX(5px);
+  transition: opacity 260ms, transform 260ms;
+  white-space: nowrap;
+  position: absolute;
+  right: 30px;
+  pointer-events: none;
+}
+.m-rung .mark {
+  width: 9px;
+  height: 1px;
+  background: currentColor;
+  transition: width 300ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.m-rung.far { color: rgba(var(--ink), 0.26); }
+.m-rung.here { color: rgba(var(--hot), 0.95); }
+.m-rung.here .mark { width: 22px; }
+.m-rung.here .lab { opacity: 1; transform: none; }
+.m-rung:active .lab { opacity: 1; transform: none; }
+
+/* --- What the touch build moves out of the way ----------------------------- */
+
+body.touch .hint,
+body.touch .rail,
+body.touch .ladder { display: none; }
+body.touch .readout { position: static; }
+body.touch .masthead { top: max(var(--edge), var(--safe-t)); left: max(var(--edge), var(--safe-l)); }
+body.touch .masthead .seed { max-width: 62vw; }
+/* The inspector becomes a card that clears the ladder and the shelf. */
+body.touch .inspector {
+  top: auto;
+  bottom: calc(var(--shelf-peek) + 14px);
+  left: max(var(--edge), var(--safe-l));
+  right: calc(var(--tap) + 10px);
+  width: auto;
+  max-height: 46dvh;
+  overflow-y: auto;
+  transform: translateY(10px);
+  pointer-events: auto;
+}
+body.touch .inspector.show { transform: none; }
+body.touch .warp,
+body.touch .flash { bottom: calc(var(--shelf-peek) + 8px); }
+body.touch .flash { bottom: calc(var(--shelf-peek) + 30px); }
+/* The stage instruments - the strain trace, the H-R diagram, the spectrum -
+   set their own position inline, and on a 390-point screen that puts them over
+   the masthead. Overriding an inline style is the one thing !important is for,
+   and it is scoped to exactly these. */
+body.touch .overlay-host > .layer {
+  top: calc(max(var(--edge), var(--safe-t)) + 54px) !important;
+  max-width: calc(100vw - 2 * var(--edge) - var(--tap)) !important;
+}
+
+body.touch .help { padding: max(var(--edge), var(--safe-t)) var(--edge)
+  calc(var(--edge) + var(--safe-b)); }
+body.touch .help .panel { grid-template-columns: 1fr; overflow-y: auto; }
+
+/* In landscape a phone has almost no height, so the shelf gives up the tray
+   and the readout moves beside it. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .m-tray { max-height: 40dvh; }
+  body.touch .masthead .seed { display: none; }
 }
