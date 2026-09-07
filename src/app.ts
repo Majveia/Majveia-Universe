@@ -652,7 +652,22 @@ export class App {
         case 'Escape': this.helpEl.classList.remove('show'); this.inspector.classList.remove('show'); break;
         case 'KeyU': this.mark('KeyU', this.uiRoot.classList.toggle('hidden')); break;
         case 'KeyV': this.velBtn.click(); break;
-        case 'KeyC': this.cycleCosmology(); break;
+        case 'KeyC': {
+          // C means climate where a climate exists and cosmology where one
+          // does not - they are properties of different scales, so the key can
+          // never be ambiguous about which it meant.
+          const st = this.stage as unknown as { toggleClimate?: () => boolean };
+          if (st.toggleClimate) {
+            const on = st.toggleClimate();
+            this.mark('KeyC', on);
+            this.flash(on
+              ? 'the energy balance: latitude against season, and where the ice stops'
+              : 'climate closed');
+          } else {
+            this.cycleCosmology();
+          }
+          break;
+        }
         case 'KeyF':
           // Fullscreen is often denied inside an embed; failing is fine.
           if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -1244,7 +1259,7 @@ const HELP_HTML = `
       <dt>D</dt><dd>Hertzsprung-Russell diagram</dd>
       <dt>N</dt><dd>hear the merger</dd>
       <dt>Y</dt><dd>run the star's whole life</dd>
-      <dt>C</dt><dd>change the cosmology</dd>
+      <dt>C</dt><dd>the cosmology, or a world&rsquo;s climate</dd>
       <dt>U</dt><dd>hide the interface</dd>
       <dt>F</dt><dd>fullscreen</dd>
       <dt>T</dt><dd>true scale in a system</dd>

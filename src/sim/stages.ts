@@ -35,6 +35,7 @@ import { PulseAudio } from '../ui/pulseaudio';
 import * as PSR from '../astro/pulsar';
 import { StrainTrace } from '../ui/strain';
 import { HRDiagram } from '../ui/hrdiagram';
+import { ClimateChart } from '../ui/climatechart';
 import { ChirpAudio } from '../ui/chirpaudio';
 import {
   chirpMass, finalMass, finalSpin, radiatedFraction, peakLuminosity,
@@ -2307,6 +2308,8 @@ export class WorldStage extends Stage {
   subtitle = '';
   private planet!: Planet;
   private climate?: Climate;
+  private chart?: ClimateChart;
+  private showChart = false;
   private view!: PlanetView;
   private sky!: SkyDome;
   private starView!: StarView;
@@ -2596,6 +2599,30 @@ export class WorldStage extends Stage {
 
   override setBoost(beta: number, dir: THREE.Vector3): void {
     this.sky.setBoost(beta, dir);
+  }
+
+  /**
+   * Show the solved climate as a field rather than as a row of numbers.
+   *
+   * Bound to the same key that changes the cosmology, because the two can never
+   * both mean something: one is a property of the whole universe and the other
+   * of one planet's surface, and you are never looking at both at once.
+   */
+  toggleClimate(): boolean {
+    if (!this.climate) return false;
+    this.showChart = !this.showChart;
+    if (this.showChart && !this.chart) {
+      this.chart = new ClimateChart();
+      this.chart.set(this.climate, this.planet.name);
+    }
+    return this.showChart;
+  }
+
+  override overlay(): HTMLElement | null {
+    if (!this.showChart || !this.chart) return null;
+    this.chart.setPhase(this.seasonPhase());
+    this.chart.draw();
+    return this.chart.el;
   }
 
   scaleLabel(): string {

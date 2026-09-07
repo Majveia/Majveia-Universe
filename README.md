@@ -607,7 +607,7 @@ looking at the output:
 | enter / backspace | descend a scale / climb back |
 | space | run time |
 | `[` `]` | epoch, or time warp |
-| C | change the cosmology |
+| C | change the cosmology, or read a world’s climate |
 | V | tint the web by peculiar velocity |
 | B | show the microwave background |
 | J | fly at a fraction of light speed |
