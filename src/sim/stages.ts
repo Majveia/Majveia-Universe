@@ -42,6 +42,8 @@ import {
 } from '../physics/gwaves';
 import { peakMultipoles } from '../cosmology/cmb';
 import { GalaxySprites, type GalaxySpriteData } from '../render/galaxysprites';
+import { SurfaceView } from '../render/surface';
+import * as SKY from '../astro/sky';
 import { ClusterOrbits, bindingPressure, type Halo } from '../physics/clusterorbits';
 import * as SZ from '../astro/sz';
 import { GalaxyView } from '../render/galaxyview';
@@ -84,15 +86,19 @@ import { RNG, hash3 } from '../core/rng';
 import { AU, GYR, MPC, M_EARTH, M_JUPITER, MYR, R_EARTH, R_SUN, YEAR, DAY, G, M_SUN, LY } from '../core/constants';
 import { sig, commas, formatDistance, formatTime } from '../ui/hud';
 
-export type ScaleId = 'cosmos' | 'cluster' | 'galaxy' | 'system' | 'world';
+export type ScaleId = 'cosmos' | 'cluster' | 'galaxy' | 'system' | 'world' | 'surface';
 
-export const SCALE_ORDER: ScaleId[] = ['cosmos', 'cluster', 'galaxy', 'system', 'world'];
+export const SCALE_ORDER: ScaleId[] =
+  ['cosmos', 'cluster', 'galaxy', 'system', 'world', 'surface'];
 
 export interface StageCtx {
   cluster?: number;
   member?: number;
   star?: number;
   planet?: number;
+  /** Where on the world you are standing, degrees. */
+  lat?: number;
+  lon?: number;
   /**
    * 1 for the real Solar System rather than a generated one. It travels down
    * the ladder with everything else, so descending from it lands on the real
@@ -2622,7 +2628,11 @@ export class SystemStage extends Stage {
       let best = 0, bestScore = -Infinity;
       for (let i = 0; i < sys.planets.length; i++) {
         const p = sys.planets[i];
-        const s = (p.habitable ? 10 : 0) + (p.rings.length ? 3 : 0) + p.moons.length * 0.2
+        // Somewhere you could stand counts for a lot now that standing on it
+        // is the next rung down: a ringed gas giant is a fine thing to look at
+        // and a dead end to arrive at.
+        const s = (p.habitable ? 10 : 0) + (p.pressureBar <= 30 ? 6 : 0)
+          + (p.rings.length ? 3 : 0) + p.moons.length * 0.2
           + (p.oceanFraction > 0.2 ? 2 : 0);
         if (s > bestScore) { bestScore = s; best = i; }
       }
@@ -2886,7 +2896,25 @@ export class WorldStage extends Stage {
     return describePlanet(this.planet, this.title, sys.star);
   }
 
-  child(): Target | null { return null; }
+  child(): Target | null {
+    // Some worlds have no bottom. Below thirty bars of hydrogen the pressure
+    // and temperature climb without ever passing through a surface: the gas
+    // just gets denser until it is a liquid and then a metal, and there is
+    // nowhere to put your feet at any depth.
+    if (this.planet.pressureBar > 30) return null;
+    // Land where it is worth standing: in the tropics on a cold world, in the
+    // temperate latitudes on a warm one, and near the terminator of a tidally
+    // locked one, which is the only strip of it that is neither burning nor
+    // frozen.
+    const lat = this.planet.tidallyLocked ? 78
+      : this.planet.surfaceK < 260 ? 12
+        : this.planet.surfaceK > 330 ? 62 : 34;
+    return {
+      id: 'surface',
+      ctx: { ...this.ctx, lat, lon: 0 },
+      label: `the surface of ${this.planet.name}`,
+    };
+  }
 
   override dispose(): void {
     this.view.dispose(); this.starView.dispose(); this.sky.dispose(); super.dispose();
@@ -2894,6 +2922,243 @@ export class WorldStage extends Stage {
 }
 
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// SURFACE
+// ---------------------------------------------------------------------------
+
+/**
+ * Standing on it.
+ *
+ * The bottom of the ladder, and the only view in the simulation that looks
+ * outward instead of in. Everything overhead is the thing you have just come
+ * down through: the star at the angular size its distance gives it, the sky
+ * the colour its air makes it, the moons where their orbits put them, and,
+ * once the star is down, the galaxy you started from.
+ */
+export class SurfaceStage extends Stage {
+  readonly id = 'surface' as const;
+  title = 'Surface';
+  subtitle = '';
+  private planet!: Planet;
+  private air!: SKY.Atmosphere;
+  private view!: SurfaceView;
+  private sky!: SkyDome;
+  private lat = 0;
+  private starRGB: [number, number, number] = [1, 1, 1];
+  private starAngRad = 0.00465;
+  /** Seconds into the planet's solar day, and into its year. */
+  private dayS = 86400;
+  private yearS = 3.15e7;
+  private tilt = 0;
+  private locked = false;
+  private sunDir = new THREE.Vector3(0, 1, 0);
+  private altitude = 0;
+  private azimuth = 0;
+  private eyeH = 1.7;
+
+  build(): void {
+    const u = this.env.universe;
+    const g = u.galaxy(this.ctx.cluster ?? 0, this.ctx.member ?? 0);
+    const { system, seed } = this.ctx.real
+      ? { system: solarSystem(), seed: 0x50143 }
+      : u.system(g, this.ctx.star ?? 0);
+    const p = system.planets[this.ctx.planet ?? 0];
+    this.planet = p;
+    this.air = SKY.atmosphereOf(p);
+    this.lat = ((this.ctx.lat ?? 34) * Math.PI) / 180;
+    this.tilt = p.obliquity;
+    this.locked = p.tidallyLocked;
+    this.dayS = Math.abs(p.dayS) || p.periodS;
+    this.yearS = p.periodS;
+
+    const st = system.star;
+    const irr = Math.max(0.02, st.luminosityLsun / (p.au * p.au));
+    const rgb = blackbodyRGB(st.teff);
+    this.starRGB = [rgb[0] * irr, rgb[1] * irr, rgb[2] * irr];
+    this.starAngRad = SKY.angularRadius(st.radiusRsun * R_SUN, p.au * AU);
+
+    this.title = p.name;
+    const where = this.locked ? 'the day side'
+      : `${Math.abs(this.ctx.lat ?? 34).toFixed(0)}° ${(this.ctx.lat ?? 34) >= 0 ? 'north' : 'south'}`;
+    this.subtitle = p.pressureBar < 1e-3
+      ? `On the surface at ${where} · no air, and a black sky at noon`
+      : `On the surface at ${where} · ${sig(p.pressureBar, 2)} bar of ${p.atmosphere}`;
+
+    // A day in a couple of minutes, so the star visibly crosses the sky, and
+    // arrive in the middle of the morning rather than at midnight.
+    this.timeScale = this.dayS / 150;
+    this.simTime = this.dayS * 0.32;
+
+    // The stars behind the air. Dim, because they only win once the sky loses.
+    this.sky = new SkyDome({ brightness: 0.5, bandStrength: 0.012, seed, nebula: 0.006 });
+    this.sky.mesh.scale.setScalar(4e5);
+    this.root.add(this.sky.mesh);
+
+    // Relief scaled to the world: a big planet with an atmosphere weathers
+    // flat, a small airless one keeps everything it was ever hit by.
+    const relief = Math.max(30, Math.min(2600,
+      420 * Math.pow(p.radiusM / R_EARTH, -0.4) * (p.pressureBar > 0.05 ? 0.7 : 1.5)));
+    // Far enough past the horizon that its edge is over it and hidden. The
+    // horizon itself is set by the curvature and the eye height, and on a
+    // world this size it is close: under five kilometres from standing.
+    const horizon = SKY.horizonDistance(p.radiusM, this.eyeH);
+    const reach = Math.max(1200, horizon * 2.6 + relief * 8);
+
+    const cold = p.surfaceK < 273;
+    this.view = new SurfaceView({
+      atmosphere: this.air,
+      sunColor: this.starRGB,
+      starAngRad: this.starAngRad,
+      eyeHeight: this.eyeH,
+      relief, reach,
+      seed: p.surfaceSeed,
+      // The generator's two colours are the land and the sea - on Earth a
+      // green and a blue - so high ground is not the second colour but the
+      // first one with the life scraped off it.
+      low: p.color,
+      high: [
+        p.color[0] * 0.42 + 0.20, p.color[1] * 0.42 + 0.17, p.color[2] * 0.42 + 0.14,
+      ],
+      water: p.color2,
+      oceanFraction: p.oceanFraction,
+      // Snow on the tops, not halfway down them: at Earth's temperature the
+      // snowline is high, and only a frozen world is white all over.
+      ice: cold ? 0.8 : p.surfaceK < 295 ? 0.12 : 0,
+      detail: this.env.quality() > 0.6 ? 360 : 200,
+    });
+    this.root.add(this.view.group);
+    // Expose for the sunlit ground, which is the brightest thing that is
+    // reliably in frame: the sky can be anything from a black vacuum to ninety
+    // bars of opaque carbon dioxide, and exposing for it would make half the
+    // worlds in the simulation unviewable. The ground estimate is a mid-height
+    // star seen through this world's own air.
+    const flux = (this.starRGB[0] + this.starRGB[1] + this.starRGB[2]) / 3;
+    const albedo = (p.color[0] + p.color[1] + p.color[2]) / 3;
+    const through = SKY.transmittance(this.air, Math.PI / 4)[1];
+    const ground = Math.max(1e-4, albedo * flux * 0.62 * through);
+    this.view.setExposure(Math.min(90, 0.24 / ground));
+
+    this.aim();
+    const c = this.env.controls;
+    // A quarter turn from the star. Looking straight at a low sun gives you a
+    // silhouette and a washed-out sky; looking directly away from it gives you
+    // flat front lighting. Across it is where the shadows are, and where the
+    // sky is deepest - the blue of a clear sky peaks ninety degrees from the
+    // sun, which is the same fact a polarising filter is sold on.
+    // Aimed a little above the horizontal, because the sky is the thing worth
+    // looking at from down here and half a frame of ground is half a frame
+    // wasted. Orbiting still swings all the way round and down.
+    c.snapTo(new THREE.Vector3(0, 13, 0), 26, -this.azimuth + 1.9, 1.87);
+    c.drift = 0.012;
+    c.minDistance = 2.5;
+    c.maxDistance = Math.max(400, reach * 0.5);
+    const cam = this.env.engine.camera;
+    cam.near = 0.5; cam.far = 8e5;
+    cam.updateProjectionMatrix();
+  }
+
+  /** Put the star where the planet's rotation and orbit say it is. */
+  private aim(): void {
+    let alt: number, az: number;
+    if (this.locked) {
+      // One face to the star forever: it hangs at a fixed place in the sky,
+      // set by how far round from the substellar point you are standing.
+      alt = Math.PI / 2 - Math.abs(this.lat) * 1.15;
+      az = Math.PI;
+    } else {
+      const yearFrac = (this.simTime / this.yearS) % 1;
+      const dec = SKY.solarDeclination(this.tilt, yearFrac);
+      const h = SKY.hourAngle((this.simTime / this.dayS) % 1);
+      const p = SKY.altAz(this.lat, dec, h);
+      alt = p.altitude; az = p.azimuth;
+    }
+    this.altitude = alt;
+    this.azimuth = az;
+    // Azimuth is measured from north, turning east; the scene has y up and
+    // takes north as -z.
+    this.sunDir.set(
+      Math.cos(alt) * Math.sin(az), Math.sin(alt), -Math.cos(alt) * Math.cos(az),
+    ).normalize();
+    this.view?.setSun(this.sunDir, this.starRGB);
+
+    // The starfield is only worth anything once the sky stops drowning it.
+    const dark = 1 - Math.min(1, Math.max(0, (this.altitude + 0.14) / 0.30));
+    const thin = Math.exp(-this.air.betaR[1] * this.air.scaleHeightM * 6);
+    this.sky?.setBrightness(0.5 * Math.max(dark, thin));
+  }
+
+  update(dt: number): void {
+    this.simTime += dt * this.timeScale;
+    this.sky.mesh.position.copy(this.env.engine.camera.position);
+    this.aim();
+  }
+
+  override onResize(): void {}
+
+  rows(): Row[] {
+    const p = this.planet;
+    const t = SKY.transmittance(this.air, Math.PI / 2 - this.altitude);
+    const zen = SKY.opticalDepth(this.air, 0);
+    const deg = (this.altitude * 180) / Math.PI;
+    const dec = this.locked ? 0
+      : SKY.solarDeclination(this.tilt, (this.simTime / this.yearS) % 1);
+    const day = this.locked ? 1 : SKY.daylightFraction(this.lat, dec);
+    return [
+      { k: 'star altitude', v: `${deg >= 0 ? '+' : ''}${deg.toFixed(1)}`, u: '°', accent: true },
+      {
+        k: 'it is',
+        v: deg > 6 ? 'day' : deg > -0.5 ? 'sunrise or sunset'
+          : deg > -6 ? 'civil twilight' : deg > -18 ? 'astronomical twilight' : 'night',
+        accent: true,
+      },
+      { k: 'star width', v: ((2 * this.starAngRad * 180) / Math.PI).toFixed(2), u: '°' },
+      { k: 'air mass', v: this.air.pressurePa > 0 && deg > -1
+        ? SKY.airMass(this.air, Math.PI / 2 - this.altitude).toFixed(2) : '—' },
+      { k: 'sunlight left', v: `${(t[1] * 100).toFixed(deg > 5 ? 0 : 1)}%` },
+      { k: 'zenith depth τ', v: zen[1] < 0.01 ? sig(zen[1], 2) : zen[1].toFixed(3) },
+      { k: 'scale height', v: (this.air.scaleHeightM / 1000).toFixed(1), u: 'km' },
+      { k: 'horizon', v: (SKY.horizonDistance(p.radiusM, this.eyeH) / 1000).toFixed(2), u: 'km' },
+      { k: 'gravity', v: (p.gravity / 9.80665).toFixed(2), u: 'g' },
+      { k: 'day length', v: formatTime(this.dayS).join(' ') },
+      { k: 'daylight', v: this.locked ? 'always' : day <= 0 ? 'never' : `${(day * 24).toFixed(1)} h` },
+      { k: 'local time', v: this.locked ? 'no days here' : this.clock() },
+    ];
+  }
+
+  /** The time of day, on a clock with this planet's hours in it. */
+  private clock(): string {
+    const f = ((this.simTime / this.dayS) % 1 + 1) % 1;
+    const h = Math.floor(f * 24);
+    const m = Math.floor((f * 24 - h) * 60);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+
+  scaleLabel(): string {
+    const [v, u] = formatDistance(this.env.controls.distance);
+    return `${v} ${u}`;
+  }
+
+  /**
+   * Walk to a different latitude.
+   *
+   * The only navigation there is down here, and it is the one that changes
+   * what you see: from the tropics the star goes overhead, from the poles it
+   * scrapes the horizon and in winter it never comes up at all.
+   */
+  step(deltaDeg: number): number {
+    const next = Math.max(-88, Math.min(88, ((this.ctx.lat ?? 34) + deltaDeg)));
+    this.ctx.lat = next;
+    this.lat = (next * Math.PI) / 180;
+    return next;
+  }
+
+  child(): Target | null { return null; }
+
+  override dispose(): void {
+    this.view.dispose(); this.sky.dispose(); super.dispose();
+  }
+}
 
 export function describePlanet(p: Planet, _system: string, star?: Star): Inspection {
   const rows: Row[] = [
@@ -2957,6 +3222,7 @@ export function makeStage(id: ScaleId, env: StageEnv, ctx: StageCtx): Stage {
     case 'galaxy': return new GalaxyStage(env, ctx);
     case 'system': return new SystemStage(env, ctx);
     case 'world': return new WorldStage(env, ctx);
+    case 'surface': return new SurfaceStage(env, ctx);
   }
 }
 

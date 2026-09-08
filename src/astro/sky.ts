@@ -231,7 +231,11 @@ export function atmosphereOf(p: Planet): Atmosphere {
   // to five, and this does not model storms.
   const dustDepth = 0.55 * dryness * lift * Math.exp(-p.pressureBar / 4);
   // Cloud and water haze, which is grey rather than red and sits lower still.
-  const hazeDepth = 0.12 * p.cloudCover * Math.min(1, p.pressureBar);
+  // Weakly tied to cloud cover, because cloud is not haze: a sky can be half
+  // full of discrete cumulus and still be a deep blue between them, and
+  // driving the aerosol straight off the cover figure turns every temperate
+  // world a uniform milky white.
+  const hazeDepth = 0.055 * p.cloudCover * Math.min(1, p.pressureBar);
   const aerosolScaleHeightM = Math.max(400, H * 0.14);
   const depth = dustDepth + hazeDepth;
   const betaM = depth / Math.max(aerosolScaleHeightM, 1);

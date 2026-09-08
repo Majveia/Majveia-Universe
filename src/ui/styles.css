@@ -447,7 +447,9 @@ html, body {
 /* --- Scale ladder --------------------------------------------------------- */
 .ladder {
   left: var(--edge);
-  top: 50%;
+  /* Above centre: with six rungs on the ladder, dead centre puts the bottom
+     of it into the top of the readout on a short window. */
+  top: 45%;
   transform: translateY(-50%);
   display: grid;
   gap: 0;

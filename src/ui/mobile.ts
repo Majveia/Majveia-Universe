@@ -94,6 +94,8 @@ const COMMANDS: Command[] = [
   { key: 'KeyR', label: 'dark ages', rank: 12, live: at('cosmos') },
   { key: 'KeyC', label: 'cosmology', rank: 13, live: at('cosmos') },
 
+  { key: 'Comma', label: '↓ south', rank: 4, live: has('step') },
+  { key: 'Period', label: '↑ north', rank: 5, live: has('step') },
   { key: 'KeyL', label: 'deep field', rank: 20, live: has('observeDeepField'), on: lit('KeyL') },
   {
     key: 'Semicolon', label: 'microwave', rank: 22,

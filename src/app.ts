@@ -34,6 +34,7 @@ const SCALE_LABELS: Record<ScaleId, string> = {
   galaxy: 'Galaxy',
   system: 'System',
   world: 'World',
+  surface: 'Surface',
 };
 
 const SYLLABLES = ['ka', 'thu', 'ma', 'vei', 'or', 'lyn', 'dra', 'sel', 'ith', 'no', 'zar', 'ea', 'vos', 'ri'];
@@ -530,7 +531,14 @@ export class App {
     const aimed = usePointer && this.pointerActive
       ? this.stage.child(this.pointer) : null;
     const t = aimed ?? this.stage.child();
-    if (!t) { this.flash('this is the smallest scale'); return; }
+    if (!t) {
+      this.flash(this.stage.id === 'world'
+        ? 'there is no surface here — it is gas all the way down'
+        : this.stage.id === 'surface'
+          ? 'this is the bottom: you are standing on it'
+          : 'this is the smallest scale');
+      return;
+    }
     this.travel(t);
   }
 
@@ -816,6 +824,18 @@ export class App {
               ? 'deep field · 1 Gpc · the cluster is lensing what is behind it'
               : 'back to the cluster');
           } else this.flash('deep fields are observed from a cluster');
+          break;
+        }
+        case 'Comma': case 'Period': {
+          // Walk north or south. It is the only navigation on the ground and
+          // it is the one that changes what you see: from the tropics the star
+          // passes overhead, from near the pole it scrapes the horizon and for
+          // half the year it does not come up at all.
+          const s2 = this.stage as unknown as { step?: (d: number) => number };
+          if (!s2.step) { this.flash('there is nowhere to walk from up here'); break; }
+          const lat = s2.step(code === 'Period' ? 8 : -8);
+          this.flash(`${Math.abs(lat).toFixed(0)}° ${lat >= 0 ? 'north' : 'south'}`);
+          this.rebuildReadout();
           break;
         }
         case 'Semicolon': {
@@ -1411,6 +1431,7 @@ const HELP_HTML = `
       <dt>V</dt><dd>tint by peculiar velocity</dd>
       <dt>L</dt><dd>observe a cluster as a deep field</dd>
       <dt>;</dt><dd>observe a cluster in the microwave · 100 · 143 · 217 · 353 GHz</dd>
+      <dt>, .</dt><dd>walk south or north, on a surface</dd>
       <dt>K</dt><dd>show lensing critical curves</dd>
       <dt>M</dt><dd>collide this galaxy with another</dd>
       <dt>G</dt><dd>merge two black holes</dd>
