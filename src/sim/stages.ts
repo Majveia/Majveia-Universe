@@ -42,7 +42,7 @@ import {
 } from '../physics/gwaves';
 import { peakMultipoles } from '../cosmology/cmb';
 import { GalaxySprites, type GalaxySpriteData } from '../render/galaxysprites';
-import { SurfaceView } from '../render/surface';
+import { SurfaceView, type MoonDisc } from '../render/surface';
 import * as SKY from '../astro/sky';
 import { ClusterOrbits, bindingPressure, type Halo } from '../physics/clusterorbits';
 import * as SZ from '../astro/sz';
@@ -2956,6 +2956,8 @@ export class SurfaceStage extends Stage {
   private altitude = 0;
   private azimuth = 0;
   private eyeH = 1.7;
+  /** The display gain everything in this scene is drawn at. */
+  private exposure = 1;
 
   build(): void {
     const u = this.env.universe;
@@ -3026,6 +3028,7 @@ export class SurfaceStage extends Stage {
       // snowline is high, and only a frozen world is white all over.
       ice: cold ? 0.8 : p.surfaceK < 295 ? 0.12 : 0,
       detail: this.env.quality() > 0.6 ? 360 : 200,
+      moons: p.moons.length,
     });
     this.root.add(this.view.group);
     // Expose for the sunlit ground, which is the brightest thing that is
@@ -3037,7 +3040,8 @@ export class SurfaceStage extends Stage {
     const albedo = (p.color[0] + p.color[1] + p.color[2]) / 3;
     const through = SKY.transmittance(this.air, Math.PI / 4)[1];
     const ground = Math.max(1e-4, albedo * flux * 0.62 * through);
-    this.view.setExposure(Math.min(90, 0.24 / ground));
+    this.exposure = Math.min(90, 0.24 / ground);
+    this.view.setExposure(this.exposure);
 
     this.aim();
     const c = this.env.controls;
@@ -3092,6 +3096,71 @@ export class SurfaceStage extends Stage {
     this.simTime += dt * this.timeScale;
     this.sky.mesh.position.copy(this.env.engine.camera.position);
     this.aim();
+    this.placeMoons();
+  }
+
+  /**
+   * Put the moons where they are, at the size they look, in the phase they are
+   * in.
+   *
+   * Their sky positions come out of the same spherical triangle the star's
+   * does. A moon's hour angle is the star's plus how far round its own orbit
+   * it has gone, which is why a moon rises later every night - fifty minutes a
+   * night for ours - and its declination swings with the tilt of its orbit.
+   * The phase is not chosen: it is the angle between the star and the moon as
+   * seen from here, and it comes out full at opposition and new at conjunction
+   * because that is what those words mean.
+   */
+  private placeMoons(): void {
+    if (!this.planet.moons.length) return;
+    const out: MoonDisc[] = [];
+    const dir = new THREE.Vector3();
+    const right = new THREE.Vector3();
+    const up = new THREE.Vector3();
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    const alt = new THREE.Vector3(1, 0, 0);
+    for (const m of this.planet.moons) {
+      const period = 2 * Math.PI * Math.sqrt(m.a ** 3 / (G * this.planet.massKg));
+      const orbit = this.simTime / period + m.phase / (2 * Math.PI);
+      // Where it stands over the equator, and how far round the sky from noon.
+      const dec = m.i * Math.sin(2 * Math.PI * orbit);
+      const h = SKY.hourAngle((this.simTime / this.dayS - orbit) % 1);
+      const p = SKY.altAz(this.lat, dec, h);
+      dir.set(
+        Math.cos(p.altitude) * Math.sin(p.azimuth), Math.sin(p.altitude),
+        -Math.cos(p.altitude) * Math.cos(p.azimuth),
+      );
+      // Below the horizon is below the horizon.
+      if (p.altitude < -m.radiusM / m.a) continue;
+
+      // The disc's own frame, with +z pointing back at the observer.
+      right.copy(Math.abs(dir.y) > 0.95 ? alt : worldUp).cross(dir).normalize();
+      up.copy(dir).cross(right).normalize();
+      const light: [number, number, number] = [
+        this.sunDir.dot(right), this.sunDir.dot(up), -this.sunDir.dot(dir),
+      ];
+
+      // The star's light reaching it, and what is left of that on the way to
+      // the ground: a moon on the horizon is as dimmed and reddened as the
+      // star would be there.
+      const t = SKY.transmittance(this.air, Math.PI / 2 - p.altitude);
+      // A Lambertian disc reflecting a given irradiance has radiance
+      // albedo/pi times it - and then the same display gain as everything
+      // else in the scene, or the moon is drawn at raw radiance next to a sky
+      // that has been exposed, and vanishes.
+      const g = (m.albedo / Math.PI) * this.exposure;
+      out.push({
+        dir: [dir.x, dir.y, dir.z],
+        angRad: Math.atan2(m.radiusM, m.a),
+        light,
+        color: [
+          m.color[0] * g * this.starRGB[0] * t[0],
+          m.color[1] * g * this.starRGB[1] * t[1],
+          m.color[2] * g * this.starRGB[2] * t[2],
+        ],
+      });
+    }
+    this.view.setMoons(out);
   }
 
   override onResize(): void {}

@@ -323,6 +323,79 @@ void main() {
 }
 `;
 
+
+/**
+ * Moons.
+ *
+ * A disc at the angular size its distance gives it, lit from wherever the star
+ * actually is. The phase is not a texture or a mask: each fragment of the disc
+ * is a point on a sphere, its normal is reconstructed from where it sits on
+ * that disc, and it is lit or not according to whether that normal faces the
+ * star. So the terminator is a real ellipse that opens and closes over the
+ * month, the horns point away from the star the way they do, and a moon near
+ * the star in the sky is a thin crescent because it genuinely is one.
+ */
+const MOON_VERT = /* glsl */ `
+precision highp float;
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
+uniform float uDist;
+in vec3 position;      // quad corner in [-1,1]
+in vec3 aDir;          // unit vector to the moon, local frame
+in float aAng;         // angular radius, radians
+in vec3 aLight;        // star direction in the disc's own frame
+in vec3 aColor;        // colour, already dimmed by the air it is seen through
+out vec2 vUv;
+out vec3 vLight;
+out vec3 vColor;
+void main() {
+  vUv = position.xy;
+  vLight = aLight;
+  vColor = aColor;
+  vec3 f = normalize(aDir);
+  vec3 r = normalize(cross(abs(f.y) > 0.95 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0), f));
+  vec3 u = cross(f, r);
+  float half_ = uDist * tan(max(aAng, 1e-6));
+  vec3 p = f * uDist + r * (position.x * half_) + u * (position.y * half_);
+  mat4 mv = modelViewMatrix;
+  mv[3].xyz = vec3(0.0);
+  gl_Position = projectionMatrix * mv * vec4(p, 1.0);
+}
+`;
+
+const MOON_FRAG = /* glsl */ `
+precision highp float;
+in vec2 vUv;
+in vec3 vLight;
+in vec3 vColor;
+out vec4 fragColor;
+void main() {
+  float r2 = dot(vUv, vUv);
+  if (r2 > 1.0) discard;
+  // The point of the sphere this pixel is looking at, and whether the star
+  // can see it too.
+  vec3 n = vec3(vUv, sqrt(max(0.0, 1.0 - r2)));
+  float lit = max(0.0, dot(n, normalize(vLight)));
+  // Regolith backscatters: a full moon is far brighter than twice a half one,
+  // which Lambert does not predict. This is the cheap version of that.
+  lit = pow(lit, 0.62);
+  float edge = smoothstep(1.0, 0.985, sqrt(r2));
+  fragColor = vec4(vColor * lit * edge, 1.0);
+}
+`;
+
+/** One moon, as the sky sees it. */
+export interface MoonDisc {
+  /** Unit vector toward it in the local frame, y up. */
+  dir: [number, number, number];
+  /** Angular radius, radians. */
+  angRad: number;
+  /** Star direction in the disc's frame: x right, y up, z toward the viewer. */
+  light: [number, number, number];
+  /** Colour and brightness, already attenuated by the air in the way. */
+  color: [number, number, number];
+}
+
 export interface SurfaceOptions {
   atmosphere: Atmosphere;
   /** Star irradiance above the atmosphere, linear RGB, 1 = Earth's sunlight. */
@@ -346,14 +419,23 @@ export interface SurfaceOptions {
   ice: number;
   /** Triangles across the terrain disc. */
   detail?: number;
+  /** How many moons the sky may need to hold. */
+  moons?: number;
 }
 
 export class SurfaceView {
   readonly group = new THREE.Group();
   readonly sky: THREE.Mesh;
   readonly ground: THREE.Mesh;
+  readonly moons?: THREE.Mesh;
   private skyMat: THREE.RawShaderMaterial;
   private groundMat: THREE.RawShaderMaterial;
+  private moonMat?: THREE.RawShaderMaterial;
+  private moonGeo?: THREE.InstancedBufferGeometry;
+  private moonDir?: Float32Array;
+  private moonAng?: Float32Array;
+  private moonLight?: Float32Array;
+  private moonColor?: Float32Array;
   private a: Atmosphere;
 
   constructor(o: SurfaceOptions) {
@@ -459,6 +541,68 @@ export class SurfaceView {
     this.ground = new THREE.Mesh(g, this.groundMat);
     this.ground.frustumCulled = false;
     this.group.add(this.ground);
+
+    const nm = o.moons ?? 0;
+    if (nm > 0) {
+      this.moonDir = new Float32Array(nm * 3);
+      this.moonAng = new Float32Array(nm);
+      this.moonLight = new Float32Array(nm * 3);
+      this.moonColor = new Float32Array(nm * 3);
+      const mg = new THREE.InstancedBufferGeometry();
+      mg.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+        -1, -1, 0, 1, -1, 0, 1, 1, 0, -1, -1, 0, 1, 1, 0, -1, 1, 0,
+      ]), 3));
+      const dyn = (arr: Float32Array, n: number) => {
+        const a2 = new THREE.InstancedBufferAttribute(arr, n);
+        a2.setUsage(THREE.DynamicDrawUsage);
+        return a2;
+      };
+      mg.setAttribute('aDir', dyn(this.moonDir, 3));
+      mg.setAttribute('aAng', dyn(this.moonAng, 1));
+      mg.setAttribute('aLight', dyn(this.moonLight, 3));
+      mg.setAttribute('aColor', dyn(this.moonColor, 3));
+      mg.instanceCount = nm;
+      this.moonGeo = mg;
+      this.moonMat = new THREE.RawShaderMaterial({
+        vertexShader: MOON_VERT,
+        fragmentShader: MOON_FRAG,
+        glslVersion: THREE.GLSL3,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: false,
+        // The disc's basis is built from the direction *away* from the eye, so
+        // its triangles wind the wrong way round when seen from the eye. Same
+        // trap as the ground; same answer.
+        side: THREE.DoubleSide,
+        uniforms: { uDist: { value: 3e5 } },
+      });
+      const mesh = new THREE.Mesh(mg, this.moonMat);
+      mesh.frustumCulled = false;
+      // After the sky, before the ground: the air is behind them and the
+      // landscape in front.
+      mesh.renderOrder = -70;
+      (this as { moons?: THREE.Mesh }).moons = mesh;
+      this.group.add(mesh);
+    }
+  }
+
+  /** Put this frame's moons in the sky. */
+  setMoons(list: MoonDisc[]): void {
+    if (!this.moonGeo || !this.moonDir || !this.moonAng
+      || !this.moonLight || !this.moonColor) return;
+    const n = Math.min(list.length, this.moonAng.length);
+    for (let i = 0; i < n; i++) {
+      const m = list[i];
+      this.moonDir.set(m.dir, i * 3);
+      this.moonAng[i] = m.angRad;
+      this.moonLight.set(m.light, i * 3);
+      this.moonColor.set(m.color, i * 3);
+    }
+    this.moonGeo.instanceCount = n;
+    for (const k of ['aDir', 'aAng', 'aLight', 'aColor']) {
+      (this.moonGeo.getAttribute(k) as THREE.BufferAttribute).needsUpdate = true;
+    }
   }
 
   /** Point the star, in the local frame where +y is up. */
@@ -495,5 +639,7 @@ export class SurfaceView {
     this.ground.geometry.dispose();
     this.skyMat.dispose();
     this.groundMat.dispose();
+    this.moonGeo?.dispose();
+    this.moonMat?.dispose();
   }
 }
