@@ -5,6 +5,7 @@ import {
   illuminatedFraction, umbraLength, umbraRadiusAt, inEclipse, eclipsedFraction,
   synodicPeriod, bestMoon,
 } from '../src/astro/companion';
+import * as COMP from '../src/astro/companion';
 import type { Moon, Planet } from '../src/astro/planets';
 import { R_SUN, AU, DAY, DEG, M_EARTH, R_EARTH } from '../src/core/constants';
 
@@ -425,5 +426,96 @@ describe('the whole thing holds together for made-up systems', () => {
 
   it('measures mass in earths without complaint', () => {
     expect(moonAsWorld(GANYMEDE, JUPITER, 1, 0).massKg / M_EARTH).toBeCloseTo(0.0248, 3);
+  });
+});
+
+describe('which plane a moon orbits in', () => {
+  const R_E = 6.371e6, M_E = 5.97217e24;
+  const R_J = 7.1492e7, M_J = 1.898125e27;
+  const M_SUN_KG = 1.98847e30;
+  const AU_M = 1.495978707e11;
+  const DEG_ = Math.PI / 180;
+
+  it('gets the oblateness of a spinning world roughly right', () => {
+    // Measured: Earth 1.08e-3, Jupiter 1.475e-2, Saturn 1.63e-2. This is high
+    // by a factor of a few, which is the price of not knowing how centrally
+    // condensed the world is - and it enters the Laplace radius as a fifth
+    // root, so a factor of three there is a quarter here.
+    const e = COMP.oblatenessJ2(M_E, R_E, 86164);
+    expect(e).toBeGreaterThan(5e-4);
+    expect(e).toBeLessThan(5e-3);
+    const j = COMP.oblatenessJ2(M_J, R_J, 9.925 * 3600);
+    expect(j).toBeGreaterThan(1e-2);
+    expect(j).toBeLessThan(1e-1);
+    // A faster spin bulges more.
+    expect(COMP.oblatenessJ2(M_E, R_E, 43200)).toBeGreaterThan(e);
+  });
+
+  it('does not report a shape for something that is not spinning', () => {
+    expect(COMP.oblatenessJ2(M_E, R_E, 0)).toBe(0);
+    expect(COMP.oblatenessJ2(0, R_E, 86164)).toBe(0);
+    // And caps at break-up rather than running away.
+    expect(COMP.oblatenessJ2(M_E, R_E, 1)).toBeLessThanOrEqual(0.25);
+  });
+
+  it('puts the Laplace radius where the two torques actually balance', () => {
+    // Published: about ten Earth radii, and about thirty for Jupiter.
+    const re = COMP.laplaceRadius(1.08e-3, R_E, AU_M, M_E, M_SUN_KG) / R_E;
+    expect(re).toBeGreaterThan(7);
+    expect(re).toBeLessThan(13);
+    const rj = COMP.laplaceRadius(1.475e-2, R_J, 5.204 * AU_M, M_J, M_SUN_KG) / R_J;
+    expect(rj).toBeGreaterThan(25);
+    expect(rj).toBeLessThan(40);
+  });
+
+  it('has no Laplace radius for a world with no bulge or no star', () => {
+    expect(COMP.laplaceRadius(0, R_E, AU_M, M_E, M_SUN_KG)).toBe(Infinity);
+    expect(COMP.laplaceRadius(1e-3, R_E, AU_M, M_E, 0)).toBe(Infinity);
+  });
+
+  it('holds a close moon in the equator and lets a far one follow the orbit', () => {
+    const rL = COMP.laplaceRadius(1.08e-3, R_E, AU_M, M_E, M_SUN_KG);
+    const eps = 23.44 * DEG_;
+    // Deep inside: the planet's bulge wins and the plane is the equator.
+    expect(COMP.laplaceTilt(eps, rL / 20, rL)).toBeLessThan(0.02 * DEG_);
+    // Far outside: the star's tide wins and the plane is the orbit.
+    expect(COMP.laplaceTilt(eps, rL * 20, rL)).toBeCloseTo(eps, 4);
+    // And it only ever moves one way as you go out.
+    let prev = -1;
+    for (let k = 1; k <= 60; k++) {
+      const t = COMP.laplaceTilt(eps, (rL * k) / 10, rL);
+      expect(t).toBeGreaterThanOrEqual(prev - 1e-12);
+      prev = t;
+    }
+  });
+
+  it('puts our own Moon on the ecliptic and the Galileans on Jupiter equator', () => {
+    // The fact that decides how often eclipses happen. The Moon is six times
+    // outside Earth's Laplace radius, so it follows the ecliptic to within its
+    // own five degrees - and eclipses come in seasons twice a year. Every
+    // Galilean is well inside Jupiter's, so they sit in its equator to a
+    // fraction of a degree and are eclipsed on almost every orbit.
+    const rE = COMP.laplaceRadius(1.08e-3, R_E, AU_M, M_E, M_SUN_KG);
+    const moon = COMP.laplaceTilt(23.44 * DEG_, 3.844e8, rE);
+    expect(moon / DEG_).toBeGreaterThan(23);
+    expect(moon / DEG_).toBeLessThan(23.45);
+
+    const rJ = COMP.laplaceRadius(1.475e-2, R_J, 5.204 * AU_M, M_J, M_SUN_KG);
+    const eps = 3.13 * DEG_;
+    for (const a of [4.217e8, 6.709e8, 1.070e9]) {
+      expect(COMP.laplaceTilt(eps, a, rJ) / DEG_).toBeLessThan(0.1);
+    }
+    // Callisto is the one far enough out to be visibly tipped, and it is - by
+    // a few tenths of a degree, which is what is measured.
+    const callisto = COMP.laplaceTilt(eps, 1.883e9, rJ) / DEG_;
+    expect(callisto).toBeGreaterThan(0.1);
+    expect(callisto).toBeLessThan(1.0);
+  });
+
+  it('has no plane to argue about when the world is upright', () => {
+    const rL = COMP.laplaceRadius(1.08e-3, R_E, AU_M, M_E, M_SUN_KG);
+    for (const a of [rL / 10, rL, rL * 10]) {
+      expect(COMP.laplaceTilt(0, a, rL)).toBeCloseTo(0, 12);
+    }
   });
 });

@@ -153,6 +153,7 @@ out vec4 fragColor;
 uniform float uExposure;
 uniform float uStarAngRad;
 uniform vec3 uStarDisc;
+uniform vec4 uOcc;     // what is in front of the star: direction, angular radius
 uniform float uMulti;
 ${ATMO_GLSL}
 
@@ -169,6 +170,14 @@ void main() {
     float u = clamp(ang / uStarAngRad, 0.0, 2.0);
     float disc = smoothstep(1.06, 0.94, u);
     float limb = 0.42 + 0.58 * sqrt(max(0.0, 1.0 - u * u * 0.96));
+    // And whatever is standing in front of it takes a bite out of the disc
+    // rather than merely dimming it. This is what makes an eclipse look like
+    // one: the sun goes to a crescent, and the crescent thins from the limb
+    // inward, which is why the light hangs on and then falls off a cliff.
+    if (uOcc.w > 0.0) {
+      float sepO = acos(clamp(dot(d, uOcc.xyz), -1.0, 1.0));
+      disc *= smoothstep(-0.05, 0.05, (sepO - uOcc.w) / uStarAngRad);
+    }
     inscatter += uStarDisc * disc * limb * transmit;
   }
 
@@ -427,12 +436,12 @@ in float aAng;         // angular radius, radians
 in vec3 aLight;        // star direction in the disc's own frame
 in vec3 aColor;        // colour, already dimmed by the air it is seen through
 in vec4 aStyle;        // banded?, quad padding, seed, ring opacity
-in vec3 aRing;         // inner and outer radius in body radii, sin of the opening
+in vec4 aRing;         // ring inner, outer, sin of the opening; then the eclipse
 out vec2 vUv;
 out vec3 vLight;
 out vec3 vColor;
 out vec4 vStyle;
-out vec3 vRing;
+out vec4 vRing;
 void main() {
   // The quad is padded out past the body itself when there are rings to fit
   // into it - Saturn's reach two and a third times its own radius.
@@ -458,7 +467,8 @@ in vec2 vUv;
 in vec3 vLight;
 in vec3 vColor;
 in vec4 vStyle;
-in vec3 vRing;
+in vec4 vRing;
+uniform vec3 uHalo;
 out vec4 fragColor;
 
 float hash1(float n) { return fract(sin(n) * 43758.5453); }
@@ -528,8 +538,37 @@ void main() {
     any = max(any, lit * edge);
   }
 
-  if (any < 1e-5) discard;
-  fragColor = vec4(col, 1.0);
+  // ---- the ring of refracted light, when this body is in front of the star
+  //
+  // The reason a totally eclipsed moon is not black but copper. The body's
+  // disc blocks the star, but the shell of air around it does not: light
+  // grazing through bends inward far enough to reach you, and on the way it
+  // crosses the entire depth of that atmosphere twice. Rayleigh scattering
+  // takes the blue out of it, which is the same fact as a red sunset, so what
+  // arrives is deep red - and it arrives from every direction round the limb
+  // at once, which is why it is a ring.
+  //
+  // The width is honestly exaggerated. A scale height over a planetary radius
+  // is a few parts in ten thousand, and at any size this disc is ever drawn
+  // that is far under a pixel.
+  if (vRing.w > 0.0) {
+    float w = max(vStyle.y * 0.004, 0.006);
+    float rim = exp(-pow((r - 1.0) / w, 2.0));
+    // Brightest where the star is closest to that part of the limb, so the
+    // ring is not uniform until the alignment is dead centre.
+    float side = 0.6 + 0.4 * max(0.0, dot(normalize(vUv + 1e-6), normalize(L.xy + 1e-6)));
+    float a = rim * vRing.w * side;
+    col += uHalo * a;
+    any = max(any, a);
+  }
+
+  // How much of this pixel the body's own disc covers. This is the alpha, and
+  // it is what makes an unlit body still block what is behind it: a new moon
+  // is not transparent, and Jupiter in front of the sun is a hole in the sky
+  // with the stars gone from it, not a pane of glass.
+  float solid = r2 <= 1.0 ? smoothstep(1.0, 0.985, r) : 0.0;
+  if (any < 1e-5 && solid < 1e-4) discard;
+  fragColor = vec4(col, solid);
 }
 `;
 
@@ -551,6 +590,13 @@ export interface MoonDisc {
   seed?: number;
   /** Rings: inner and outer radius in body radii, and how open they are. */
   ring?: { inner: number; outer: number; sinOpening: number; opacity: number };
+  /**
+   * How much of the star this body is hiding, and how thick a rim of its air
+   * refracts light round the edge. Zero for anything without an atmosphere -
+   * a bare rock in front of a star leaves a black hole and nothing else.
+   */
+  halo?: number;
+  haloWidth?: number;
 }
 
 export interface SkyPoint {
@@ -654,6 +700,7 @@ export class SurfaceView {
         ...shared(),
         uStarAngRad: { value: Math.max(o.starAngRad, 1e-5) },
         uStarDisc: { value: new THREE.Vector3(...o.sunColor).multiplyScalar(90) },
+        uOcc: { value: new THREE.Vector4(0, 1, 0, 0) },
       },
     });
     this.sky = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), this.skyMat);
@@ -726,7 +773,7 @@ export class SurfaceView {
       this.moonLight = new Float32Array(nm * 3);
       this.moonColor = new Float32Array(nm * 3);
       this.moonStyle = new Float32Array(nm * 4);
-      this.moonRing = new Float32Array(nm * 3);
+      this.moonRing = new Float32Array(nm * 4);
       const mg = new THREE.InstancedBufferGeometry();
       mg.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
         -1, -1, 0, 1, -1, 0, 1, 1, 0, -1, -1, 0, 1, 1, 0, -1, 1, 0,
@@ -741,7 +788,7 @@ export class SurfaceView {
       mg.setAttribute('aLight', dyn(this.moonLight, 3));
       mg.setAttribute('aColor', dyn(this.moonColor, 3));
       mg.setAttribute('aStyle', dyn(this.moonStyle, 4));
-      mg.setAttribute('aRing', dyn(this.moonRing, 3));
+      mg.setAttribute('aRing', dyn(this.moonRing, 4));
       mg.instanceCount = nm;
       this.moonGeo = mg;
       this.moonMat = new THREE.RawShaderMaterial({
@@ -749,20 +796,30 @@ export class SurfaceView {
         fragmentShader: MOON_FRAG,
         glslVersion: THREE.GLSL3,
         transparent: true,
-        blending: THREE.AdditiveBlending,
+        // Premultiplied alpha rather than plain addition, so one material can
+        // do both jobs: inside the disc it replaces what is behind it, and
+        // outside - the rings, the ring of refracted light - it adds to it.
+        blending: THREE.CustomBlending,
+        blendSrc: THREE.OneFactor,
+        blendDst: THREE.OneMinusSrcAlphaFactor,
         depthWrite: false,
         depthTest: false,
         // The disc's basis is built from the direction *away* from the eye, so
         // its triangles wind the wrong way round when seen from the eye. Same
         // trap as the ground; same answer.
         side: THREE.DoubleSide,
-        uniforms: { uDist: { value: 3e5 } },
+        uniforms: { uDist: { value: 3e5 }, uHalo: { value: new THREE.Vector3() } },
       });
       const mesh = new THREE.Mesh(mg, this.moonMat);
       mesh.frustumCulled = false;
-      // After the sky, before the ground: the air is behind them and the
-      // landscape in front.
-      mesh.renderOrder = -70;
+      // The order in this sky is the order light meets you in.
+      //
+      // Stars first, then the wanderers among them, then the discs - which
+      // occult both, because they are in front of them. The air comes after
+      // all three, adding its own scattered light over the lot, which is why a
+      // moon in a daylit sky is washed out rather than cut out of it. Then the
+      // ground, in front of everything.
+      mesh.renderOrder = -86;
       (this as { moons?: THREE.Mesh }).moons = mesh;
       this.group.add(mesh);
     }
@@ -799,9 +856,9 @@ export class SurfaceView {
       });
       const pmesh = new THREE.Mesh(pg, this.pointMat);
       pmesh.frustumCulled = false;
-      // Behind the moons, in front of the sky: a planet is further off than
-      // any of them and none of it is ever in front of anything.
-      pmesh.renderOrder = -72;
+      // Behind the discs, in front of the starfield: a planet is further away
+      // than any moon and it is never in front of one.
+      pmesh.renderOrder = -88;
       this.group.add(pmesh);
     }
   }
@@ -843,9 +900,9 @@ export class SurfaceView {
       this.moonStyle.set(
         [m.banded ? 1 : 0, pad, m.seed ?? 0, m.ring?.opacity ?? 0], i * 4,
       );
-      this.moonRing.set(
-        m.ring ? [m.ring.inner, m.ring.outer, m.ring.sinOpening] : [0, 0, 1], i * 3,
-      );
+      this.moonRing.set([
+        m.ring?.inner ?? 0, m.ring?.outer ?? 0, m.ring?.sinOpening ?? 1, m.halo ?? 0,
+      ], i * 4);
     }
     this.moonGeo.instanceCount = n;
     for (const k of ['aDir', 'aAng', 'aLight', 'aColor', 'aStyle', 'aRing']) {
@@ -853,7 +910,14 @@ export class SurfaceView {
     }
   }
 
-  /** Point the star, in the local frame where +y is up. */
+  /**
+   * Point the star, in the local frame where +y is up.
+   *
+   * The colour here is the light that is actually arriving - dimmed if
+   * something is in front of it - because that is what lights the sky and the
+   * ground. The star's own disc is set separately and undimmed, since the
+   * geometry of the bite is what takes its light away.
+   */
   setSun(dir: THREE.Vector3, color: [number, number, number]): void {
     for (const m of [this.skyMat, this.groundMat]) {
       (m.uniforms.uSunDir.value as THREE.Vector3).copy(dir).normalize();
@@ -861,6 +925,23 @@ export class SurfaceView {
     }
     (this.skyMat.uniforms.uStarDisc.value as THREE.Vector3)
       .set(...color).multiplyScalar(90);
+  }
+
+  /** The star's own disc, at the brightness it has when nothing is over it. */
+  setStarDisc(color: [number, number, number]): void {
+    (this.skyMat.uniforms.uStarDisc.value as THREE.Vector3)
+      .set(...color).multiplyScalar(90);
+  }
+
+  /** What is in front of the star, if anything: where, and how wide. */
+  setOcculter(dir: [number, number, number] | null, angRad: number): void {
+    const v = this.skyMat.uniforms.uOcc.value as THREE.Vector4;
+    if (!dir) v.set(0, 1, 0, 0); else v.set(dir[0], dir[1], dir[2], angRad);
+  }
+
+  /** The colour of the light that bends round an occulting body's limb. */
+  setHalo(rgb: [number, number, number]): void {
+    if (this.moonMat) (this.moonMat.uniforms.uHalo.value as THREE.Vector3).set(...rgb);
   }
 
   setExposure(v: number): void {

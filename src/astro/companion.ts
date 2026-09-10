@@ -192,6 +192,69 @@ export function moonAsWorld(
 // ---------------------------------------------------------------------------
 
 /** Angular radius of the parent from the moon's centre, radians. */
+/**
+ * The oblateness of a spinning world, as the J2 of its gravity field.
+ *
+ * A rotating body is not a sphere - it bulges at the equator, because the
+ * material there is being flung outward and only gravity is holding it in. How
+ * much it bulges is set by the ratio of that centrifugal effect at the surface
+ * to the gravity holding it together, and J2 is very nearly half of it for
+ * anything not wildly centrally condensed. Earth comes out at 1.7e-3 against a
+ * measured 1.08e-3, Jupiter at 4e-2 against 1.5e-2: high, but J2 enters the
+ * radius below as a fifth root, so a factor of three here is a quarter there.
+ */
+export function oblatenessJ2(massKg: number, radiusM: number, rotationS: number): number {
+  const p = Math.abs(rotationS);
+  if (!(p > 0) || !(massKg > 0) || !(radiusM > 0)) return 0;
+  const omega = (2 * Math.PI) / p;
+  const q = (omega * omega * radiusM ** 3) / (G * massKg);
+  // Runaway rotation is not a shape, it is a break-up: cap it well short.
+  return Math.min(0.25, 0.5 * q);
+}
+
+/**
+ * The Laplace radius: where a moon stops caring about its planet's equator and
+ * starts caring about its planet's orbit.
+ *
+ * Two torques are fighting over the plane a moon orbits in. Close in, the
+ * planet's equatorial bulge wins and drags the orbit into the equator. Far
+ * out, the star's tide wins and drags it into the planet's own orbital plane.
+ * They are equal at this radius, and it is the reason the answer to "does a
+ * moon orbit over the equator" is different for Jupiter than for us.
+ *
+ * Ten Earth radii for Earth - and our Moon is at sixty, which is why it follows
+ * the ecliptic to within five degrees and why eclipses come in seasons twice a
+ * year. Thirty-two Jupiter radii for Jupiter - and every Galilean is inside
+ * that, which is why they sit in its equator to a fraction of a degree and are
+ * eclipsed on almost every orbit.
+ */
+export function laplaceRadius(
+  j2: number, planetRadiusM: number, planetAuM: number,
+  planetMassKg: number, starMassKg: number,
+): number {
+  if (!(j2 > 0) || !(planetMassKg > 0) || !(starMassKg > 0)) return Infinity;
+  const r5 = 2 * j2 * planetRadiusM * planetRadiusM * planetAuM ** 3
+    * (planetMassKg / starMassKg);
+  return r5 > 0 ? Math.pow(r5, 0.2) : Infinity;
+}
+
+/**
+ * The tilt of a moon's Laplace plane out of its planet's equator.
+ *
+ * Zero deep inside the Laplace radius, the full obliquity far outside it, and
+ * a smooth handover in between - which is the actual solution to the balance
+ * of the two torques, not an interpolation put in by hand.
+ */
+export function laplaceTilt(obliquity: number, aM: number, laplaceM: number): number {
+  if (!(aM > 0)) return 0;
+  if (!Number.isFinite(laplaceM)) return 0;
+  const k = 2 * Math.pow(laplaceM / aM, 5);
+  if (!Number.isFinite(k)) return 0;
+  const num = Math.sin(2 * obliquity);
+  const den = Math.cos(2 * obliquity) + k;
+  return 0.5 * Math.atan2(num, den);
+}
+
 export function parentAngularRadius(parentRadiusM: number, aM: number): number {
   return Math.atan2(parentRadiusM, Math.max(aM, 1));
 }

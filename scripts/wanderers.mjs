@@ -137,19 +137,25 @@ for (const r of ecl) console.log(r.map((x) => String(x).padEnd(12)).join(''));
 
 // Pictures.
 const shots = [
-  ['/tmp/sky-earth.png', { ...R, planet: 2, lat: 34 }, 0.79],
+  ['/tmp/sky-earth.png', { ...R, planet: 2, lat: 34 }, 0.30],
   ['/tmp/sky-europa.png', { ...R, planet: 4, moon: 1, lat: 26 }, null],
   ['/tmp/sky-eclipse.png', { ...R, planet: 4, moon: 1, lat: 3 }, 0.5],
 ];
 for (const [f, ctx, frac] of shots) {
   await go(ctx);
-  if (frac !== null) {
-    await page.evaluate((x) => {
-      const st = window.majveia.app.stage;
-      st.simTime = st.dayS * x;
-    }, frac);
-  }
-  await page.waitForTimeout(1600);
+  // Freeze the clock and drive one frame of the whole chain by hand, so the
+  // picture and the readout are of the same instant. Left to itself the
+  // readout only refreshes every sixth frame, which on a software renderer is
+  // two seconds behind the sky.
+  await page.evaluate((x) => {
+    const app = window.majveia.app, st = app.stage;
+    app.playing = false;
+    if (x !== null) st.simTime = st.dayS * x;
+    st.aim(); st.placeMoons(); st.placeWanderers(); st.applyLight();
+    app.rebuildReadout();
+  }, frac);
+  await page.waitForTimeout(1800);
   await page.screenshot({ path: f });
+  await page.evaluate(() => { window.majveia.app.playing = true; });
 }
 await b.close();

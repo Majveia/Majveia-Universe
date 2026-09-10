@@ -2968,6 +2968,17 @@ const POINT_ANG = 0.0035;
 const POINT_GAIN = 0.8;
 /** Magnitude 6.5 in flux - the naked-eye limit, and one display step. */
 const POINT_FLOOR = 0.0025;
+/**
+ * The optical depth of the path that light takes when it bends round a limb.
+ *
+ * Deeper than this and nothing gets through; shallower and it does not bend
+ * far enough to reach you. About one is the compromise the atmosphere strikes,
+ * and it is what sets how red the ring is: the other channels are this times
+ * the gas's own ratio of Rayleigh coefficients, which goes as lambda^-4.
+ */
+const HALO_TAU = 1.1;
+/** How bright to draw that ring against everything else in the scene. */
+const HALO_GAIN = 0.07;
 
 export class SurfaceStage extends Stage {
   readonly id = 'surface' as const;
@@ -3016,6 +3027,10 @@ export class SurfaceStage extends Stage {
   private obsPos: EPH.Vec3 = [0, 0, 0];
   /** The rotation from out there to overhead, rebuilt every frame. */
   private toLocal: (v: EPH.Vec3) => EPH.Vec3 = (v) => v;
+  /** Straight up from where the observer is standing, out in the star's frame. */
+  private upSpace: EPH.Vec3 = [0, 1, 0];
+  /** The plane each of the world's own moons goes round in, and its normal. */
+  private moonPlanes: { x: EPH.Vec3; y: EPH.Vec3; n: EPH.Vec3 }[] = [];
   private wanderers: EPH.Wanderer[] = [];
   private declination = 0;
   /** The parent's other moons, which from here are the brightest things up. */
@@ -3026,7 +3041,16 @@ export class SurfaceStage extends Stage {
   private eclipse = 1;
   private eclipseCover = 0;
   private eclipseBy = '';
+  /** Where the thing in front of the star is, and how wide. */
+  private occDir: [number, number, number] | null = null;
+  private occAng = 0;
   private parentAlt = 0;
+  /**
+   * The colour of light bent round an occulting body's limb, and whether
+   * anything in this sky has the air to bend it.
+   */
+  private haloRGB: [number, number, number] = [0, 0, 0];
+  private hasHalo = new Set<string>();
 
   build(): void {
     const u = this.env.universe;
@@ -3092,6 +3116,48 @@ export class SurfaceStage extends Stage {
       ? EPH.orbitNormal(hostState)
       : EPH.spinAxis(hostState, host.obliquity);
 
+    // The plane each of the world's own moons goes round in.
+    //
+    // Not simply the equator, and not simply the orbit: two torques are
+    // fighting over it. The planet's equatorial bulge pulls a close moon into
+    // the equator; the star's tide pulls a distant one into the planet's own
+    // orbital plane. They balance at the Laplace radius, and where a moon sits
+    // relative to that decides which it follows.
+    //
+    // Which is not a detail - it is why eclipses are common on some worlds and
+    // rare on others. The Galileans are all well inside Jupiter's Laplace
+    // radius, so they lie in its equator to a fraction of a degree and are
+    // eclipsed nearly every orbit. Our Moon is six times outside Earth's, so
+    // it follows the ecliptic instead, and eclipses come in seasons twice a
+    // year when the line of nodes happens to point at the sun.
+    this.moonPlanes = [];
+    if (!onMoon && p.moons.length) {
+      const orbitN = EPH.orbitNormal(hostState);
+      const j2 = COMP.oblatenessJ2(p.massKg, p.radiusM, p.dayS);
+      const rL = COMP.laplaceRadius(
+        j2, p.radiusM, p.au * AU, p.massKg, st.currentMassMsun * M_SUN,
+      );
+      for (const m of p.moons) {
+        // Tip the equator toward the orbit by however much this moon's
+        // distance says, in the plane the two normals share.
+        const tilt = COMP.laplaceTilt(p.obliquity, m.a, rL);
+        let n = this.axis;
+        const perp = EPH.cross(EPH.cross(this.axis, orbitN), this.axis);
+        if (EPH.length(perp) > 1e-9) {
+          const u = EPH.normalize(perp), c = Math.cos(tilt), sn2 = Math.sin(tilt);
+          n = EPH.normalize([
+            this.axis[0] * c + u[0] * sn2,
+            this.axis[1] * c + u[1] * sn2,
+            this.axis[2] * c + u[2] * sn2,
+          ]);
+        }
+        let x = EPH.cross([0, 0, 1], n);
+        if (EPH.length(x) < 1e-9) x = [1, 0, 0];
+        x = EPH.normalize(x);
+        this.moonPlanes.push({ x, y: EPH.cross(n, x), n });
+      }
+    }
+
     // Its brothers and sisters. From Europa, Io is bigger than the Moon is
     // from Earth and Ganymede is nearly as big, and they move fast enough to
     // watch - a couple of degrees an hour - because they are close and quick.
@@ -3130,6 +3196,31 @@ export class SurfaceStage extends Stage {
       );
     }
 
+    // Which of the bodies in this sky have an atmosphere to bend light round,
+    // and what colour that light comes out. The parent is the usual one; a
+    // moon with air of its own - Titan among Saturn's - counts too.
+    const airy: Planet[] = [];
+    if (this.parent) airy.push(this.parent);
+    for (const [k, m] of (this.parent ? host.moons : p.moons).entries()) {
+      if (this.parent && k === mi) continue;
+      const w = COMP.moonAsWorld(m, this.parent ?? p, st.luminosityLsun, k);
+      if (w.pressureBar > 0.01) airy.push(w);
+    }
+    this.hasHalo = new Set(airy.map((b) => b.name));
+    if (airy.length) {
+      // Grazing light crosses the whole depth of that air twice, and Rayleigh
+      // scattering takes the blue out of it: the same fact as a red sunset,
+      // and the reason a totally eclipsed moon is copper rather than black.
+      // Fixing the reddest channel at about one optical depth - the path that
+      // just gets through - the others follow from the gas's own lambda^-4.
+      const b0 = SKY.atmosphereOf(airy[0]).betaR;
+      const red = Math.max(b0[0], 1e-30);
+      const tint = b0.map((x) => Math.exp(-(x / red - 1) * HALO_TAU));
+      this.haloRGB = [
+        this.starRGB[0] * tint[0], this.starRGB[1] * tint[1], this.starRGB[2] * tint[2],
+      ];
+    }
+
     // A day in a couple of minutes, so the star visibly crosses the sky, and
     // arrive in the middle of the morning rather than at midnight.
     this.timeScale = this.dayS / 150;
@@ -3138,6 +3229,9 @@ export class SurfaceStage extends Stage {
     // The stars behind the air. Dim, because they only win once the sky loses.
     this.sky = new SkyDome({ brightness: 0.5, bandStrength: 0.012, seed, nebula: 0.006 });
     this.sky.mesh.scale.setScalar(4e5);
+    // Behind everything else in the sky, so the planets and moons drawn after
+    // it can cover the stars they are actually in front of.
+    this.sky.mesh.renderOrder = -90;
     this.root.add(this.sky.mesh);
 
     // How much relief a world can hold up.
@@ -3280,13 +3374,14 @@ export class SurfaceStage extends Stage {
     const starLocal: EPH.Vec3 = [this.sunDir.x, this.sunDir.y, this.sunDir.z];
     const pole = this.locked ? this.lockedPole(alt, dec) : EPH.dirFromAltAz(this.lat, 0);
     this.toLocal = EPH.frameMap(this.axis, starOut, pole, starLocal);
+    const toSpace = EPH.frameMap(pole, starLocal, this.axis, starOut);
+    this.upSpace = toSpace([0, 1, 0]);
 
     // Standing on a moon, the observer is a million kilometres off the planet
     // the ephemeris is tracking. That is a fifth of a degree of parallax on
     // Mars at its closest - too small to see and free to include, since it is
     // one more subtraction in a chain of them.
     if (this.parentMoon) {
-      const toSpace = EPH.frameMap(pole, starLocal, this.axis, starOut);
       const off = toSpace([
         -this.parentDir.x * this.parentMoon.a,
         -this.parentDir.y * this.parentMoon.a,
@@ -3334,9 +3429,18 @@ export class SurfaceStage extends Stage {
    */
   private applyLight(): void {
     const e = this.eclipse;
+    // The sky and the ground get the light that is actually arriving. The
+    // star's own disc gets its full brightness and a hole cut in it, because
+    // the shape of what is left is the whole thing worth looking at.
     this.view?.setSun(this.sunDir, [
       this.starRGB[0] * e, this.starRGB[1] * e, this.starRGB[2] * e,
     ]);
+    this.view?.setStarDisc(this.starRGB);
+    this.view?.setOcculter(this.occDir, this.occAng);
+    // Not scaled by the eclipse factor: the ring is the light that is getting
+    // through, and it is at its brightest exactly when none of the rest is.
+    const g = HALO_GAIN * this.exposure;
+    this.view?.setHalo([this.haloRGB[0] * g, this.haloRGB[1] * g, this.haloRGB[2] * g]);
     // The starfield is only worth anything once the sky stops drowning it -
     // which happens at night, on a world with no air to drown it with, and
     // for two minutes in the middle of the day when something gets in the way.
@@ -3367,19 +3471,32 @@ export class SurfaceStage extends Stage {
     const up = new THREE.Vector3();
     const worldUp = new THREE.Vector3(0, 1, 0);
     const alt = new THREE.Vector3(1, 0, 0);
-    for (const m of this.planet.moons) {
+    // Where the observer is standing, out in the star's frame: not the centre
+    // of the world but a point on its surface. That difference is a degree of
+    // parallax for a moon as close as ours, and it is the whole reason a total
+    // eclipse is a narrow track across a continent rather than a hemisphere.
+    const [ex, ey, ez] = EPH.scale(this.upSpace, this.planet.radiusM + this.eyeH);
+    for (let k = 0; k < this.planet.moons.length; k++) {
+      const m = this.planet.moons[k];
+      const pl = this.moonPlanes[k];
+      if (!pl) continue;
       const period = 2 * Math.PI * Math.sqrt(m.a ** 3 / (G * this.planet.massKg));
-      const orbit = this.simTime / period + m.phase / (2 * Math.PI);
-      // Where it stands over the equator, and how far round the sky from noon.
-      const dec = m.i * Math.sin(2 * Math.PI * orbit);
-      const h = SKY.hourAngle((this.simTime / this.dayS - orbit) % 1);
-      const p = SKY.altAz(this.lat, dec, h);
-      dir.set(
-        Math.cos(p.altitude) * Math.sin(p.azimuth), Math.sin(p.altitude),
-        -Math.cos(p.altitude) * Math.cos(p.azimuth),
-      );
+      const th = (2 * Math.PI * this.simTime) / period + m.phase;
+      // On its orbit, in its own Laplace plane, tilted out of that by its
+      // inclination. Real geometry rather than a declination that swung on a
+      // schedule of its own: the old version let the moon and the star line up
+      // only by coincidence, so eclipses effectively never happened.
+      const c = Math.cos(th), sn = Math.sin(th) * Math.cos(m.i), sz = Math.sin(th) * Math.sin(m.i);
+      const rx = m.a * (pl.x[0] * c + pl.y[0] * sn + pl.n[0] * sz) - ex;
+      const ry = m.a * (pl.x[1] * c + pl.y[1] * sn + pl.n[1] * sz) - ey;
+      const rz = m.a * (pl.x[2] * c + pl.y[2] * sn + pl.n[2] * sz) - ez;
+      const dist = Math.hypot(rx, ry, rz);
+      if (dist <= 0) continue;
+      const l = this.toLocal([rx / dist, ry / dist, rz / dist]);
+      dir.set(l[0], l[1], l[2]);
+      const altitude = Math.asin(Math.max(-1, Math.min(1, dir.y)));
       // Below the horizon is below the horizon.
-      if (p.altitude < -m.radiusM / m.a) continue;
+      if (altitude < -Math.atan2(m.radiusM, dist)) continue;
 
       // The disc's own frame, with +z pointing back at the observer.
       right.copy(Math.abs(dir.y) > 0.95 ? alt : worldUp).cross(dir).normalize();
@@ -3391,7 +3508,7 @@ export class SurfaceStage extends Stage {
       // The star's light reaching it, and what is left of that on the way to
       // the ground: a moon on the horizon is as dimmed and reddened as the
       // star would be there.
-      const t = SKY.transmittance(this.air, Math.PI / 2 - p.altitude);
+      const t = SKY.transmittance(this.air, Math.PI / 2 - altitude);
       // A Lambertian disc reflecting a given irradiance has radiance
       // albedo/pi times it - and then the same display gain as everything
       // else in the scene, or the moon is drawn at raw radiance next to a sky
@@ -3400,7 +3517,7 @@ export class SurfaceStage extends Stage {
       out.push({
         name: m.name,
         dir: [dir.x, dir.y, dir.z],
-        angRad: Math.atan2(m.radiusM, m.a),
+        angRad: Math.atan2(m.radiusM, dist),
         light,
         color: [
           m.color[0] * g * this.starRGB[0] * t[0],
@@ -3510,11 +3627,17 @@ export class SurfaceStage extends Stage {
   private measureEclipse(out: MoonDisc[]): void {
     const s: EPH.Vec3 = [this.sunDir.x, this.sunDir.y, this.sunDir.z];
     let light = 1, cover = 0, by = '';
+    this.occDir = null; this.occAng = 0;
     for (const d of out) {
       const sep = EPH.angleBetween(d.dir, s);
       const f = EPH.coveredFraction(sep, this.starAngRad, d.angRad);
+      // A bare rock in front of a star leaves a black hole and nothing else.
+      d.halo = this.hasHalo.has(d.name ?? '') ? f : 0;
       if (f <= 0) continue;
-      if (f > cover) { cover = f; by = d.name ?? ''; }
+      if (f > cover) {
+        cover = f; by = d.name ?? '';
+        this.occDir = d.dir; this.occAng = d.angRad;
+      }
       light = Math.min(light, EPH.eclipseLight(sep, this.starAngRad, d.angRad));
     }
     this.eclipse = light; this.eclipseCover = cover; this.eclipseBy = by;
