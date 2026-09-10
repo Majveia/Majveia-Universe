@@ -493,7 +493,15 @@ export function altAz(
   const sinAlt = sl * sd + cl * cd * ch;
   const altitude = Math.asin(Math.max(-1, Math.min(1, sinAlt)));
   // Measured from due north, turning east: the convention every almanac uses.
-  const azimuth = Math.atan2(-cd * Math.sin(hour), cd * ch * sl - sd * cl);
+  //
+  // The north component is cos(lat) sin(dec) - sin(lat) cos(dec) cos(H) and
+  // the east component is -cos(dec) sin(H), straight off the spherical
+  // triangle. Getting the sign of the first one backwards costs nothing in
+  // altitude and looks fine in an empty sky - but it reflects the whole
+  // celestial sphere about the east-west line, and then the sun transits in
+  // the north for a northern observer and every planet is on the wrong side
+  // of it.
+  const azimuth = Math.atan2(-cd * Math.sin(hour), cl * sd - sl * cd * ch);
   return { altitude, azimuth };
 }
 

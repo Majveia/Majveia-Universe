@@ -586,3 +586,48 @@ describe('an atmosphere built from a planet', () => {
     expect(EARTH.betaR[2]).toBeGreaterThan(EARTH.betaR[0]);
   });
 });
+
+describe('which way round the sky is', () => {
+  const DEG2 = Math.PI / 180;
+  const az = (lat: number, dec: number, h: number): number =>
+    ((altAz(lat, dec, h).azimuth * 180) / Math.PI + 360) % 360;
+
+  it('transits the sun in the south for a northern observer', () => {
+    // London at midsummer noon: the sun is 62 degrees up and due south. It has
+    // never once been due north from there.
+    const p = altAz(51.5 * DEG2, 23.44 * DEG2, 0);
+    expect((p.altitude * 180) / Math.PI).toBeCloseTo(61.9, 0);
+    expect(az(51.5 * DEG2, 23.44 * DEG2, 0)).toBeCloseTo(180, 3);
+  });
+
+  it('transits it in the north for a southern observer', () => {
+    // And the other way round below the equator, which is why a sundial bought
+    // in Europe reads backwards in Australia.
+    expect(az(-33.9 * DEG2, -23.44 * DEG2, 0)).toBeCloseTo(0, 3);
+  });
+
+  it('rises in the east and sets in the west', () => {
+    const rise = az(45 * DEG2, 0, -Math.PI / 2);
+    const set = az(45 * DEG2, 0, Math.PI / 2);
+    expect(rise).toBeCloseTo(90, 3);
+    expect(set).toBeCloseTo(270, 3);
+  });
+
+  it('crosses the southern sky between them, not the northern one', () => {
+    // The test that catches a mirrored sky: the arc from sunrise to sunset has
+    // to pass through the south, so the azimuth runs 90 -> 180 -> 270 and
+    // never anywhere near zero.
+    for (let h = -1.4; h <= 1.4; h += 0.2) {
+      const a = az(45 * DEG2, 10 * DEG2, h);
+      expect(a).toBeGreaterThan(60);
+      expect(a).toBeLessThan(300);
+    }
+  });
+
+  it('puts the sun over the equator at the equinox, whatever the latitude', () => {
+    for (const lat of [-60, -20, 0, 35, 70]) {
+      expect(az(lat * DEG2, 0, -0.4)).toBeGreaterThan(0);
+      expect(az(lat * DEG2, 0, -0.4)).toBeLessThan(180);
+    }
+  });
+});
