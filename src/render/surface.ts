@@ -184,6 +184,8 @@ uniform float uPlanetR;
 uniform float uRelief;
 uniform float uSeed;
 uniform float uSeaLevel;
+uniform float uFeature;   // how far apart the big landforms are, m
+uniform float uFlat;      // radius of the level patch you are standing on, m
 in vec3 position;
 out vec3 vWorld;
 out vec3 vNormal;
@@ -208,26 +210,44 @@ float fbm(vec2 p) {
   return s;
 }
 float rawTerrain(vec2 p) {
-  float base = fbm(p * 0.00035) * 2.0 - 1.0;
-  float ridge = 1.0 - abs(fbm(p * 0.0012) * 2.0 - 1.0);
+  // Landform spacing scales with how far you can see. A fixed wavelength in
+  // metres puts three mountain ranges in an Earth view and less than one in
+  // the view from a small moon, where the horizon is two kilometres off.
+  float k = 1.0 / max(uFeature, 1.0);
+  float base = fbm(p * k) * 2.0 - 1.0;
+  float ridge = 1.0 - abs(fbm(p * k * 3.4) * 2.0 - 1.0);
   // Plus something at the scale of the ground you are standing on. The two
   // terms above have nothing finer than about forty metres in them, which is
   // correct for a mountain range and leaves the nearest fifty metres of the
   // view - most of the lower half of the frame - perfectly smooth.
-  float near = fbm(p * 0.045) * 2.0 - 1.0;
-  return uRelief * (base * 0.75 + ridge * ridge * 0.55 - 0.35) + uRelief * 0.02 * near;
+  //
+  // Capped in metres rather than scaled with the relief: on a rugged little
+  // moon a fixed fraction of a kilometre of relief puts twenty-metre boulders
+  // at your feet, and from eye level a twenty-metre boulder twenty metres away
+  // fills half the sky.
+  float near = fbm(p * 0.07) * 2.0 - 1.0;
+  return uRelief * (base * 0.75 + ridge * ridge * 0.55 - 0.35)
+    + min(uRelief * 0.02, 2.5) * near;
 }
 
 /**
  * Terrain height, metres, measured from the observer's feet.
  *
- * Anchored at the origin, because the observer is standing there and the
- * whole scene is built around that: without it the noise puts the ground
- * wherever it likes and the camera ends up buried in it, or - the first time
- * this ran - forty metres under the sea.
+ * Anchored at the origin, because the observer is standing there and the whole
+ * scene is built around that: without it the noise puts the ground wherever it
+ * likes and the camera ends up buried in it, or - the first time this ran -
+ * forty metres under the sea.
+ *
+ * And levelled for the first hundred metres or so. Anchoring the *origin* is
+ * not enough: the camera orbits a few tens of metres out, and on a small world
+ * with steep relief the ground there can easily be higher than the camera is,
+ * which puts the eye inside a hill and fills the screen with the underside of
+ * the landscape. A level patch to stand on fixes it, and every landing site
+ * ever chosen was chosen for being one.
  */
 float terrain(vec2 p) {
-  return rawTerrain(p) - rawTerrain(vec2(0.0));
+  float h = rawTerrain(p) - rawTerrain(vec2(0.0));
+  return h * smoothstep(uFlat, uFlat * 3.0, length(p));
 }
 
 void main() {
@@ -341,21 +361,29 @@ uniform mat4 modelViewMatrix;
 uniform mat4 projectionMatrix;
 uniform float uDist;
 in vec3 position;      // quad corner in [-1,1]
-in vec3 aDir;          // unit vector to the moon, local frame
+in vec3 aDir;          // unit vector to the body, local frame
 in float aAng;         // angular radius, radians
 in vec3 aLight;        // star direction in the disc's own frame
 in vec3 aColor;        // colour, already dimmed by the air it is seen through
+in vec4 aStyle;        // banded?, quad padding, seed, ring opacity
+in vec3 aRing;         // inner and outer radius in body radii, sin of the opening
 out vec2 vUv;
 out vec3 vLight;
 out vec3 vColor;
+out vec4 vStyle;
+out vec3 vRing;
 void main() {
-  vUv = position.xy;
+  // The quad is padded out past the body itself when there are rings to fit
+  // into it - Saturn's reach two and a third times its own radius.
+  vUv = position.xy * aStyle.y;
   vLight = aLight;
   vColor = aColor;
+  vStyle = aStyle;
+  vRing = aRing;
   vec3 f = normalize(aDir);
   vec3 r = normalize(cross(abs(f.y) > 0.95 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0), f));
   vec3 u = cross(f, r);
-  float half_ = uDist * tan(max(aAng, 1e-6));
+  float half_ = uDist * tan(max(aAng, 1e-6)) * aStyle.y;
   vec3 p = f * uDist + r * (position.x * half_) + u * (position.y * half_);
   mat4 mv = modelViewMatrix;
   mv[3].xyz = vec3(0.0);
@@ -368,19 +396,79 @@ precision highp float;
 in vec2 vUv;
 in vec3 vLight;
 in vec3 vColor;
+in vec4 vStyle;
+in vec3 vRing;
 out vec4 fragColor;
+
+float hash1(float n) { return fract(sin(n) * 43758.5453); }
+
 void main() {
   float r2 = dot(vUv, vUv);
-  if (r2 > 1.0) discard;
-  // The point of the sphere this pixel is looking at, and whether the star
-  // can see it too.
-  vec3 n = vec3(vUv, sqrt(max(0.0, 1.0 - r2)));
-  float lit = max(0.0, dot(n, normalize(vLight)));
-  // Regolith backscatters: a full moon is far brighter than twice a half one,
-  // which Lambert does not predict. This is the cheap version of that.
-  lit = pow(lit, 0.62);
-  float edge = smoothstep(1.0, 0.985, sqrt(r2));
-  fragColor = vec4(vColor * lit * edge, 1.0);
+  float r = sqrt(r2);
+  vec3 L = normalize(vLight);
+  vec3 col = vec3(0.0);
+  float any = 0.0;
+
+  // ---- the rings
+  //
+  // A moon orbits in its planet's equatorial plane, which is the plane the
+  // rings are in, so from down there they are almost exactly edge-on: not the
+  // poster view, a razor line drawn through the middle of the planet and out
+  // both sides. The opening angle is how far the moon's own orbit is tilted
+  // out of that plane, and it is usually a fraction of a degree.
+  if (vRing.y > vRing.x && vStyle.w > 0.0) {
+    float sn = max(vRing.z, 0.004);
+    float rr = length(vec2(vUv.x, vUv.y / sn));
+    if (rr > vRing.x && rr < vRing.y) {
+      // Gaps: a ring system is not a disc, it is thousands of ringlets.
+      float band = 0.55 + 0.45 * sin(rr * 34.0 + hash1(vStyle.z) * 20.0);
+      band *= 0.7 + 0.3 * sin(rr * 91.0);
+      // The near half passes in front of the planet; the far half goes behind
+      // it, and the planet's own shadow falls across it there.
+      bool infront = vUv.y < 0.0;
+      float shade = (!infront && r2 < 1.0) ? 0.0 : 1.0;
+      // Backlit ice is brilliant: forward scattering through the particles is
+      // why the rings blaze when the Sun is behind them.
+      float fwd = 0.55 + 1.9 * pow(max(0.0, -L.z), 3.0);
+      float a = vStyle.w * band * shade * fwd;
+      if (infront || r2 > 1.0) {
+        col += vec3(0.95, 0.92, 0.86) * a * 0.5;
+        any = max(any, a);
+      }
+    }
+  }
+
+  // ---- the body
+  if (r2 <= 1.0) {
+    // The point of the sphere this pixel is looking at, and whether the star
+    // can see it too.
+    vec3 n = vec3(vUv, sqrt(max(0.0, 1.0 - r2)));
+    float lit = max(0.0, dot(n, L));
+    // Regolith backscatters: a full moon is far brighter than twice a half
+    // one, which Lambert does not predict. This is the cheap version of that.
+    lit = pow(lit, 0.62);
+    vec3 tint = vColor;
+    if (vStyle.x > 0.5) {
+      // A giant is banded, because it has no surface to stop the zonal winds
+      // and the Coriolis force tears the flow into stripes. The bands run
+      // along its latitudes, and the moon looking at it sits in its equatorial
+      // plane, so they run across the disc.
+      float lat = asin(clamp(n.y, -1.0, 1.0));
+      float sd = hash1(vStyle.z) * 40.0;
+      float b = sin(lat * 7.0 + sd) * 0.5 + 0.5 * sin(lat * 17.0 + sd * 1.7);
+      b += 0.25 * sin(lat * 31.0 + sd * 0.3);
+      tint *= 0.78 + 0.42 * smoothstep(-0.6, 0.6, b);
+      // Polar hoods, and a limb that darkens the way a deep atmosphere does.
+      tint *= 1.0 - 0.22 * smoothstep(0.55, 1.0, abs(n.y));
+      lit *= 0.55 + 0.45 * n.z;
+    }
+    float edge = smoothstep(1.0, 0.985, r);
+    col += tint * lit * edge;
+    any = max(any, lit * edge);
+  }
+
+  if (any < 1e-5) discard;
+  fragColor = vec4(col, 1.0);
 }
 `;
 
@@ -394,6 +482,12 @@ export interface MoonDisc {
   light: [number, number, number];
   /** Colour and brightness, already attenuated by the air in the way. */
   color: [number, number, number];
+  /** True for a banded giant rather than a rock. */
+  banded?: boolean;
+  /** A seed, so two giants in one sky do not have identical stripes. */
+  seed?: number;
+  /** Rings: inner and outer radius in body radii, and how open they are. */
+  ring?: { inner: number; outer: number; sinOpening: number; opacity: number };
 }
 
 export interface SurfaceOptions {
@@ -436,6 +530,8 @@ export class SurfaceView {
   private moonAng?: Float32Array;
   private moonLight?: Float32Array;
   private moonColor?: Float32Array;
+  private moonStyle?: Float32Array;
+  private moonRing?: Float32Array;
   private a: Atmosphere;
 
   constructor(o: SurfaceOptions) {
@@ -514,6 +610,8 @@ export class SurfaceView {
         uRelief: { value: o.relief },
         uSeed: { value: (o.seed % 1000) / 7.3 },
         uSeaLevel: { value: seaLevel },
+        uFeature: { value: Math.max(200, o.reach * 0.30) },
+        uFlat: { value: Math.max(60, o.reach * 0.012) },
         uLow: { value: new THREE.Vector3(...o.low) },
         uHigh: { value: new THREE.Vector3(...o.high) },
         uWater: { value: new THREE.Vector3(...o.water) },
@@ -548,6 +646,8 @@ export class SurfaceView {
       this.moonAng = new Float32Array(nm);
       this.moonLight = new Float32Array(nm * 3);
       this.moonColor = new Float32Array(nm * 3);
+      this.moonStyle = new Float32Array(nm * 4);
+      this.moonRing = new Float32Array(nm * 3);
       const mg = new THREE.InstancedBufferGeometry();
       mg.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
         -1, -1, 0, 1, -1, 0, 1, 1, 0, -1, -1, 0, 1, 1, 0, -1, 1, 0,
@@ -561,6 +661,8 @@ export class SurfaceView {
       mg.setAttribute('aAng', dyn(this.moonAng, 1));
       mg.setAttribute('aLight', dyn(this.moonLight, 3));
       mg.setAttribute('aColor', dyn(this.moonColor, 3));
+      mg.setAttribute('aStyle', dyn(this.moonStyle, 4));
+      mg.setAttribute('aRing', dyn(this.moonRing, 3));
       mg.instanceCount = nm;
       this.moonGeo = mg;
       this.moonMat = new THREE.RawShaderMaterial({
@@ -589,8 +691,8 @@ export class SurfaceView {
 
   /** Put this frame's moons in the sky. */
   setMoons(list: MoonDisc[]): void {
-    if (!this.moonGeo || !this.moonDir || !this.moonAng
-      || !this.moonLight || !this.moonColor) return;
+    if (!this.moonGeo || !this.moonDir || !this.moonAng || !this.moonLight
+      || !this.moonColor || !this.moonStyle || !this.moonRing) return;
     const n = Math.min(list.length, this.moonAng.length);
     for (let i = 0; i < n; i++) {
       const m = list[i];
@@ -598,9 +700,17 @@ export class SurfaceView {
       this.moonAng[i] = m.angRad;
       this.moonLight.set(m.light, i * 3);
       this.moonColor.set(m.color, i * 3);
+      // The quad has to reach past the body far enough to hold its rings.
+      const pad = m.ring ? Math.max(1.06, m.ring.outer * 1.06) : 1.06;
+      this.moonStyle.set(
+        [m.banded ? 1 : 0, pad, m.seed ?? 0, m.ring?.opacity ?? 0], i * 4,
+      );
+      this.moonRing.set(
+        m.ring ? [m.ring.inner, m.ring.outer, m.ring.sinOpening] : [0, 0, 1], i * 3,
+      );
     }
     this.moonGeo.instanceCount = n;
-    for (const k of ['aDir', 'aAng', 'aLight', 'aColor']) {
+    for (const k of ['aDir', 'aAng', 'aLight', 'aColor', 'aStyle', 'aRing']) {
       (this.moonGeo.getAttribute(k) as THREE.BufferAttribute).needsUpdate = true;
     }
   }

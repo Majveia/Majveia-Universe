@@ -43,6 +43,7 @@ import {
 import { peakMultipoles } from '../cosmology/cmb';
 import { GalaxySprites, type GalaxySpriteData } from '../render/galaxysprites';
 import { SurfaceView, type MoonDisc } from '../render/surface';
+import * as COMP from '../astro/companion';
 import * as SKY from '../astro/sky';
 import { ClusterOrbits, bindingPressure, type Halo } from '../physics/clusterorbits';
 import * as SZ from '../astro/sz';
@@ -99,6 +100,8 @@ export interface StageCtx {
   /** Where on the world you are standing, degrees. */
   lat?: number;
   lon?: number;
+  /** Which moon of that planet, when the planet itself has no surface. */
+  moon?: number;
   /**
    * 1 for the real Solar System rather than a generated one. It travels down
    * the ladder with everything else, so descending from it lands on the real
@@ -2668,6 +2671,7 @@ export class WorldStage extends Stage {
   private sunColor = new THREE.Color(1, 1, 1);
   private starDist = 1;
   private starAngRad = 0.00465;
+  private starLsun = 1;
   private planetRadius = 1;
   private aurora?: AuroraView;
   /** Magnetopause standoff in planetary radii, and auroral power vs Earth. */
@@ -2708,6 +2712,7 @@ export class WorldStage extends Stage {
     this.starView = new StarView(st, starR, seed, 2.2);
     this.root.add(this.starView.group);
     this.sunColor.setRGB(...blackbodyRGB(st.teff));
+    this.starLsun = st.luminosityLsun;
     const irr = Math.max(0.03, Math.min(1.9, st.luminosityLsun / (p.au * p.au)));
     this.sunColor.multiplyScalar(irr);
 
@@ -2901,7 +2906,18 @@ export class WorldStage extends Stage {
     // and temperature climb without ever passing through a surface: the gas
     // just gets denser until it is a liquid and then a metal, and there is
     // nowhere to put your feet at any depth.
-    if (this.planet.pressureBar > 30) return null;
+    //
+    // But a giant is not one world, it is a dozen. Go and stand on one of
+    // them, and look back up at the thing you could not land on.
+    if (this.planet.pressureBar > 30) {
+      const i = COMP.bestMoon(this.planet, this.starLsun);
+      if (i < 0) return null;
+      return {
+        id: 'surface',
+        ctx: { ...this.ctx, moon: i, lat: 26, lon: 0 },
+        label: this.planet.moons[i].name,
+      };
+    }
     // Land where it is worth standing: in the tropics on a cold world, in the
     // temperate latitudes on a warm one, and near the terminator of a tidally
     // locked one, which is the only strip of it that is neither burning nor
@@ -2947,11 +2963,23 @@ export class SurfaceStage extends Stage {
   private lat = 0;
   private starRGB: [number, number, number] = [1, 1, 1];
   private starAngRad = 0.00465;
+  private starRadiusM = R_SUN;
   /** Seconds into the planet's solar day, and into its year. */
   private dayS = 86400;
   private yearS = 3.15e7;
   private tilt = 0;
   private locked = false;
+  /** The planet this is a moon of, when it is one. */
+  private parent: Planet | null = null;
+  private parentMoon: Planet['moons'][number] | null = null;
+  private parentDir = new THREE.Vector3(0, 1, 0);
+  /**
+   * What fraction of each orbit this moon spends in its planet's shadow.
+   *
+   * Worked out once: it is a two-thousand-step search round the orbit and the
+   * answer does not change, and the readout asks for it ten times a second.
+   */
+  private eclipseFraction = 0;
   private sunDir = new THREE.Vector3(0, 1, 0);
   private altitude = 0;
   private azimuth = 0;
@@ -2965,27 +2993,53 @@ export class SurfaceStage extends Stage {
     const { system, seed } = this.ctx.real
       ? { system: solarSystem(), seed: 0x50143 }
       : u.system(g, this.ctx.star ?? 0);
-    const p = system.planets[this.ctx.planet ?? 0];
+    const host = system.planets[this.ctx.planet ?? 0];
+    // Standing on a moon of it, if the planet itself has no bottom - or if you
+    // aimed at one. From here down it is a world like any other; the only
+    // difference is what is in its sky.
+    const mi = this.ctx.moon;
+    const onMoon = mi !== undefined && mi >= 0 && mi < host.moons.length;
+    const p = onMoon
+      ? COMP.moonAsWorld(host.moons[mi], host, system.star.luminosityLsun, mi)
+      : host;
+    this.parent = onMoon ? host : null;
+    this.parentMoon = onMoon ? host.moons[mi] : null;
     this.planet = p;
     this.air = SKY.atmosphereOf(p);
     this.lat = ((this.ctx.lat ?? 34) * Math.PI) / 180;
     this.tilt = p.obliquity;
-    this.locked = p.tidallyLocked;
+    // A planet locked to its star has the star nailed in place. A moon locked
+    // to its planet is the other way round: the *planet* never moves, and the
+    // star still rises and sets - once per orbit, so a day on Europa is three
+    // and a half of ours.
+    this.locked = p.tidallyLocked && !onMoon;
     this.dayS = Math.abs(p.dayS) || p.periodS;
-    this.yearS = p.periodS;
+    this.yearS = onMoon ? host.periodS : p.periodS;
 
     const st = system.star;
     const irr = Math.max(0.02, st.luminosityLsun / (p.au * p.au));
     const rgb = blackbodyRGB(st.teff);
     this.starRGB = [rgb[0] * irr, rgb[1] * irr, rgb[2] * irr];
-    this.starAngRad = SKY.angularRadius(st.radiusRsun * R_SUN, p.au * AU);
+    this.starRadiusM = st.radiusRsun * R_SUN;
+    this.starAngRad = SKY.angularRadius(this.starRadiusM, p.au * AU);
 
     this.title = p.name;
     const where = this.locked ? 'the day side'
-      : `${Math.abs(this.ctx.lat ?? 34).toFixed(0)}° ${(this.ctx.lat ?? 34) >= 0 ? 'north' : 'south'}`;
-    this.subtitle = p.pressureBar < 1e-3
-      ? `On the surface at ${where} · no air, and a black sky at noon`
-      : `On the surface at ${where} · ${sig(p.pressureBar, 2)} bar of ${p.atmosphere}`;
+      : this.parent ? `${Math.abs(this.ctx.lat ?? 26).toFixed(0)}° from under it`
+        : `${Math.abs(this.ctx.lat ?? 34).toFixed(0)}° ${(this.ctx.lat ?? 34) >= 0 ? 'north' : 'south'}`;
+    const air = p.pressureBar < 1e-3
+      ? 'no air, and a black sky at noon'
+      : `${sig(p.pressureBar, 2)} bar of ${p.atmosphere}`;
+    this.subtitle = this.parent
+      ? `A moon of ${this.parent.name}, which never moves in its sky · ${air}`
+      : `On the surface at ${where} · ${air}`;
+
+    if (this.parent && this.parentMoon) {
+      this.eclipseFraction = COMP.eclipsedFraction(
+        this.parentMoon, this.parent.radiusM, this.starRadiusM,
+        this.parent.au * AU, this.parentMoon.i,
+      );
+    }
 
     // A day in a couple of minutes, so the star visibly crosses the sky, and
     // arrive in the middle of the morning rather than at midnight.
@@ -2997,14 +3051,22 @@ export class SurfaceStage extends Stage {
     this.sky.mesh.scale.setScalar(4e5);
     this.root.add(this.sky.mesh);
 
-    // Relief scaled to the world: a big planet with an atmosphere weathers
-    // flat, a small airless one keeps everything it was ever hit by.
-    const relief = Math.max(30, Math.min(2600,
-      420 * Math.pow(p.radiusM / R_EARTH, -0.4) * (p.pressureBar > 0.05 ? 0.7 : 1.5)));
-    // Far enough past the horizon that its edge is over it and hidden. The
-    // horizon itself is set by the curvature and the eye height, and on a
-    // world this size it is close: under five kilometres from standing.
+    // How much relief a world can hold up.
+    //
+    // A mountain stands until the rock at its base yields under its own
+    // weight, so the tallest one a world can have goes as the crushing
+    // strength over the density times the gravity - which is why Olympus Mons
+    // is two and a half times Everest on a planet half Earth's size. Ice gives
+    // way at a tenth of rock's stress, and weather takes the rest down.
     const horizon = SKY.horizonDistance(p.radiusM, this.eyeH);
+    const strength = p.cls === 'ice' ? 1.4e7 : 1.0e8;
+    let relief = strength / (Math.max(p.density, 500) * Math.max(p.gravity, 0.02));
+    if (p.pressureBar > 0.05) relief *= 0.5;
+    // And no more than the horizon can hold. On a small moon the horizon is
+    // two kilometres off, and a kilometre-high hill inside that is not a
+    // landscape, it is a wall across the sky.
+    relief = Math.max(20, Math.min(relief, horizon * 0.10));
+    // Far enough past the horizon that its edge is over it and hidden.
     const reach = Math.max(1200, horizon * 2.6 + relief * 8);
 
     const cold = p.surfaceK < 273;
@@ -3028,7 +3090,8 @@ export class SurfaceStage extends Stage {
       // snowline is high, and only a frozen world is white all over.
       ice: cold ? 0.8 : p.surfaceK < 295 ? 0.12 : 0,
       detail: this.env.quality() > 0.6 ? 360 : 200,
-      moons: p.moons.length,
+      // Its own moons, plus one slot for the planet it goes round.
+      moons: p.moons.length + (this.parent ? 1 : 0),
     });
     this.root.add(this.view.group);
     // Expose for the sunlit ground, which is the brightest thing that is
@@ -3045,15 +3108,25 @@ export class SurfaceStage extends Stage {
 
     this.aim();
     const c = this.env.controls;
-    // A quarter turn from the star. Looking straight at a low sun gives you a
-    // silhouette and a washed-out sky; looking directly away from it gives you
-    // flat front lighting. Across it is where the shadows are, and where the
-    // sky is deepest - the blue of a clear sky peaks ninety degrees from the
-    // sun, which is the same fact a polarising filter is sold on.
-    // Aimed a little above the horizontal, because the sky is the thing worth
-    // looking at from down here and half a frame of ground is half a frame
-    // wasted. Orbiting still swings all the way round and down.
-    c.snapTo(new THREE.Vector3(0, 13, 0), 26, -this.azimuth + 1.9, 1.87);
+    if (this.parent && this.parentMoon) {
+      // Face the planet. It is the reason for coming, it never moves, and it
+      // stands sixty degrees up - which is well outside the frame if you
+      // arrive looking near the horizon the way you do everywhere else. Due
+      // north by construction: the sub-planet point is what you walked from.
+      const alt = COMP.parentAltitude(
+        this.parentMoon.a, p.radiusM, Math.abs(this.lat),
+      ) * 0.82;
+      c.snapTo(new THREE.Vector3(0, 26 * Math.sin(alt) + 8, 0), 26, 0, Math.PI / 2 + alt);
+    } else {
+      // A quarter turn from the star. Looking straight at a low sun gives you a
+      // silhouette and a washed-out sky; looking directly away from it gives
+      // you flat front lighting. Across it is where the shadows are, and where
+      // the sky is deepest - the blue of a clear sky peaks ninety degrees from
+      // the sun, which is the same fact a polarising filter is sold on. Aimed
+      // a little above the horizontal, because the sky is what is worth
+      // looking at from down here. Orbiting still swings all the way round.
+      c.snapTo(new THREE.Vector3(0, 13, 0), 26, -this.azimuth + 1.9, 1.87);
+    }
     c.drift = 0.012;
     c.minDistance = 2.5;
     c.maxDistance = Math.max(400, reach * 0.5);
@@ -3112,7 +3185,9 @@ export class SurfaceStage extends Stage {
    * because that is what those words mean.
    */
   private placeMoons(): void {
-    if (!this.planet.moons.length) return;
+    // Not an early return on having no moons of its own: a moon has none, and
+    // the whole point of standing on one is the thing it goes round.
+    if (!this.planet.moons.length && !this.parent) return;
     const out: MoonDisc[] = [];
     const dir = new THREE.Vector3();
     const right = new THREE.Vector3();
@@ -3160,7 +3235,60 @@ export class SurfaceStage extends Stage {
         ],
       });
     }
+    this.placeParent(out);
     this.view.setMoons(out);
+  }
+
+  /**
+   * The planet this moon goes round, hanging in one place in its sky.
+   *
+   * It does not rise or set. A close moon is locked, so the same face is
+   * always turned toward the planet and the planet is always over the same
+   * patch of ground - high overhead at the sub-planet point, on the horizon a
+   * quarter of the way round, and never seen at all from the far side. What
+   * changes is only its phase, running through a full cycle every orbit and
+   * opposite to the one the planet sees of the moon.
+   */
+  private placeParent(out: MoonDisc[]): void {
+    const par = this.parent, m = this.parentMoon;
+    if (!par || !m) return;
+    const alt = COMP.parentAltitude(m.a, this.planet.radiusM, Math.abs(this.lat));
+    if (alt < -COMP.parentAngularRadius(par.radiusM, m.a)) return;
+
+    // Due north of the standing point, by construction: the sub-planet point
+    // is where you walked from.
+    this.parentDir.set(0, Math.sin(alt), -Math.cos(alt)).normalize();
+    const dir = this.parentDir;
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    const alt2 = new THREE.Vector3(1, 0, 0);
+    const right = new THREE.Vector3()
+      .copy(Math.abs(dir.y) > 0.95 ? alt2 : worldUp).cross(dir).normalize();
+    const up = new THREE.Vector3().copy(dir).cross(right).normalize();
+
+    const t = SKY.transmittance(this.air, Math.PI / 2 - alt);
+    const g = (par.albedo / Math.PI) * this.exposure;
+    const giant = par.pressureBar > 30 || par.radiusM > 2.2e7;
+    const ring = par.rings[0];
+    out.push({
+      dir: [dir.x, dir.y, dir.z],
+      angRad: COMP.parentAngularRadius(par.radiusM, m.a),
+      light: [this.sunDir.dot(right), this.sunDir.dot(up), -this.sunDir.dot(dir)],
+      color: [
+        par.color[0] * g * this.starRGB[0] * t[0],
+        par.color[1] * g * this.starRGB[1] * t[1],
+        par.color[2] * g * this.starRGB[2] * t[2],
+      ],
+      banded: giant,
+      seed: (par.surfaceSeed % 997) / 13.7,
+      ring: ring ? {
+        inner: ring.innerM / par.radiusM,
+        outer: ring.outerM / par.radiusM,
+        // A moon orbits in the ring plane, so they are edge-on to within its
+        // own orbital tilt - a line drawn through the planet, not a hoop.
+        sinOpening: Math.max(0.008, Math.abs(Math.sin(m.i))),
+        opacity: ring.opacity,
+      } : undefined,
+    });
   }
 
   override onResize(): void {}
@@ -3192,6 +3320,28 @@ export class SurfaceStage extends Stage {
       { k: 'day length', v: formatTime(this.dayS).join(' ') },
       { k: 'daylight', v: this.locked ? 'always' : day <= 0 ? 'never' : `${(day * 24).toFixed(1)} h` },
       { k: 'local time', v: this.locked ? 'no days here' : this.clock() },
+      ...this.parentRows(),
+    ];
+  }
+
+  /** What the planet overhead is doing, when there is one. */
+  private parentRows(): Row[] {
+    const par = this.parent, m = this.parentMoon;
+    if (!par || !m) return [];
+    const alt = COMP.parentAltitude(m.a, this.planet.radiusM, Math.abs(this.lat));
+    const wide = (2 * COMP.parentAngularRadius(par.radiusM, m.a) * 180) / Math.PI;
+    // Its phase is the angle between it and the star, as seen from here.
+    const phase = Math.acos(Math.max(-1, Math.min(1, this.sunDir.dot(this.parentDir))));
+    const litFrac = COMP.illuminatedFraction(Math.PI - phase);
+    const ecl = this.eclipseFraction;
+    return [
+      { k: par.name, v: `${wide.toFixed(1)}° wide`, accent: true },
+      { k: 'it is', v: `${(litFrac * 100).toFixed(0)}% lit`, accent: true },
+      { k: 'and it is', v: alt > 0 ? `${(alt * 180 / Math.PI).toFixed(0)}° up, always` : 'below the horizon, always' },
+      { k: 'a full moon is', v: `${(wide / 0.52).toFixed(0)}× this wide from Earth` },
+      { k: 'month', v: formatTime(this.dayS).join(' ') },
+      { k: 'eclipsed', v: ecl > 0 ? `${(ecl * 100).toFixed(0)}% of every orbit` : 'never' },
+      { k: 'libration', v: `±${(COMP.librationAmplitude(m.e) * 180 / Math.PI).toFixed(1)}°` },
     ];
   }
 
