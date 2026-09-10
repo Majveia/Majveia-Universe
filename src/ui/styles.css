@@ -164,6 +164,13 @@ html, body {
   gap: 5px;
   min-width: 232px;
 }
+/* Folded into two columns once there is too much to say to fit up the left
+   edge without running into the ladder of scales. */
+.readout.split {
+  grid-auto-flow: column;
+  grid-template-rows: repeat(var(--rows, 1), auto);
+  column-gap: 30px;
+}
 .row {
   display: grid;
   grid-template-columns: 96px 1fr;
@@ -735,6 +742,8 @@ body.touch .hint,
 body.touch .rail,
 body.touch .ladder { display: none; }
 body.touch .readout { position: static; }
+/* One column in the tray: there is no width to spare on a phone. */
+body.touch .readout.split { grid-auto-flow: row; grid-template-rows: none; }
 body.touch .masthead { top: max(var(--edge), var(--safe-t)); left: max(var(--edge), var(--safe-l)); }
 body.touch .masthead .seed { max-width: 62vw; }
 /* The inspector becomes a card that clears the ladder and the shelf. */

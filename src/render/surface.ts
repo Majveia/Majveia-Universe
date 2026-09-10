@@ -355,6 +355,67 @@ void main() {
  * month, the horns point away from the star the way they do, and a moon near
  * the star in the sky is a thin crescent because it genuinely is one.
  */
+/**
+ * The wanderers, and everything else that is a point.
+ *
+ * A planet is a disc - Venus is a full arcminute across at its closest, and
+ * Galileo saw it go through phases with a telescope two inches wide - but from
+ * the ground with the naked eye it is a point, and the reason is not the
+ * planet. It is that a point of light entering an eye or a lens comes out the
+ * far side as a small blur however perfect the optics are, and that blur is
+ * far wider than Venus.
+ *
+ * So these are drawn at a fixed angular size that has nothing to do with the
+ * body, and the brightness carries all the information. That is not a cheat,
+ * it is the observation: what makes Venus look bigger than Uranus is that it
+ * is brighter, and a brighter point saturates more of the blur before it falls
+ * below the threshold of the eye. Drawing a gaussian and letting the tone
+ * mapper clip it reproduces that exactly - the visible radius grows as the
+ * square root of the log of the flux, which is why the magnitude scale is
+ * logarithmic in the first place.
+ */
+const POINT_VERT = /* glsl */ `
+precision highp float;
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
+uniform float uDist;
+in vec3 position;      // quad corner in [-1,1]
+in vec3 aDir;          // unit vector to it, local frame
+in float aAng;         // angular radius of the drawn blur, radians
+in vec3 aColor;        // colour times flux, already extinguished by the air
+out vec2 vUv;
+out vec3 vColor;
+void main() {
+  vUv = position.xy;
+  vColor = aColor;
+  vec3 f = normalize(aDir);
+  vec3 r = normalize(cross(abs(f.y) > 0.95 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0), f));
+  vec3 u = cross(f, r);
+  float half_ = uDist * tan(max(aAng, 1e-6));
+  vec3 p = f * uDist + r * (position.x * half_) + u * (position.y * half_);
+  mat4 mv = modelViewMatrix;
+  mv[3].xyz = vec3(0.0);
+  gl_Position = projectionMatrix * mv * vec4(p, 1.0);
+}
+`;
+
+const POINT_FRAG = /* glsl */ `
+precision highp float;
+in vec2 vUv;
+in vec3 vColor;
+out vec4 fragColor;
+void main() {
+  float r2 = dot(vUv, vUv);
+  if (r2 > 1.0) discard;
+  // A tight core and the wide faint halo the eye's own scattering puts round
+  // anything bright, windowed to nothing at the quad edge so no square shows.
+  float core = exp(-r2 * 26.0);
+  float halo = exp(-r2 * 3.2) * 0.16;
+  float w = 1.0 - smoothstep(0.55, 1.0, sqrt(r2));
+  fragColor = vec4(vColor * (core + halo) * w, 1.0);
+}
+`;
+
 const MOON_VERT = /* glsl */ `
 precision highp float;
 uniform mat4 modelViewMatrix;
@@ -474,6 +535,8 @@ void main() {
 
 /** One moon, as the sky sees it. */
 export interface MoonDisc {
+  /** What it is called, for the readout and for naming what took the light. */
+  name?: string;
   /** Unit vector toward it in the local frame, y up. */
   dir: [number, number, number];
   /** Angular radius, radians. */
@@ -490,6 +553,15 @@ export interface MoonDisc {
   ring?: { inner: number; outer: number; sinOpening: number; opacity: number };
 }
 
+export interface SkyPoint {
+  /** Unit vector toward it in the local frame, y up. */
+  dir: [number, number, number];
+  /** Colour times flux, already extinguished by the air it is seen through. */
+  color: [number, number, number];
+  /** Angular radius of the drawn blur - the optics, not the body. */
+  angRad: number;
+}
+
 export interface SurfaceOptions {
   atmosphere: Atmosphere;
   /** Star irradiance above the atmosphere, linear RGB, 1 = Earth's sunlight. */
@@ -503,6 +575,8 @@ export interface SurfaceOptions {
   /** How far the terrain is drawn, metres. */
   reach: number;
   seed: number;
+  /** How many point-source slots to allocate for wanderers. */
+  points?: number;
   /** Ground colours, linear. */
   low: [number, number, number];
   high: [number, number, number];
@@ -526,6 +600,11 @@ export class SurfaceView {
   private groundMat: THREE.RawShaderMaterial;
   private moonMat?: THREE.RawShaderMaterial;
   private moonGeo?: THREE.InstancedBufferGeometry;
+  private pointMat?: THREE.RawShaderMaterial;
+  private pointGeo?: THREE.InstancedBufferGeometry;
+  private pointDir?: Float32Array;
+  private pointAng?: Float32Array;
+  private pointColor?: Float32Array;
   private moonDir?: Float32Array;
   private moonAng?: Float32Array;
   private moonLight?: Float32Array;
@@ -687,6 +766,65 @@ export class SurfaceView {
       (this as { moons?: THREE.Mesh }).moons = mesh;
       this.group.add(mesh);
     }
+
+    const np = o.points ?? 0;
+    if (np > 0) {
+      this.pointDir = new Float32Array(np * 3);
+      this.pointAng = new Float32Array(np);
+      this.pointColor = new Float32Array(np * 3);
+      const pg = new THREE.InstancedBufferGeometry();
+      pg.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+        -1, -1, 0, 1, -1, 0, 1, 1, 0, -1, -1, 0, 1, 1, 0, -1, 1, 0,
+      ]), 3));
+      const dynp = (arr: Float32Array, n: number) => {
+        const a2 = new THREE.InstancedBufferAttribute(arr, n);
+        a2.setUsage(THREE.DynamicDrawUsage);
+        return a2;
+      };
+      pg.setAttribute('aDir', dynp(this.pointDir, 3));
+      pg.setAttribute('aAng', dynp(this.pointAng, 1));
+      pg.setAttribute('aColor', dynp(this.pointColor, 3));
+      pg.instanceCount = 0;
+      this.pointGeo = pg;
+      this.pointMat = new THREE.RawShaderMaterial({
+        vertexShader: POINT_VERT,
+        fragmentShader: POINT_FRAG,
+        glslVersion: THREE.GLSL3,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: false,
+        side: THREE.DoubleSide,
+        uniforms: { uDist: { value: 3e5 } },
+      });
+      const pmesh = new THREE.Mesh(pg, this.pointMat);
+      pmesh.frustumCulled = false;
+      // Behind the moons, in front of the sky: a planet is further off than
+      // any of them and none of it is ever in front of anything.
+      pmesh.renderOrder = -72;
+      this.group.add(pmesh);
+    }
+  }
+
+  /**
+   * Put this frame's point sources in the sky.
+   *
+   * Ordered brightest first by the caller, so when there are more of them than
+   * there are slots the ones that get dropped are the ones nobody could have
+   * seen anyway.
+   */
+  setPoints(list: SkyPoint[]): void {
+    if (!this.pointGeo || !this.pointDir || !this.pointAng || !this.pointColor) return;
+    const n = Math.min(list.length, this.pointAng.length);
+    for (let i = 0; i < n; i++) {
+      this.pointDir.set(list[i].dir, i * 3);
+      this.pointAng[i] = list[i].angRad;
+      this.pointColor.set(list[i].color, i * 3);
+    }
+    this.pointGeo.instanceCount = n;
+    for (const k of ['aDir', 'aAng', 'aColor']) {
+      (this.pointGeo.getAttribute(k) as THREE.BufferAttribute).needsUpdate = true;
+    }
   }
 
   /** Put this frame's moons in the sky. */
@@ -751,5 +889,7 @@ export class SurfaceView {
     this.groundMat.dispose();
     this.moonGeo?.dispose();
     this.moonMat?.dispose();
+    this.pointGeo?.dispose();
+    this.pointMat?.dispose();
   }
 }

@@ -42,7 +42,8 @@ import {
 } from '../physics/gwaves';
 import { peakMultipoles } from '../cosmology/cmb';
 import { GalaxySprites, type GalaxySpriteData } from '../render/galaxysprites';
-import { SurfaceView, type MoonDisc } from '../render/surface';
+import { SurfaceView, type MoonDisc, type SkyPoint } from '../render/surface';
+import * as EPH from '../astro/ephemeris';
 import * as COMP from '../astro/companion';
 import * as SKY from '../astro/sky';
 import { ClusterOrbits, bindingPressure, type Halo } from '../physics/clusterorbits';
@@ -84,6 +85,7 @@ import { detectability } from '../astro/detection';
 import type { DetectionPlotOptions } from '../ui/detection';
 import { blackbodyRGB } from '../astro/blackbody';
 import { RNG, hash3 } from '../core/rng';
+import { stateAt } from '../physics/kepler';
 import { AU, GYR, MPC, M_EARTH, M_JUPITER, MYR, R_EARTH, R_SUN, YEAR, DAY, G, M_SUN, LY } from '../core/constants';
 import { sig, commas, formatDistance, formatTime } from '../ui/hud';
 
@@ -2952,6 +2954,21 @@ export class WorldStage extends Stage {
  * the colour its air makes it, the moons where their orbits put them, and,
  * once the star is down, the galaxy you started from.
  */
+/**
+ * How big a point of light is drawn, radians of angular radius.
+ *
+ * Nothing to do with the body. Venus is an arcminute across at its closest and
+ * every other planet is smaller than that, so what sets the size of the dot
+ * you see is the blur that any optical system - a telescope, a camera, an eye -
+ * turns a point source into. It is the same for all of them, and the
+ * brightness carries all the information there is.
+ */
+const POINT_ANG = 0.0035;
+/** Display gain: a magnitude-zero point comes out just under white. */
+const POINT_GAIN = 0.8;
+/** Magnitude 6.5 in flux - the naked-eye limit, and one display step. */
+const POINT_FLOOR = 0.0025;
+
 export class SurfaceStage extends Stage {
   readonly id = 'surface' as const;
   title = 'Surface';
@@ -2987,6 +3004,30 @@ export class SurfaceStage extends Stage {
   /** The display gain everything in this scene is drawn at. */
   private exposure = 1;
 
+  // The ephemeris: everything in the system that is not the ground you are
+  // standing on. Held as bodies rather than planets so a moon is one too.
+  private host!: Planet;
+  private hostIndex = 0;
+  private muStar = G * M_SUN;
+  private bodies: EPH.Body[] = [];
+  /** The world's rotation axis, fixed in space for the whole visit. */
+  private axis: EPH.Vec3 = [0, 0, 1];
+  /** Where the observer is, heliocentric, this instant. */
+  private obsPos: EPH.Vec3 = [0, 0, 0];
+  /** The rotation from out there to overhead, rebuilt every frame. */
+  private toLocal: (v: EPH.Vec3) => EPH.Vec3 = (v) => v;
+  private wanderers: EPH.Wanderer[] = [];
+  private declination = 0;
+  /** The parent's other moons, which from here are the brightest things up. */
+  private siblings: { moon: Planet['moons'][number]; dPhase: number; period: number }[] = [];
+  /** How much of the star's light is getting through, and what is taking it. */
+  /** What the sibling moons are doing, for the readout. */
+  private siblingSky: { name: string; wideDeg: number; lit: number; alt: number }[] = [];
+  private eclipse = 1;
+  private eclipseCover = 0;
+  private eclipseBy = '';
+  private parentAlt = 0;
+
   build(): void {
     const u = this.env.universe;
     const g = u.galaxy(this.ctx.cluster ?? 0, this.ctx.member ?? 0);
@@ -3006,7 +3047,13 @@ export class SurfaceStage extends Stage {
     this.parentMoon = onMoon ? host.moons[mi] : null;
     this.planet = p;
     this.air = SKY.atmosphereOf(p);
-    this.lat = ((this.ctx.lat ?? 34) * Math.PI) / 180;
+    // Latitude, with one sign to be careful about. On a moon it is measured
+    // from the point directly under the planet, and the planet is due north of
+    // you - which puts you on the far side of the moon's equator from its own
+    // rotation pole, so the celestial latitude is the negative of it. Get that
+    // backwards and the star transits due south while the planet hangs due
+    // north, they are never in the same place, and there is never an eclipse.
+    this.lat = ((onMoon ? -Math.abs(this.ctx.lat ?? 26) : (this.ctx.lat ?? 34)) * Math.PI) / 180;
     this.tilt = p.obliquity;
     // A planet locked to its star has the star nailed in place. A moon locked
     // to its planet is the other way round: the *planet* never moves, and the
@@ -3022,6 +3069,48 @@ export class SurfaceStage extends Stage {
     this.starRGB = [rgb[0] * irr, rgb[1] * irr, rgb[2] * irr];
     this.starRadiusM = st.radiusRsun * R_SUN;
     this.starAngRad = SKY.angularRadius(this.starRadiusM, p.au * AU);
+
+    // The rest of the system, as things to be found in the sky rather than as
+    // places to go. The observer's own world is in the list and skipped by
+    // index, because on a moon it is not the observer's world - it is the
+    // enormous thing overhead, and that is drawn separately.
+    this.host = host;
+    this.hostIndex = this.ctx.planet ?? 0;
+    this.muStar = G * st.currentMassMsun * M_SUN;
+    this.bodies = system.planets.map((pl) => ({
+      name: pl.name, radiusM: pl.radiusM, albedo: pl.albedo,
+      elements: pl.elements, color: pl.color,
+    }));
+    // The rotation axis, worked out once because it does not move. That is the
+    // whole mechanism behind seasons: the axis does not lean toward the star
+    // and away again over the year, it stays pointed at the same distant place
+    // and the world carries it round a circle.
+    const hostState = stateAt(host.elements, this.muStar, 0);
+    this.axis = onMoon
+      // A close moon orbits in its planet's equatorial plane and keeps one
+      // face to it, so it turns once per orbit about that same normal.
+      ? EPH.orbitNormal(hostState)
+      : EPH.spinAxis(hostState, host.obliquity);
+
+    // Its brothers and sisters. From Europa, Io is bigger than the Moon is
+    // from Earth and Ganymede is nearly as big, and they move fast enough to
+    // watch - a couple of degrees an hour - because they are close and quick.
+    if (onMoon && mi !== undefined) {
+      const own = host.moons[mi];
+      const ownPeriod = 2 * Math.PI * Math.sqrt(own.a ** 3 / (G * host.massKg));
+      this.siblings = host.moons.map((m, k) => ({ moon: m, k }))
+        .filter(({ k }) => k !== mi)
+        .map(({ moon }) => ({
+          moon,
+          // Phases relative to the observer's, because the observer's own
+          // clock has already been zeroed on its own orbit.
+          dPhase: moon.phase - own.phase,
+          period: 2 * Math.PI * Math.sqrt(moon.a ** 3 / (G * host.massKg)),
+        }));
+      void ownPeriod;
+      this.parentAlt = COMP.parentAltitude(own.a, p.radiusM, Math.abs(this.lat));
+      this.parentDir.set(0, Math.sin(this.parentAlt), -Math.cos(this.parentAlt)).normalize();
+    }
 
     this.title = p.name;
     const where = this.locked ? 'the day side'
@@ -3090,8 +3179,11 @@ export class SurfaceStage extends Stage {
       // snowline is high, and only a frozen world is white all over.
       ice: cold ? 0.8 : p.surfaceK < 295 ? 0.12 : 0,
       detail: this.env.quality() > 0.6 ? 360 : 200,
-      // Its own moons, plus one slot for the planet it goes round.
-      moons: p.moons.length + (this.parent ? 1 : 0),
+      // Its own moons, plus one slot for the planet it goes round, plus one
+      // for each of that planet's other moons.
+      moons: p.moons.length + (this.parent ? 1 + this.siblings.length : 0),
+      // And one for every other planet in the system.
+      points: Math.max(0, system.planets.length - 1),
     });
     this.root.add(this.view.group);
     // Expose for the sunlit ground, which is the brightest thing that is
@@ -3107,6 +3199,9 @@ export class SurfaceStage extends Stage {
     this.view.setExposure(this.exposure);
 
     this.aim();
+    this.placeMoons();
+    this.placeWanderers();
+    this.applyLight();
     const c = this.env.controls;
     if (this.parent && this.parentMoon) {
       // Face the planet. It is the reason for coming, it never moves, and it
@@ -3135,8 +3230,34 @@ export class SurfaceStage extends Stage {
     cam.updateProjectionMatrix();
   }
 
-  /** Put the star where the planet's rotation and orbit say it is. */
+  /**
+   * Put the star where the world's rotation and orbit say it is, and hang the
+   * rest of the sky off it.
+   *
+   * The second half is the part that matters. A planet's direction is a vector
+   * in the star's frame and no use at all until it is an altitude and an
+   * azimuth, and the bridge between the two is a rotation - which needs two
+   * directions known on both sides. There are exactly two to hand: the world's
+   * rotation axis, which by definition points at its own celestial pole and
+   * therefore stands an altitude equal to the latitude due north; and the star
+   * itself, whose place in the sky is already known because it is what makes
+   * the day.
+   *
+   * Building the map from that pair rather than from angles chosen by hand
+   * means the star lands precisely where the sundial says it does - the
+   * agreement is imposed rather than hoped for - and every other body is then
+   * carried rigidly along with it and lands where it really is.
+   */
   private aim(): void {
+    const t = this.simTime;
+    // Where the world is this instant, off the real orbit.
+    this.obsPos = EPH.positionOf(this.host.elements, this.muStar, t);
+    const starOut = EPH.normalize(EPH.scale(this.obsPos, -1));
+    // The star's declination: the true one, rather than the sinusoid that
+    // assumes a circular orbit and an epoch sitting on an equinox.
+    const dec = Math.asin(Math.max(-1, Math.min(1, EPH.dot(starOut, this.axis))));
+    this.declination = dec;
+
     let alt: number, az: number;
     if (this.locked) {
       // One face to the star forever: it hangs at a fixed place in the sky,
@@ -3144,9 +3265,7 @@ export class SurfaceStage extends Stage {
       alt = Math.PI / 2 - Math.abs(this.lat) * 1.15;
       az = Math.PI;
     } else {
-      const yearFrac = (this.simTime / this.yearS) % 1;
-      const dec = SKY.solarDeclination(this.tilt, yearFrac);
-      const h = SKY.hourAngle((this.simTime / this.dayS) % 1);
+      const h = SKY.hourAngle((t / this.dayS) % 1);
       const p = SKY.altAz(this.lat, dec, h);
       alt = p.altitude; az = p.azimuth;
     }
@@ -3157,12 +3276,41 @@ export class SurfaceStage extends Stage {
     this.sunDir.set(
       Math.cos(alt) * Math.sin(az), Math.sin(alt), -Math.cos(alt) * Math.cos(az),
     ).normalize();
-    this.view?.setSun(this.sunDir, this.starRGB);
 
-    // The starfield is only worth anything once the sky stops drowning it.
-    const dark = 1 - Math.min(1, Math.max(0, (this.altitude + 0.14) / 0.30));
-    const thin = Math.exp(-this.air.betaR[1] * this.air.scaleHeightM * 6);
-    this.sky?.setBrightness(0.5 * Math.max(dark, thin));
+    const starLocal: EPH.Vec3 = [this.sunDir.x, this.sunDir.y, this.sunDir.z];
+    const pole = this.locked ? this.lockedPole(alt, dec) : EPH.dirFromAltAz(this.lat, 0);
+    this.toLocal = EPH.frameMap(this.axis, starOut, pole, starLocal);
+
+    // Standing on a moon, the observer is a million kilometres off the planet
+    // the ephemeris is tracking. That is a fifth of a degree of parallax on
+    // Mars at its closest - too small to see and free to include, since it is
+    // one more subtraction in a chain of them.
+    if (this.parentMoon) {
+      const toSpace = EPH.frameMap(pole, starLocal, this.axis, starOut);
+      const off = toSpace([
+        -this.parentDir.x * this.parentMoon.a,
+        -this.parentDir.y * this.parentMoon.a,
+        -this.parentDir.z * this.parentMoon.a,
+      ]);
+      this.obsPos = [
+        this.obsPos[0] + off[0], this.obsPos[1] + off[1], this.obsPos[2] + off[2],
+      ];
+    }
+  }
+
+  /**
+   * Where the celestial pole is on a world that keeps one face to its star.
+   *
+   * There is no sundial here to read it off - the star never moves - so it is
+   * placed by the one thing that still has to hold: the pole is ninety degrees
+   * minus the declination away from the star. Put it that far along the
+   * meridian, on the far side from the star, and the frame is pinned.
+   */
+  private lockedPole(starAlt: number, dec: number): EPH.Vec3 {
+    // Along the meridian, measuring from the northern horizon through the
+    // zenith to the southern one. The star sits due south here.
+    const beta = Math.PI / 2 - starAlt + dec;
+    return [0, Math.sin(beta), -Math.cos(beta)];
   }
 
   update(dt: number): void {
@@ -3170,6 +3318,31 @@ export class SurfaceStage extends Stage {
     this.sky.mesh.position.copy(this.env.engine.camera.position);
     this.aim();
     this.placeMoons();
+    this.placeWanderers();
+    this.applyLight();
+  }
+
+  /**
+   * Hand the shaders the light there actually is, which is not always all of
+   * it.
+   *
+   * The eclipse factor comes out of the disc geometry a few lines up, and it
+   * is a plain multiplier on the star's colour - so the sky dims with it, the
+   * ground dims with it, and nothing has to know an eclipse is happening. The
+   * exposure is deliberately not touched. A camera that opened up to
+   * compensate would hide the whole event.
+   */
+  private applyLight(): void {
+    const e = this.eclipse;
+    this.view?.setSun(this.sunDir, [
+      this.starRGB[0] * e, this.starRGB[1] * e, this.starRGB[2] * e,
+    ]);
+    // The starfield is only worth anything once the sky stops drowning it -
+    // which happens at night, on a world with no air to drown it with, and
+    // for two minutes in the middle of the day when something gets in the way.
+    const dark = 1 - Math.min(1, Math.max(0, (this.altitude + 0.14) / 0.30));
+    const thin = Math.exp(-this.air.betaR[1] * this.air.scaleHeightM * 6);
+    this.sky?.setBrightness(0.5 * Math.max(dark, thin, 1 - e));
   }
 
   /**
@@ -3225,6 +3398,7 @@ export class SurfaceStage extends Stage {
       // that has been exposed, and vanishes.
       const g = (m.albedo / Math.PI) * this.exposure;
       out.push({
+        name: m.name,
         dir: [dir.x, dir.y, dir.z],
         angRad: Math.atan2(m.radiusM, m.a),
         light,
@@ -3236,7 +3410,154 @@ export class SurfaceStage extends Stage {
       });
     }
     this.placeParent(out);
+    this.placeSiblings(out);
+    this.measureEclipse(out);
     this.view.setMoons(out);
+  }
+
+  /**
+   * The other moons of the planet you are standing on one of.
+   *
+   * These are the best things in the sky after the planet itself, and the
+   * arithmetic says so. Io passes within two hundred and fifty thousand
+   * kilometres of Europa - closer than our Moon ever comes to us - and it is
+   * as big, so it goes past nearly a degree wide. Ganymede is bigger still.
+   * And they move: a couple of degrees an hour, fast enough to watch against
+   * the stars, because they are close and they are quick.
+   *
+   * Their places are two points on two circles, subtracted. The observer's own
+   * angle round its orbit is fixed by the clock - a locked moon turns once per
+   * orbit, so its noon *is* its superior conjunction - and everyone else keeps
+   * the phase offset the system was generated with.
+   */
+  private placeSiblings(out: MoonDisc[]): void {
+    const par = this.parent, own = this.parentMoon;
+    if (!par || !own || !this.siblings.length) return;
+    const ownPeriod = 2 * Math.PI * Math.sqrt(own.a ** 3 / (G * par.massKg));
+    // The orbital plane in local terms. One axis is the planet; the other is
+    // the moon's own rotation pole, which is the orbit normal, because a
+    // locked moon turns once per orbit about exactly that.
+    const u1 = this.parentDir.clone().normalize();
+    const n = new THREE.Vector3(...EPH.dirFromAltAz(this.lat, 0));
+    const u2 = n.clone().cross(u1).normalize();
+    const th0 = (2 * Math.PI * this.simTime) / ownPeriod;
+    const zOwn = own.a * Math.sin(own.i) * Math.sin(th0);
+    this.siblingSky.length = 0;
+
+    const dir = new THREE.Vector3();
+    const right = new THREE.Vector3();
+    const up = new THREE.Vector3();
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    const alt = new THREE.Vector3(1, 0, 0);
+    for (const sib of this.siblings) {
+      const m = sib.moon;
+      const th = (2 * Math.PI * this.simTime) / sib.period + sib.dPhase;
+      const d = th - th0;
+      dir.set(0, 0, 0)
+        .addScaledVector(u1, own.a - m.a * Math.cos(d))
+        .addScaledVector(u2, -m.a * Math.sin(d))
+        .addScaledVector(n, m.a * Math.sin(m.i) * Math.sin(th) - zOwn);
+      const dist = dir.length();
+      if (dist <= 0) continue;
+      dir.multiplyScalar(1 / dist);
+      const altitude = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+      if (altitude < -Math.atan2(m.radiusM, dist)) continue;
+      // Behind the planet, which happens twice an orbit and takes hours.
+      if (dist > own.a && dir.angleTo(this.parentDir)
+        < COMP.parentAngularRadius(par.radiusM, own.a)) continue;
+
+      right.copy(Math.abs(dir.y) > 0.95 ? alt : worldUp).cross(dir).normalize();
+      up.copy(dir).cross(right).normalize();
+      const t = SKY.transmittance(this.air, Math.PI / 2 - altitude);
+      const g = (m.albedo / Math.PI) * this.exposure;
+      const ang = Math.atan2(m.radiusM, dist);
+      this.siblingSky.push({
+        name: m.name,
+        wideDeg: (2 * ang * 180) / Math.PI,
+        lit: COMP.illuminatedFraction(
+          Math.PI - Math.acos(Math.max(-1, Math.min(1, this.sunDir.dot(dir))))),
+        alt: (altitude * 180) / Math.PI,
+      });
+      out.push({
+        name: m.name,
+        dir: [dir.x, dir.y, dir.z],
+        angRad: Math.atan2(m.radiusM, dist),
+        light: [this.sunDir.dot(right), this.sunDir.dot(up), -this.sunDir.dot(dir)],
+        color: [
+          m.color[0] * g * this.starRGB[0] * t[0],
+          m.color[1] * g * this.starRGB[1] * t[1],
+          m.color[2] * g * this.starRGB[2] * t[2],
+        ],
+      });
+    }
+  }
+
+  /**
+   * How much of the star is behind something, and how much light that costs.
+   *
+   * Nothing schedules this. Every disc that has been put in the sky is tested
+   * against the star, and if one of them is in the way the light goes down.
+   * Standing at the sub-planet point of a close moon it happens every single
+   * orbit, because a locked moon's noon is its superior conjunction and the
+   * planet is at the zenith at noon - which is why Io is eclipsed every
+   * forty-two hours and Europa every three and a half days.
+   *
+   * Planets are not tested. A transit of Venus is a real occultation of the
+   * Sun and it takes one part in a thousand of the light, which is a thousand
+   * times too little to see and was still enough to measure the astronomical
+   * unit with in 1769.
+   */
+  private measureEclipse(out: MoonDisc[]): void {
+    const s: EPH.Vec3 = [this.sunDir.x, this.sunDir.y, this.sunDir.z];
+    let light = 1, cover = 0, by = '';
+    for (const d of out) {
+      const sep = EPH.angleBetween(d.dir, s);
+      const f = EPH.coveredFraction(sep, this.starAngRad, d.angRad);
+      if (f <= 0) continue;
+      if (f > cover) { cover = f; by = d.name ?? ''; }
+      light = Math.min(light, EPH.eclipseLight(sep, this.starAngRad, d.angRad));
+    }
+    this.eclipse = light; this.eclipseCover = cover; this.eclipseBy = by;
+  }
+
+  /**
+   * The wanderers: every other planet of this system, where it really is.
+   *
+   * Drawn as points because that is what they are to the eye, dimmed and
+   * reddened by exactly the same air that dims and reddens the star, and
+   * dropped below the naked-eye limit - so a world with a thick atmosphere
+   * loses them near the horizon first and Titan loses them entirely.
+   */
+  private placeWanderers(): void {
+    if (!this.bodies.length) return;
+    this.wanderers = EPH.skyBodies(
+      this.bodies, this.obsPos, this.muStar, this.simTime, this.toLocal, this.hostIndex,
+    );
+    const pts: SkyPoint[] = [];
+    for (const b of this.wanderers) {
+      if (b.altitude < 0) continue;
+      const tau = SKY.opticalDepth(this.air, Math.PI / 2 - b.altitude);
+      let peak = 0;
+      const f: [number, number, number] = [0, 0, 0];
+      for (let k = 0; k < 3; k++) {
+        f[k] = EPH.fluxOfMagnitude(b.mag + EPH.extinctionMag(tau[k]));
+        peak = Math.max(peak, f[k]);
+      }
+      if (peak < POINT_FLOOR) continue;
+      // Its own colour kept, but pulled toward white: a point bright enough to
+      // see saturates the eye, and a saturated eye reports white.
+      const lum = Math.max(1e-6, (b.color[0] + b.color[1] + b.color[2]) / 3);
+      pts.push({
+        dir: b.dir,
+        color: [
+          f[0] * POINT_GAIN * ((b.color[0] / lum) * 0.55 + 0.45),
+          f[1] * POINT_GAIN * ((b.color[1] / lum) * 0.55 + 0.45),
+          f[2] * POINT_GAIN * ((b.color[2] / lum) * 0.55 + 0.45),
+        ],
+        angRad: POINT_ANG,
+      });
+    }
+    this.view.setPoints(pts);
   }
 
   /**
@@ -3270,6 +3591,7 @@ export class SurfaceStage extends Stage {
     const giant = par.pressureBar > 30 || par.radiusM > 2.2e7;
     const ring = par.rings[0];
     out.push({
+      name: par.name,
       dir: [dir.x, dir.y, dir.z],
       angRad: COMP.parentAngularRadius(par.radiusM, m.a),
       light: [this.sunDir.dot(right), this.sunDir.dot(up), -this.sunDir.dot(dir)],
@@ -3298,30 +3620,132 @@ export class SurfaceStage extends Stage {
     const t = SKY.transmittance(this.air, Math.PI / 2 - this.altitude);
     const zen = SKY.opticalDepth(this.air, 0);
     const deg = (this.altitude * 180) / Math.PI;
-    const dec = this.locked ? 0
-      : SKY.solarDeclination(this.tilt, (this.simTime / this.yearS) % 1);
+    const dec = this.locked ? 0 : this.declination;
     const day = this.locked ? 1 : SKY.daylightFraction(this.lat, dec);
     return [
+      ...this.eclipseRows(),
       { k: 'star altitude', v: `${deg >= 0 ? '+' : ''}${deg.toFixed(1)}`, u: '°', accent: true },
       {
         k: 'it is',
-        v: deg > 6 ? 'day' : deg > -0.5 ? 'sunrise or sunset'
-          : deg > -6 ? 'civil twilight' : deg > -18 ? 'astronomical twilight' : 'night',
+        v: this.eclipseCover > 0.98 ? 'totality'
+          : deg > 6 ? 'day' : deg > -0.5 ? 'sunrise or sunset'
+            : deg > -6 ? 'civil twilight' : deg > -18 ? 'astronomical twilight' : 'night',
         accent: true,
       },
       { k: 'star width', v: ((2 * this.starAngRad * 180) / Math.PI).toFixed(2), u: '°' },
       { k: 'air mass', v: this.air.pressurePa > 0 && deg > -1
         ? SKY.airMass(this.air, Math.PI / 2 - this.altitude).toFixed(2) : '—' },
-      { k: 'sunlight left', v: `${(t[1] * 100).toFixed(deg > 5 ? 0 : 1)}%` },
-      { k: 'zenith depth τ', v: zen[1] < 0.01 ? sig(zen[1], 2) : zen[1].toFixed(3) },
-      { k: 'scale height', v: (this.air.scaleHeightM / 1000).toFixed(1), u: 'km' },
+      { k: 'air lets through', v: `${(t[1] * 100).toFixed(deg > 5 ? 0 : 1)}%` },
+      {
+        k: 'zenith τ',
+        // With the scale height beside it, because the two together are the
+        // whole of what an atmosphere does to a sky: how much there is, and
+        // how far up it goes.
+        v: `${zen[1] < 0.01 ? sig(zen[1], 2) : zen[1].toFixed(3)}${
+          this.air.pressurePa > 0
+            ? ` · ${(this.air.scaleHeightM / 1000).toFixed(1)} km up` : ''}`,
+      },
       { k: 'horizon', v: (SKY.horizonDistance(p.radiusM, this.eyeH) / 1000).toFixed(2), u: 'km' },
       { k: 'gravity', v: (p.gravity / 9.80665).toFixed(2), u: 'g' },
       { k: 'day length', v: formatTime(this.dayS).join(' ') },
-      { k: 'daylight', v: this.locked ? 'always' : day <= 0 ? 'never' : `${(day * 24).toFixed(1)} h` },
+      {
+        k: 'year',
+        // The tilt is the whole reason there is anything to say about the
+        // year at all: an upright world has no seasons, only a distance.
+        v: `${formatTime(this.yearS).join(' ')}${this.tilt > 0.02
+          ? ` · ${((this.tilt * 180) / Math.PI).toFixed(0)}° tilt`
+          : ' · upright, no seasons'}`,
+      },
+      {
+        k: 'daylight',
+        // In this world's day, not in Earth's. Mercury's day is fifty-nine of
+        // ours and half of it is daylight, which is twenty-nine days of it.
+        v: this.locked ? 'always' : day <= 0 ? 'never'
+          : formatTime(day * this.dayS).join(' '),
+      },
       { k: 'local time', v: this.locked ? 'no days here' : this.clock() },
       ...this.parentRows(),
+      ...this.siblingRows(),
+      ...this.wandererRows(),
     ];
+  }
+
+  /**
+   * The planet's other moons, when any of them are up.
+   *
+   * Worth a line each because of how big they get. From Europa, Io comes
+   * within two hundred and fifty thousand kilometres - closer than the Moon
+   * ever comes to Earth - and it is very nearly the same size, so it goes past
+   * three quarters of a degree wide and takes a few hours to do it.
+   */
+  private siblingRows(): Row[] {
+    const up = this.siblingSky.filter((m) => m.alt > 0)
+      .sort((a, b) => b.wideDeg - a.wideDeg);
+    if (!up.length) return [];
+    return up.slice(0, 3).map((m) => ({
+      k: m.name,
+      v: `${m.wideDeg.toFixed(2)}° wide · ${(m.lit * 100).toFixed(0)}% lit · ${
+        m.alt.toFixed(0)}° up`,
+      accent: m.wideDeg > 0.52,
+    }));
+  }
+
+  /** What is in front of the star, when something is. */
+  private eclipseRows(): Row[] {
+    if (this.eclipseCover <= 1e-4) return [];
+    const total = this.eclipseCover >= 0.999;
+    return [
+      {
+        k: total ? 'total eclipse' : 'eclipse',
+        v: `${(this.eclipseCover * 100).toFixed(total ? 0 : 1)}% of the star`,
+        accent: true,
+      },
+      { k: 'behind', v: this.eclipseBy || 'something', accent: true },
+      {
+        k: 'sunlight',
+        // Not one minus the covered fraction: a star is limb darkened, so the
+        // first bite out of the dim rim is cheap and the last sliver is not.
+        v: this.eclipse > 0.01 ? `${(this.eclipse * 100).toFixed(1)}%`
+          : `${(this.eclipse * 1e4).toFixed(0)} parts in a million`,
+      },
+    ];
+  }
+
+  /**
+   * The other planets, in the order the eye would find them.
+   *
+   * The elongation row is the one worth reading. A planet inside your own
+   * orbit cannot get far from the star and so is only ever seen just before
+   * dawn or just after dusk, and the row says which; a planet outside it
+   * reaches opposition, rises as the star sets, and is up all night.
+   */
+  private wandererRows(): Row[] {
+    const up = this.wanderers.filter((w) => w.altitude > 0 && w.mag < 6.5);
+    if (!up.length) return [];
+    const rows: Row[] = [{
+      k: 'planets up', v: `${up.length} of ${this.wanderers.length}`, accent: true,
+    }];
+    for (const w of up.slice(0, 3)) {
+      const el = (w.elongationRad * 180) / Math.PI;
+      // East of the star rises after it and sets after it, so it is an
+      // evening star; west of it rises first and is a morning star. Nothing
+      // about the hour comes into it - the same planet is one or the other for
+      // months at a time, and it swaps at conjunction.
+      const evening = EPH.isEastOf(
+        EPH.dirFromAltAz(this.lat, 0),
+        [this.sunDir.x, this.sunDir.y, this.sunDir.z], w.dir,
+      );
+      rows.push({
+        k: w.name,
+        v: `${w.mag >= 0 ? '+' : ''}${w.mag.toFixed(1)} · ${
+          el > 170 ? 'at opposition, up all night'
+            : el < 8 ? 'lost in the glare'
+              : w.inner ? `${evening ? 'an evening' : 'a morning'} star, ${el.toFixed(0)}° out`
+                : `${el.toFixed(0)}° from the star, ${(w.litFraction * 100).toFixed(0)}% lit`}`,
+        accent: w.mag < 0,
+      });
+    }
+    return rows;
   }
 
   /** What the planet overhead is doing, when there is one. */
@@ -3338,7 +3762,7 @@ export class SurfaceStage extends Stage {
       { k: par.name, v: `${wide.toFixed(1)}° wide`, accent: true },
       { k: 'it is', v: `${(litFrac * 100).toFixed(0)}% lit`, accent: true },
       { k: 'and it is', v: alt > 0 ? `${(alt * 180 / Math.PI).toFixed(0)}° up, always` : 'below the horizon, always' },
-      { k: 'a full moon is', v: `${(wide / 0.52).toFixed(0)}× this wide from Earth` },
+      { k: 'vs our moon', v: `${(wide / 0.52).toFixed(0)}× as wide as a full one` },
       { k: 'month', v: formatTime(this.dayS).join(' ') },
       { k: 'eclipsed', v: ecl > 0 ? `${(ecl * 100).toFixed(0)}% of every orbit` : 'never' },
       { k: 'libration', v: `±${(COMP.librationAmplitude(m.e) * 180 / Math.PI).toFixed(1)}°` },

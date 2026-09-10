@@ -256,6 +256,48 @@ describe('phase and elongation', () => {
   });
 });
 
+describe('morning stars and evening stars', () => {
+  it('calls east of the star evening and west of it morning', () => {
+    // Looking north from the equator with the star due east and rising, an
+    // evening star is further east still - which from here is below it, and
+    // still to rise.
+    const pole = E.dirFromAltAz(0, 0);
+    const star = E.dirFromAltAz(0, Math.PI / 2);
+    expect(E.isEastOf(pole, star, E.dirFromAltAz(-0.3, Math.PI / 2))).toBe(true);
+    expect(E.isEastOf(pole, star, E.dirFromAltAz(0.3, Math.PI / 2))).toBe(false);
+  });
+
+  it('gives the same answer at every hour of the night', () => {
+    // The test that matters: a planet is a morning star for months, not for an
+    // evening. The label must not depend on what time it is asked.
+    const dec = 0.2, lat = 0.6;
+    const pole = E.dirFromAltAz(lat, 0);
+    let east = 0, west = 0;
+    for (let h = -3; h <= 3; h += 0.2) {
+      const s = altAz(lat, dec, h);
+      const star = E.dirFromAltAz(s.altitude, s.azimuth);
+      // A body a fixed thirty degrees of hour angle east of the star.
+      const p = altAz(lat, dec, h - 0.5236);
+      const body = E.dirFromAltAz(p.altitude, p.azimuth);
+      if (E.isEastOf(pole, star, body)) east++; else west++;
+    }
+    expect(west).toBe(0);
+    expect(east).toBeGreaterThan(20);
+  });
+
+  it('swaps sides when the body crosses the star', () => {
+    const pole = E.dirFromAltAz(0.6, 0);
+    const s = altAz(0.6, 0.2, 0.4);
+    const star = E.dirFromAltAz(s.altitude, s.azimuth);
+    const at = (dh: number): boolean => {
+      const p = altAz(0.6, 0.2, 0.4 + dh);
+      return E.isEastOf(pole, star, E.dirFromAltAz(p.altitude, p.azimuth));
+    };
+    expect(at(-0.3)).toBe(true);
+    expect(at(0.3)).toBe(false);
+  });
+});
+
 describe('the sky from a real planet', () => {
   const sys = solarSystem();
   const bodies = sys.planets.map((p) => ({
@@ -352,6 +394,16 @@ describe('the sky from a real planet', () => {
     // Jupiter varies by about a magnitude over its synodic cycle.
     expect(worst - best).toBeGreaterThan(0.5);
     expect(worst - best).toBeLessThan(1.5);
+  });
+
+  it('knows which planets are on smaller circles than the observer', () => {
+    const w = at(year * 0.4);
+    const inner = w.filter((x) => x.inner).map((x) => x.name).sort();
+    expect(inner).toEqual(['Mercury', 'Venus']);
+    // And it is exactly those two that can never reach quadrature.
+    for (const x of w) {
+      if (x.inner) expect(deg(x.elongationRad)).toBeLessThan(88);
+    }
   });
 
   it('shows every planet as a disc too small to resolve', () => {

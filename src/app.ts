@@ -594,11 +594,28 @@ export class App {
     this.readoutKeys = '';
     if (!this.stage) return;
     const rows = this.stage.rows();
-    for (const r of rows) {
-      this.readout.add({ key: r.k, label: r.k, accent: r.accent });
+    // Keyed by position, not by label. Two rows can honestly want the same
+    // label - the star is 'it is day' and the planet overhead is 'it is 28%
+    // lit' - and keying on the label meant the second one silently took the
+    // first one's slot and the first one never got a value written into it.
+    for (let i = 0; i < rows.length; i++) {
+      this.readout.add({ key: `${i}`, label: rows[i].k, accent: rows[i].accent });
     }
     this.readout.add({ key: '__fps', label: 'frame' });
+    // Filled in here as well as in the frame loop. The loop only writes values
+    // every sixth frame, so a rebuild left the readout showing a column of
+    // labels with nothing beside them until the next one came round - a
+    // hundred milliseconds normally, and two whole seconds on something slow.
+    for (let i = 0; i < rows.length; i++) this.readout.set(`${i}`, rows[i].v, rows[i].u);
     this.readoutKeys = rows.map((r) => r.k).join('\u0000');
+    // A long readout is folded into two columns rather than allowed to grow up
+    // the left edge into the ladder of scales. Standing on a moon there is
+    // simply more to say than there is anywhere else.
+    const split = rows.length > 13;
+    this.readout.el.classList.toggle('split', split);
+    this.readout.el.style.setProperty(
+      '--rows', String(split ? Math.ceil((rows.length + 1) / 2) : 1),
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -1339,7 +1356,7 @@ export class App {
         if (ov) this.overlayHost.append(ov);
         this.mountedOverlay = ov;
       }
-      for (const r of rows) this.readout.set(r.k, r.v, r.u);
+      for (let i = 0; i < rows.length; i++) this.readout.set(`${i}`, rows[i].v, rows[i].u);
       this.readout.set('__fps', this.fps.toFixed(0), 'fps');
     }
   }

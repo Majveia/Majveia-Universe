@@ -275,6 +275,21 @@ export function elongation(observer: Vec3, target: Vec3): number {
   return angleBetween(scale(observer, -1), sub(target, observer));
 }
 
+/**
+ * Is the body east of the star in the sky, and so an evening star?
+ *
+ * East is the direction the sky turns away from, so anything east of the star
+ * rises after it and sets after it: that is what an evening star is, and the
+ * reason Venus is either that or a morning star and never both at once.
+ *
+ * East on the celestial sphere is the direction of increasing right ascension,
+ * which is a positive turn about the north pole - so the test is one cross
+ * product and one sign, and it does not care what latitude or hour it is.
+ */
+export function isEastOf(pole: Vec3, starDir: Vec3, bodyDir: Vec3): boolean {
+  return dot(cross(pole, starDir), bodyDir) > 0;
+}
+
 /** The largest elongation an inner planet can ever reach, radians. */
 export const maxElongation = (aInner: number, aObserver: number): number =>
   aInner >= aObserver ? Math.PI : Math.asin(aInner / aObserver);
@@ -399,6 +414,9 @@ export interface Wanderer {
   phaseRad: number;
   /** Fraction of the disc that is lit. */
   litFraction: number;
+  /** Closer to the star than the observer is - which is what caps how far
+   * from it in the sky it can ever get. */
+  inner: boolean;
   color: [number, number, number];
 }
 
@@ -423,6 +441,7 @@ export function skyBodies(
   toLocal: (v: Vec3) => Vec3, skip = -1,
 ): Wanderer[] {
   const out: Wanderer[] = [];
+  const obsR = length(observerPos);
   for (let i = 0; i < bodies.length; i++) {
     if (i === skip) continue;
     const b = bodies[i];
@@ -446,6 +465,7 @@ export function skyBodies(
       elongationRad: elongation(observerPos, p),
       phaseRad: alpha,
       litFraction: (1 + Math.cos(alpha)) / 2,
+      inner: length(p) < obsR,
       color: b.color,
     });
   }
