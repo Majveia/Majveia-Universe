@@ -36,6 +36,7 @@ const SCALE_LABELS: Record<ScaleId, string> = {
   world: 'World',
   surface: 'Surface',
   matter: 'Matter',
+  atom: 'Atom',
 };
 
 const SYLLABLES = ['ka', 'thu', 'ma', 'vei', 'or', 'lyn', 'dra', 'sel', 'ith', 'no', 'zar', 'ea', 'vos', 'ri'];
@@ -535,8 +536,8 @@ export class App {
     if (!t) {
       this.flash(this.stage.id === 'world'
         ? 'there is no surface here — it is gas all the way down'
-        : this.stage.id === 'matter'
-          ? 'below this the atom is mostly empty space, and that is another journey'
+        : this.stage.id === 'atom'
+          ? 'the nucleus is down there, ten thousand times smaller again'
           : 'this is the smallest scale');
       return;
     }
@@ -842,6 +843,18 @@ export class App {
           this.flash(on
             ? 'atoms at full size — a solid, which is what it is'
             : 'back to balls and sticks, at a third of scale');
+          break;
+        }
+        case 'KeyQ': {
+          // One orbital at a time. Isolating 2p is how you see that it is two
+          // lobes with a plane of nothing between them - invisible in the
+          // total density, because the other two p orbitals fill that plane in.
+          const c = this.stage as unknown as { cycleOrbital?: () => string };
+          if (!c.cycleOrbital) { this.flash('there are no orbitals at this scale'); break; }
+          const which = c.cycleOrbital();
+          this.mark('KeyQ', which !== 'all of them');
+          this.rebuildReadout();
+          this.flash(which === 'all of them' ? 'the whole cloud again' : `just ${which}`);
           break;
         }
         case 'KeyP': this.capture(); break;

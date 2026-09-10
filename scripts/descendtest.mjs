@@ -97,7 +97,13 @@ check('the surface hands you the ground under it',
 await doubleTap(200, 300);
 check('double tap enters matter from surface', (await scale()) === 'matter',
   `-> ${await scale()}  "${await flash()}"`);
-check('and below the lattice the ladder ends',
+check('the lattice hands you one of its atoms',
+  await page.evaluate(() => window.majveia.app.stage.child()?.id === 'atom'),
+  `-> ${await page.evaluate(() => window.majveia.app.stage.child()?.label)}`);
+await doubleTap(200, 300);
+check('double tap enters atom from matter', (await scale()) === 'atom',
+  `-> ${await scale()}  "${await flash()}"`);
+check('and below the electron cloud the ladder ends',
   await page.evaluate(() => window.majveia.app.stage.child() === null));
 
 console.log(fails === 0 ? '\ndescending works everywhere' : `\n${fails} failed`);

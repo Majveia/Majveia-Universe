@@ -44,7 +44,9 @@ import { peakMultipoles } from '../cosmology/cmb';
 import { GalaxySprites, type GalaxySpriteData } from '../render/galaxysprites';
 import { SurfaceView, type MoonDisc, type SkyPoint } from '../render/surface';
 import { LatticeView, type LatticeAtom } from '../render/lattice';
+import { OrbitalCloud, hundOccupancy, type OrbitalSpec } from '../render/orbital';
 import * as XTL from '../physics/crystal';
+import * as ATOM from '../physics/atom';
 import * as EPH from '../astro/ephemeris';
 import * as COMP from '../astro/companion';
 import * as SKY from '../astro/sky';
@@ -92,10 +94,10 @@ import { AU, GYR, MPC, M_EARTH, M_JUPITER, MYR, R_EARTH, R_SUN, YEAR, DAY, G, M_
 import { sig, commas, formatDistance, formatTime } from '../ui/hud';
 
 export type ScaleId =
-  'cosmos' | 'cluster' | 'galaxy' | 'system' | 'world' | 'surface' | 'matter';
+  'cosmos' | 'cluster' | 'galaxy' | 'system' | 'world' | 'surface' | 'matter' | 'atom';
 
 export const SCALE_ORDER: ScaleId[] =
-  ['cosmos', 'cluster', 'galaxy', 'system', 'world', 'surface', 'matter'];
+  ['cosmos', 'cluster', 'galaxy', 'system', 'world', 'surface', 'matter', 'atom'];
 
 export interface StageCtx {
   cluster?: number;
@@ -107,6 +109,8 @@ export interface StageCtx {
   lon?: number;
   /** Which moon of that planet, when the planet itself has no surface. */
   moon?: number;
+  /** Which element to go into, at the bottom of the ladder. */
+  z?: number;
   /**
    * 1 for the real Solar System rather than a generated one. It travels down
    * the ladder with everything else, so descending from it lands on the real
@@ -4207,9 +4211,253 @@ export class MatterStage extends Stage {
     return d < 100 ? `${d.toFixed(1)} Å` : `${(d / 10).toFixed(1)} nm`;
   }
 
-  child(): Target | null { return null; }
+  /**
+   * Down again, into one of them.
+   *
+   * Aim at an atom and you go into that one - the only place on the ladder
+   * where what you are pointing at picks the substance rather than the object,
+   * and it matters, because the two elements in a grain of quartz look nothing
+   * like each other from the inside.
+   */
+  child(ndc?: THREE.Vector2): Target | null {
+    const m = this.ground.mineral;
+    let el = m.sites[0].el;
+    if (ndc) {
+      const pts = this.atoms.map((a, index) => ({
+        pos: new THREE.Vector3(...a.pos), radius: a.radius * 1.6, index,
+      }));
+      const i = this.pickNearest(ndc, pts, 0.05);
+      if (i !== null) el = m.sites[i % m.sites.length].el;
+    }
+    const e = XTL.ELEMENTS[el];
+    return { id: 'atom', ctx: { ...this.ctx, z: e.z }, label: `one ${e.name} atom` };
+  }
 
   override dispose(): void { this.view.dispose(); super.dispose(); }
+}
+
+/**
+ * One atom, and the fact that it is almost entirely nothing.
+ *
+ * The rung above is a lattice of spheres at fixed distances, which is exactly
+ * how a solid behaves and exactly how every chemist draws it. The spheres are
+ * a lie of a very particular kind: there is no surface there. What sets the
+ * size of an atom is the region an electron is likely to be found in, and
+ * "likely" is the whole of it - the electron does not have a position that it
+ * is at, it has a distribution that it is described by, and the edge of the
+ * atom is wherever you decide the distribution has got small enough.
+ *
+ * So this draws the distribution and nothing else, and re-samples it
+ * continually, because an orbital is not an object sitting still being looked
+ * at. And it draws the nucleus at true size, which means it draws nothing you
+ * can see: if the cloud were a stadium, the nucleus would be a grain of sand
+ * on the centre spot, carrying all but a two-thousandth of the mass. That is
+ * the single most surprising true thing about matter, and it is worth crossing
+ * a scale to be shown rather than told.
+ */
+export class AtomStage extends Stage {
+  readonly id = 'atom' as const;
+  title = 'Atom';
+  subtitle = '';
+  private element!: XTL.Element;
+  private cloud!: OrbitalCloud;
+  private specs: OrbitalSpec[] = [];
+  private only = -1;
+  private radiusM = 1e-10;
+  private massNumber = 1;
+  /** Scene units per metre. One unit is a picometre. */
+  private readonly unit = 1e12;
+  private nucleus?: THREE.Mesh;
+
+  build(): void {
+    const key = Object.keys(XTL.ELEMENTS).find(
+      (k) => XTL.ELEMENTS[k].z === (this.ctx.z ?? 14),
+    ) ?? 'Si';
+    const e = XTL.ELEMENTS[key];
+    this.element = e;
+    this.massNumber = Math.round(e.weight);
+    this.radiusM = ATOM.atomRadius(e.z);
+
+    this.title = e.name;
+    this.subtitle = `${ATOM.configurationText(e.z)} · ${e.z} electron${
+      e.z === 1 ? '' : 's'} round a nucleus ${
+      (this.radiusM / ATOM.nuclearRadius(this.massNumber) / 1000).toFixed(0)
+    } thousand times smaller than the cloud`;
+
+    // One entry per real orbital that has an electron in it, with Hund's rule
+    // deciding which of them that is: one electron into each before any of
+    // them takes a second. It is why carbon's cloud has lobes and neon's is a
+    // ball, and it is visible from here.
+    this.specs = [];
+    for (const sub of ATOM.configuration(e.z)) {
+      const occ = hundOccupancy(sub.l, sub.count);
+      const zeff = ATOM.slaterZeff(e.z, sub.n, sub.l);
+      for (let i = 0; i < occ.length; i++) {
+        if (occ[i] <= 0) continue;
+        const m = i - sub.l;
+        this.specs.push({
+          n: sub.n, l: sub.l, m, occupancy: occ[i], zeff,
+          color: shellColour(sub.n, sub.l),
+          label: ATOM.orbitalLabel(sub.n, sub.l, m),
+        });
+      }
+    }
+
+    const cal = 1 / ATOM.hydrogenicError(e.z);
+    this.cloud = new OrbitalCloud({
+      orbitals: this.specs,
+      points: this.env.quality() > 0.6 ? 46000 : 22000,
+      scale: this.unit,
+      calibration: cal,
+      seed: e.z * 7919 + 13,
+    });
+    this.root.add(this.cloud.group);
+
+    // The nucleus, at true scale. It is there, it is in the right place, and
+    // it is far too small to see - which is the point. Fly at it for long
+    // enough and you do arrive.
+    const rn = ATOM.nuclearRadius(this.massNumber) * this.unit;
+    const nucGeo = new THREE.SphereGeometry(rn, 24, 16);
+    this.nucleus = new THREE.Mesh(nucGeo, new THREE.MeshBasicMaterial({
+      color: new THREE.Color(1.0, 0.86, 0.62),
+    }));
+    this.root.add(this.nucleus);
+
+    const extent = this.radiusM * this.unit;
+    const c = this.env.controls;
+    c.snapTo(new THREE.Vector3(0, 0, 0), extent * 4.4, 0.7, 1.2);
+    c.drift = 0.02;
+    // All the way down to the nucleus, if you have the patience. The scale bar
+    // runs from picometres to femtometres on the way.
+    c.minDistance = rn * 2.5;
+    c.maxDistance = extent * 24;
+    this.timeScale = 1;
+    this.reframe();
+  }
+
+  /**
+   * Keep the depth buffer usable across nine orders of magnitude.
+   *
+   * The camera can stand at a hundred picometres or at four femtometres, and a
+   * fixed near plane cannot serve both: set it small enough to reach the
+   * nucleus and every depth value out at the cloud collapses into the last
+   * few bits, which shows up as the middle of the atom quietly disappearing.
+   * So the near plane follows the camera down instead.
+   */
+  private reframe(): void {
+    const d = this.env.controls.distance;
+    const cam = this.env.engine.camera;
+    cam.near = Math.max(1e-9, d * 1e-3);
+    cam.far = Math.max(d * 40, this.radiusM * this.unit * 60);
+    cam.updateProjectionMatrix();
+  }
+
+  update(dt: number): void {
+    this.simTime += dt;
+    this.reframe();
+    this.cloud.update(dt);
+    // Points are drawn at a constant size on screen, so as you fly in the
+    // cloud thins out and the sampling has to be brightened to compensate -
+    // otherwise the atom simply fades away as you approach it.
+    const d = this.env.controls.distance;
+    const near = Math.max(0.2, Math.min(1, d / (this.radiusM * this.unit * 2)));
+    this.cloud.setBrightness(0.6 / near);
+  }
+
+  /** Step through the occupied orbitals one at a time, then back to all. */
+  cycleOrbital(): string {
+    this.only = this.only + 1 >= this.specs.length ? -1 : this.only + 1;
+    this.cloud.setOnly(this.only);
+    return this.only < 0 ? 'all of them' : this.specs[this.only].label;
+  }
+
+  rows(): Row[] {
+    const e = this.element;
+    const v = ATOM.valenceOf(e.z);
+    const rn = ATOM.nuclearRadius(this.massNumber);
+    const inner = ATOM.innerElectronBeta(e.z);
+    // How big the nucleus would be if the atom were a kilometre across.
+    const km = 1000 * (rn / this.radiusM);
+    return [
+      { k: 'element', v: `${e.name} · ${e.symbol} · ${e.z} protons`, accent: true },
+      { k: 'configuration', v: ATOM.configurationText(e.z) },
+      { k: 'showing', v: this.only < 0 ? 'every orbital at once' : this.specs[this.only].label,
+        accent: this.only >= 0 },
+      { k: 'radius', v: (this.radiusM * 1e12).toFixed(0), u: 'pm' },
+      {
+        k: 'outer electron feels',
+        // Slater's rules: the charge that is left after the inner electrons
+        // have got in the way. It is what makes atoms shrink across a period.
+        v: `${ATOM.slaterZeff(e.z, v.n, v.l).toFixed(2)} protons, not ${e.z}`,
+        accent: true,
+      },
+      {
+        k: 'hydrogenic model',
+        v: `${ATOM.hydrogenicError(e.z) > 1.08 ? 'too big by' : 'within'} ×${
+          ATOM.hydrogenicError(e.z).toFixed(2)}`,
+      },
+      { k: 'innermost shell', v: (ATOM.peakRadius(1, 0, ATOM.slaterZeff(e.z, 1, 0)) * 1e12)
+        .toFixed(2), u: 'pm' },
+      { k: 'nucleus', v: (rn * 1e15).toFixed(2), u: 'fm', accent: true },
+      {
+        k: 'which is',
+        v: `1 part in ${sig(1 / ATOM.emptiness(this.radiusM, this.massNumber), 2)} of the volume`,
+        accent: true,
+      },
+      {
+        k: 'to scale',
+        v: km < 0.1
+          ? `an atom a kilometre wide would have a ${(km * 1000).toFixed(0)} mm nucleus`
+          : `an atom a kilometre wide would have a ${(km * 100).toFixed(0)} cm nucleus`,
+      },
+      {
+        k: 'and yet',
+        // The mass is all in the part you cannot see. An electron is 1/1836 of
+        // a proton, so even hydrogen keeps 99.95% of itself in the nucleus.
+        v: `${(100 * (1 - (e.z * 5.4858e-4) / e.weight)).toFixed(2)}% of the mass is in it`,
+      },
+      {
+        k: 'innermost electron',
+        v: `${(inner * 100).toFixed(1)}% of light speed`,
+      },
+      { k: 'made in', v: e.origin },
+    ];
+  }
+
+  override inspect(): Inspection | null { return null; }
+
+  scaleLabel(): string {
+    const d = this.env.controls.distance;
+    if (d >= 1) return `${d.toFixed(d < 10 ? 2 : 0)} pm`;
+    if (d >= 1e-3) return `${(d * 1000).toFixed(1)} fm`;
+    return `${(d * 1e6).toFixed(1)} am`;
+  }
+
+  child(): Target | null { return null; }
+
+  override dispose(): void { this.cloud.dispose(); super.dispose(); }
+}
+
+/**
+ * A colour per shell, so the structure of the thing is legible.
+ *
+ * By principal quantum number, because that is what separates the shells in
+ * space; a slight shift by angular momentum inside each one, so an s and a p
+ * of the same shell can be told apart.
+ */
+function shellColour(n: number, l: number): [number, number, number] {
+  const base: [number, number, number][] = [
+    [1.00, 0.95, 0.86],   // 1: white hot, and practically at the nucleus
+    [1.00, 0.52, 0.16],   // 2: orange
+    [0.20, 0.82, 0.58],   // 3: green
+    [0.86, 0.30, 0.86],   // 4: magenta
+    [0.30, 0.62, 1.00],   // 5: blue
+  ];
+  const c = base[Math.min(base.length - 1, n - 1)];
+  // A shift with angular momentum, so an s and a p of the same shell are
+  // distinguishable without breaking the shell's identity.
+  const k = 1 - l * 0.10;
+  return [c[0] * k, c[1] * (1 + l * 0.10), c[2] * (1 + l * 0.16)];
 }
 
 export function describePlanet(p: Planet, _system: string, star?: Star): Inspection {
@@ -4276,6 +4524,7 @@ export function makeStage(id: ScaleId, env: StageEnv, ctx: StageCtx): Stage {
     case 'world': return new WorldStage(env, ctx);
     case 'surface': return new SurfaceStage(env, ctx);
     case 'matter': return new MatterStage(env, ctx);
+    case 'atom': return new AtomStage(env, ctx);
   }
 }
 
