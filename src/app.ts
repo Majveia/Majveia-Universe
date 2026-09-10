@@ -37,6 +37,7 @@ const SCALE_LABELS: Record<ScaleId, string> = {
   surface: 'Surface',
   matter: 'Matter',
   atom: 'Atom',
+  nucleus: 'Nucleus',
 };
 
 const SYLLABLES = ['ka', 'thu', 'ma', 'vei', 'or', 'lyn', 'dra', 'sel', 'ith', 'no', 'zar', 'ea', 'vos', 'ri'];
@@ -536,8 +537,8 @@ export class App {
     if (!t) {
       this.flash(this.stage.id === 'world'
         ? 'there is no surface here — it is gas all the way down'
-        : this.stage.id === 'atom'
-          ? 'the nucleus is down there, ten thousand times smaller again'
+        : this.stage.id === 'nucleus'
+          ? 'this is the bottom: everything above you is made of these'
           : 'this is the smallest scale');
       return;
     }

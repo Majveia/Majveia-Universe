@@ -45,6 +45,9 @@ import { GalaxySprites, type GalaxySpriteData } from '../render/galaxysprites';
 import { SurfaceView, type MoonDisc, type SkyPoint } from '../render/surface';
 import { LatticeView, type LatticeAtom } from '../render/lattice';
 import { OrbitalCloud, hundOccupancy, type OrbitalSpec } from '../render/orbital';
+import { NucleonView, type NucleonSeed } from '../render/nucleons';
+import { BindingCurve } from '../ui/bindingcurve';
+import * as NUC from '../physics/nucleus';
 import * as XTL from '../physics/crystal';
 import * as ATOM from '../physics/atom';
 import * as EPH from '../astro/ephemeris';
@@ -94,10 +97,13 @@ import { AU, GYR, MPC, M_EARTH, M_JUPITER, MYR, R_EARTH, R_SUN, YEAR, DAY, G, M_
 import { sig, commas, formatDistance, formatTime } from '../ui/hud';
 
 export type ScaleId =
-  'cosmos' | 'cluster' | 'galaxy' | 'system' | 'world' | 'surface' | 'matter' | 'atom';
+  'cosmos' | 'cluster' | 'galaxy' | 'system' | 'world' | 'surface' | 'matter'
+  | 'atom' | 'nucleus';
 
-export const SCALE_ORDER: ScaleId[] =
-  ['cosmos', 'cluster', 'galaxy', 'system', 'world', 'surface', 'matter', 'atom'];
+export const SCALE_ORDER: ScaleId[] = [
+  'cosmos', 'cluster', 'galaxy', 'system', 'world', 'surface', 'matter',
+  'atom', 'nucleus',
+];
 
 export interface StageCtx {
   cluster?: number;
@@ -4433,7 +4439,14 @@ export class AtomStage extends Stage {
     return `${(d * 1e6).toFixed(1)} am`;
   }
 
-  child(): Target | null { return null; }
+  /** All the way in, to the part that has the mass in it. */
+  child(): Target | null {
+    return {
+      id: 'nucleus',
+      ctx: { ...this.ctx, z: this.element.z },
+      label: `the ${this.element.name} nucleus`,
+    };
+  }
 
   override dispose(): void { this.cloud.dispose(); super.dispose(); }
 }
@@ -4458,6 +4471,219 @@ function shellColour(n: number, l: number): [number, number, number] {
   // distinguishable without breaking the shell's identity.
   const k = 1 - l * 0.10;
   return [c[0] * k, c[1] * (1 + l * 0.10), c[2] * (1 + l * 0.16)];
+}
+
+/**
+ * The bottom, and the reason everything above it is what it is.
+ *
+ * Nine rungs down from the cosmic web, and what is here is a drop of the
+ * densest stuff that exists outside a black hole - a hundred million million
+ * times the density of water, the same material a neutron star is made of, and
+ * the place essentially all of the mass has been hiding the whole way down.
+ *
+ * It churns, and the reason it churns is the best fact in nuclear physics.
+ * Nucleons are fermions, so no two can be in the same state, so they cannot
+ * all settle to the bottom - they are forced up a ladder of momenta whether
+ * there is any heat about or not. The topmost is moving at a quarter of the
+ * speed of light. Nothing is stirring them, and nothing can stop them.
+ *
+ * And on the way in, the ladder closes. Above the readout is the binding
+ * energy curve: how much it took to assemble a nucleus, per nucleon, against
+ * how many nucleons it has. It rises out of hydrogen, peaks at iron, and falls
+ * away. Everything to the left of the peak gives energy when it is joined up,
+ * which is what a star is; nothing at the peak gives anything at all, which is
+ * why a star that has made iron stops holding itself up and falls in; and that
+ * collapse is the supernova, which is how the oxygen four rungs up got out of
+ * the star and into the ground you were standing on.
+ *
+ * The whole ladder is a consequence of the shape of that line.
+ */
+export class NucleusStage extends Stage {
+  readonly id = 'nucleus' as const;
+  title = 'Nucleus';
+  subtitle = '';
+  private element!: XTL.Element;
+  private view!: NucleonView;
+  private curve = new BindingCurve();
+  private z = 14;
+  private a = 28;
+  /** Scene units per metre. One unit is a femtometre. */
+  private readonly unit = 1e15;
+
+  build(): void {
+    const key = Object.keys(XTL.ELEMENTS).find(
+      (k) => XTL.ELEMENTS[k].z === (this.ctx.z ?? 14),
+    ) ?? 'Si';
+    const e = XTL.ELEMENTS[key];
+    this.element = e;
+    this.z = e.z;
+    this.a = Math.round(e.weight);
+    const R = NUC.nuclearRadius(this.a) * this.unit;
+
+    this.title = `${e.name}-${this.a}`;
+    const below = this.a < NUC.bindingPeak().a;
+    this.subtitle = `${this.z} proton${this.z === 1 ? '' : 's'} and ${
+      this.a - this.z} neutron${this.a - this.z === 1 ? '' : 's'} in ${
+      R.toFixed(2)} femtometres · ${
+      below
+        ? 'below the iron peak, so a star can still get energy out of it'
+        : 'at or past the iron peak, where fusing it costs energy rather than giving it'}`;
+
+    // Radii drawn from the Woods-Saxon profile, so the drop has the density
+    // profile electron scattering actually measures - flat inside, and an edge
+    // half a femtometre thick.
+    let s = (this.z * 7919 + this.a * 104729) >>> 0 || 1;
+    const rnd = (): number => {
+      s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0;
+      return s / 4294967296;
+    };
+    const seeds: NucleonSeed[] = [];
+    for (let i = 0; i < this.a; i++) {
+      const p = NUC.sampleNucleon(this.a, rnd);
+      seeds.push({
+        radius: Math.hypot(...p) * this.unit,
+        proton: i < this.z,
+      });
+    }
+    // The shell model's own frequency: hbar omega about 41 A^(-1/3) MeV, which
+    // is the spacing of the levels a nucleon can sit in.
+    const hbarOmegaMeV = 41 / Math.cbrt(this.a);
+    const omega = (hbarOmegaMeV * NUC.MEV_J) / NUC.HBAR;
+
+    this.view = new NucleonView({
+      nucleons: seeds,
+      // The proton's measured charge radius. At this scale a sphere is nearly
+      // fair: this really is a packing problem, unlike the atom above it.
+      size: 0.84,
+      omega,
+      dropRadius: R,
+      seed: this.z * 31 + 7,
+    });
+    this.root.add(this.view.group);
+    this.curve.setNucleus(this.a, this.z, `${e.symbol}-${this.a}`);
+
+    // A nucleon goes round in about half a zeptosecond, so a second of wall
+    // clock is set to a couple of turns of it.
+    this.timeScale = (2 * Math.PI) / omega * 1.6;
+
+    const c = this.env.controls;
+    c.snapTo(new THREE.Vector3(0, 0, 0), R * 4.2, 0.8, 1.15);
+    c.drift = 0.02;
+    c.minDistance = R * 1.05;
+    c.maxDistance = R * 40;
+    const cam = this.env.engine.camera;
+    cam.near = R * 0.02; cam.far = R * 400;
+    cam.updateProjectionMatrix();
+  }
+
+  update(dt: number): void {
+    this.simTime += dt * this.timeScale;
+    this.view.setTime(this.simTime);
+    this.curve.draw();
+  }
+
+  override overlay(): HTMLElement | null { return this.curve.el; }
+
+  rows(): Row[] {
+    const t = NUC.bindingTerms(this.z, this.a);
+    const R = NUC.nuclearRadius(this.a);
+    const rho = NUC.matterDensity(this.a);
+    const peak = NUC.bindingPeak();
+    const gain = NUC.fusionGain(this.z, this.a);
+    const fis = NUC.fissionQ(this.z, this.a);
+    // A teaspoon is five millilitres.
+    const spoon = (rho * 5e-6) / 1e9;
+    return [
+      {
+        k: 'nucleus',
+        v: `${this.element.symbol}-${this.a} · ${this.z}p ${this.a - this.z}n`,
+        accent: true,
+      },
+      { k: 'radius', v: (R * 1e15).toFixed(2), u: 'fm' },
+      {
+        k: 'density',
+        v: `${sig(rho, 3)} kg/m³ · ${sig(rho / 1000, 2)}× water`,
+        accent: true,
+      },
+      {
+        k: 'a teaspoon',
+        v: spoon > 1000
+          ? `weighs ${sig(spoon / 1000, 2)} trillion tonnes`
+          : `weighs ${sig(spoon, 2)} billion tonnes`,
+      },
+      { k: 'and it is', v: 'exactly what a neutron star is made of' },
+      {
+        k: 'binding',
+        v: `${t.perNucleon.toFixed(2)} MeV per nucleon`,
+        accent: true,
+      },
+      {
+        k: 'holding it',
+        // The tug of war, in one line. Volume against surface and Coulomb.
+        v: `+${t.volume.toFixed(0)} strong, ${t.surface.toFixed(0)} surface, ${
+          t.coulomb.toFixed(0)} charge`,
+      },
+      { k: 'asymmetry', v: `${t.asymmetry.toFixed(1)} MeV, and pairing ${
+        t.pairing >= 0 ? '+' : ''}${t.pairing.toFixed(1)}` },
+      { k: 'mass defect', v: `${(NUC.massDefect(this.z, this.a) * 100).toFixed(2)}% lighter than its parts` },
+      {
+        k: 'the iron peak',
+        v: `${peak.perNucleon.toFixed(2)} MeV at A = ${peak.a}`,
+        accent: true,
+      },
+      {
+        k: 'fusing this',
+        v: this.z === 1 && this.a === 1
+          // The most consequential negative number in the sky. Two protons do
+          // not stick: helium-2 is unbound, so the first step of the chain
+          // needs one of them to turn into a neutron by the weak force while
+          // they are briefly touching. That almost never happens, which is why
+          // the sun takes ten billion years over what it could do in minutes.
+          ? 'two protons do not stick — one has to become a neutron first'
+          : gain > 0
+            ? `gives ${(gain * 1000).toFixed(0)} keV per nucleon`
+            : `costs ${(-gain * 1000).toFixed(0)} keV per nucleon`,
+        accent: true,
+      },
+      ...(this.a > 1 ? [{
+        k: 'splitting it',
+        v: fis > 0 ? `gives ${fis.toFixed(0)} MeV` : `costs ${(-fis).toFixed(0)} MeV`,
+      }] : []),
+      { k: 'it would', v: NUC.decayMode(this.z, this.a) },
+      {
+        k: 'nucleons move at',
+        v: `${(NUC.fermiSpeed(this.a) / 2.99792458e8 * 100).toFixed(0)}% of light speed`,
+      },
+      {
+        k: 'with no heat',
+        v: `${NUC.fermiEnergyMeV(this.a).toFixed(0)} MeV of it, at absolute zero`,
+      },
+      ...(t.total > 0 ? [{
+        k: 'against chemistry',
+        v: `${sig(NUC.nuclearOverChemical(this.z, this.a), 2)}× a chemical bond`,
+      }] : []),
+      { k: 'made in', v: this.element.origin },
+      ...(NUC.tooSmallForTheFormula(this.a) ? [{
+        k: 'though',
+        // Honest about where the model stops. A drop needs an inside, and
+        // below a dozen nucleons there is not one.
+        v: this.a < 2
+          ? 'one nucleon is not a drop: there is nothing here to hold together'
+          : 'too small for a liquid drop - this is all surface, and shell '
+            + 'structure the formula ignores is most of the answer',
+        accent: true,
+      }] : []),
+    ];
+  }
+
+  scaleLabel(): string {
+    const d = this.env.controls.distance;
+    return `${d.toFixed(d < 10 ? 2 : 1)} fm`;
+  }
+
+  child(): Target | null { return null; }
+
+  override dispose(): void { this.view.dispose(); super.dispose(); }
 }
 
 export function describePlanet(p: Planet, _system: string, star?: Star): Inspection {
@@ -4525,6 +4751,7 @@ export function makeStage(id: ScaleId, env: StageEnv, ctx: StageCtx): Stage {
     case 'surface': return new SurfaceStage(env, ctx);
     case 'matter': return new MatterStage(env, ctx);
     case 'atom': return new AtomStage(env, ctx);
+    case 'nucleus': return new NucleusStage(env, ctx);
   }
 }
 

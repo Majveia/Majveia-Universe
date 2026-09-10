@@ -103,8 +103,16 @@ check('the lattice hands you one of its atoms',
 await doubleTap(200, 300);
 check('double tap enters atom from matter', (await scale()) === 'atom',
   `-> ${await scale()}  "${await flash()}"`);
-check('and below the electron cloud the ladder ends',
+check('the atom hands you its nucleus',
+  await page.evaluate(() => window.majveia.app.stage.child()?.id === 'nucleus'),
+  `-> ${await page.evaluate(() => window.majveia.app.stage.child()?.label)}`);
+await doubleTap(200, 300);
+check('double tap enters nucleus from atom', (await scale()) === 'nucleus',
+  `-> ${await scale()}  "${await flash()}"`);
+check('and there the ladder ends',
   await page.evaluate(() => window.majveia.app.stage.child() === null));
+check('with the binding curve up',
+  await page.evaluate(() => !!window.majveia.app.stage.overlay()));
 
 console.log(fails === 0 ? '\ndescending works everywhere' : `\n${fails} failed`);
 await browser.close();

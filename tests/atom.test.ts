@@ -246,8 +246,10 @@ describe('the part that is nothing', () => {
     const rho = (a: number): number => a * 1.66053906892e-27
       / ((4 / 3) * Math.PI * A.nuclearRadius(a) ** 3);
     for (const a of [1, 12, 56, 208, 238]) {
-      expect(rho(a) / 2.0e17).toBeGreaterThan(0.8);
-      expect(rho(a) / 2.0e17).toBeLessThan(1.4);
+      // Within a factor of two of 2x10^17 kg/m3, for everything from a proton
+      // to uranium - which is the whole point: it does not vary.
+      expect(rho(a) / 2.4e17).toBeGreaterThan(0.7);
+      expect(rho(a) / 2.4e17).toBeLessThan(1.4);
     }
   });
 

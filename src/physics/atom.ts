@@ -43,8 +43,10 @@ import { C } from '../core/constants';
 export const BOHR = 5.29177210903e-11;
 export const RYDBERG_EV = 13.605693122994;
 export const FINE_STRUCTURE = 7.2973525693e-3;
-/** The constant in R = r0 A^(1/3), m. Every nucleus has the same density. */
-export const NUCLEON_R0 = 1.25e-15;
+/** The constant in R = r0 A^(1/3), m. Every nucleus has the same density.
+ *  The half-density radius of the real diffuse profile, which is what the
+ *  rung below draws; see the nucleus module for why it is not 1.2. */
+export const NUCLEON_R0 = 1.12e-15;
 
 // ---------------------------------------------------------------------------
 // Which orbitals are occupied
