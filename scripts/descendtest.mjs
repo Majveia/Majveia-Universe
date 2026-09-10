@@ -91,7 +91,13 @@ check('a rocky world has somewhere to stand',
 await doubleTap(200, 300);
 check('double tap enters surface from world', (await scale()) === 'surface',
   `-> ${await scale()}  "${await flash()}"`);
-check('and there is nothing under the surface',
+check('the surface hands you the ground under it',
+  await page.evaluate(() => window.majveia.app.stage.child()?.id === 'matter'),
+  `-> ${await page.evaluate(() => JSON.stringify(window.majveia.app.stage.child()))}`);
+await doubleTap(200, 300);
+check('double tap enters matter from surface', (await scale()) === 'matter',
+  `-> ${await scale()}  "${await flash()}"`);
+check('and below the lattice the ladder ends',
   await page.evaluate(() => window.majveia.app.stage.child() === null));
 
 console.log(fails === 0 ? '\ndescending works everywhere' : `\n${fails} failed`);

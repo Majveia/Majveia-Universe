@@ -16,6 +16,7 @@ const stages = [
   ['system', { cluster: 0, member: 0, star: 0 }],
   ['world', { cluster: 0, member: 0, star: 0, planet: 1 }],
   ['surface', { cluster: 0, member: 0, star: 0, real: 1, planet: 2, lat: 34 }],
+  ['matter', { cluster: 0, member: 0, star: 0, real: 1, planet: 2, lat: 34 }],
 ];
 for (const [id, ctx] of stages) {
   await page.evaluate(([i, c]) => window.majveia.travel(i, c), [id, ctx]);

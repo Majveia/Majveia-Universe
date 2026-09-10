@@ -113,6 +113,8 @@ const COMMANDS: Command[] = [
   { key: 'KeyD', label: 'H-R diagram', rank: 34, live: has('toggleHR'), on: lit('KeyD') },
   { key: 'KeyN', label: 'listen', rank: 35, live: has('toggleChirpAudio'), on: lit('KeyN') },
 
+  { key: 'KeyE', label: 'full size', rank: 6, live: has('swell'), on: lit('KeyE') },
+
   { key: 'KeyY', label: 'a whole life', rank: 40, live: has('toggleEvolution'), on: lit('KeyY') },
   { key: 'KeyT', label: 'true scale', rank: 41, live: has('toggleTrueScale'), on: lit('KeyT') },
 

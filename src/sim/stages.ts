@@ -43,6 +43,8 @@ import {
 import { peakMultipoles } from '../cosmology/cmb';
 import { GalaxySprites, type GalaxySpriteData } from '../render/galaxysprites';
 import { SurfaceView, type MoonDisc, type SkyPoint } from '../render/surface';
+import { LatticeView, type LatticeAtom } from '../render/lattice';
+import * as XTL from '../physics/crystal';
 import * as EPH from '../astro/ephemeris';
 import * as COMP from '../astro/companion';
 import * as SKY from '../astro/sky';
@@ -89,10 +91,11 @@ import { stateAt } from '../physics/kepler';
 import { AU, GYR, MPC, M_EARTH, M_JUPITER, MYR, R_EARTH, R_SUN, YEAR, DAY, G, M_SUN, LY } from '../core/constants';
 import { sig, commas, formatDistance, formatTime } from '../ui/hud';
 
-export type ScaleId = 'cosmos' | 'cluster' | 'galaxy' | 'system' | 'world' | 'surface';
+export type ScaleId =
+  'cosmos' | 'cluster' | 'galaxy' | 'system' | 'world' | 'surface' | 'matter';
 
 export const SCALE_ORDER: ScaleId[] =
-  ['cosmos', 'cluster', 'galaxy', 'system', 'world', 'surface'];
+  ['cosmos', 'cluster', 'galaxy', 'system', 'world', 'surface', 'matter'];
 
 export interface StageCtx {
   cluster?: number;
@@ -3919,11 +3922,294 @@ export class SurfaceStage extends Stage {
     return next;
   }
 
-  child(): Target | null { return null; }
+  /**
+   * Down again, into the ground you are standing on.
+   *
+   * There was never a reason for the ladder to stop at the soles of your feet
+   * except that that is where you happen to be. The angstrom is as far below a
+   * metre as the Kuiper belt is above it.
+   */
+  child(): Target | null {
+    const g = XTL.groundOf(this.planet);
+    return { id: 'matter', ctx: { ...this.ctx }, label: g.mineral.name };
+  }
 
   override dispose(): void {
     this.view.dispose(); this.sky.dispose(); super.dispose();
   }
+}
+
+/**
+ * The ground, at the scale where it stops being ground.
+ *
+ * Ten orders of magnitude below the last rung, which is the same span as from
+ * a person to the Kuiper belt, and the only reason the ladder used to stop
+ * where it did is that that is where the observer happens to be standing.
+ *
+ * What is down here is not a smaller version of the landscape. It is a
+ * pattern - a handful of atoms, repeated by translation, without end. That is
+ * the entire definition of a crystal, and everything else about a solid comes
+ * out of it: why it cleaves along flat planes, why gemstones have the shapes
+ * they do, why it has a melting point at all rather than just getting softer.
+ *
+ * And it is moving, which is the point of coming down. The waves running
+ * through it are phonons, and a phonon is a sound wave; the heat in a rock and
+ * a knock travelling through it are the same object, one disorganised and one
+ * not. Standing on the surface you could feel the second one. Here you can
+ * watch the first.
+ */
+export class MatterStage extends Stage {
+  readonly id = 'matter' as const;
+  title = 'Matter';
+  subtitle = '';
+  private ground!: XTL.Ground;
+  private view!: LatticeView;
+  private atoms: LatticeAtom[] = [];
+  private elements: string[] = [];
+  private worldName = '';
+  private worldRadiusM = R_EARTH;
+
+  private bondCount = 0;
+  private tempK = 288;
+  /** 0 for ball and stick, 1 for atoms at the size they really are. */
+  private fill = 0;
+  private fillWant = 0;
+
+  build(): void {
+    const u = this.env.universe;
+    const g = u.galaxy(this.ctx.cluster ?? 0, this.ctx.member ?? 0);
+    const { system } = this.ctx.real
+      ? { system: solarSystem() }
+      : u.system(g, this.ctx.star ?? 0);
+    const host = system.planets[this.ctx.planet ?? 0];
+    const mi = this.ctx.moon;
+    const onMoon = mi !== undefined && mi >= 0 && mi < host.moons.length;
+    const world = onMoon
+      ? COMP.moonAsWorld(host.moons[mi], host, system.star.luminosityLsun, mi)
+      : host;
+    this.worldName = world.name;
+    this.worldRadiusM = world.radiusM;
+    this.tempK = world.surfaceK;
+    this.ground = XTL.groundOf(world);
+    const m = this.ground.mineral;
+
+    this.title = m.name;
+    this.subtitle = `${m.formula} under ${world.name} · ${m.note}`;
+
+    // A block big enough to read as a pattern and small enough to draw. Cells
+    // rather than atoms, because the cell is the thing that repeats.
+    const n = Math.max(3, Math.round(Math.cbrt(2300 / m.sites.length)));
+    const block = XTL.buildBlock(m, n, n, n);
+    const [v1, v2, v3] = XTL.cellVectors(m);
+    const mid: [number, number, number] = [
+      ((v1[0] + v2[0] + v3[0]) * n) / 2,
+      ((v1[1] + v2[1] + v3[1]) * n) / 2,
+      ((v1[2] + v2[2] + v3[2]) * n) / 2,
+    ];
+    // One scene unit is one angstrom, all the way down: no float trouble, and
+    // the numbers on the scale bar are the numbers a crystallographer uses.
+    const ANG = 1e10;
+    // Carved to a ball rather than left as the box it was tiled in. A specimen
+    // with space around it reads as one; a cube that runs off all four edges
+    // reads as wallpaper, and it buries the instruments in the corner.
+    const ball = (Math.min(n * m.a, n * (m.c ?? m.a)) * ANG) / 2;
+    this.atoms = [];
+    for (const at of block) {
+      const x = (at.pos[0] - mid[0]) * ANG;
+      const y = (at.pos[1] - mid[1]) * ANG;
+      const z = (at.pos[2] - mid[2]) * ANG;
+      if (x * x + y * y + z * z > ball * ball) continue;
+      const el = XTL.ELEMENTS[at.el];
+      const r = el.radiusM * ANG;
+      this.atoms.push({
+        pos: [x, y, z],
+        radius: r,
+        // Square-rooted, which keeps the ordering and compresses the range.
+        drawRadius: 0.52 * Math.sqrt(r),
+        color: el.color,
+        mass: el.weight,
+      });
+    }
+    this.elements = [...new Set(m.sites.map((x) => x.el))];
+
+    // A stick between atoms that are actually bonded. Nothing chemical reaches
+    // past three and a bit angstroms, so a molecular solid - where the nearest
+    // other molecule is four away - correctly gets none, and the molecules
+    // float in their packing the way they really do.
+    const d0 = XTL.nearestNeighbour(m) * ANG;
+    const cut = Math.min(d0 * 1.16, 3.2);
+    const bonds: [number, number][] = [];
+    if (cut >= d0) {
+      for (let i = 0; i < this.atoms.length; i++) {
+        for (let j = i + 1; j < this.atoms.length; j++) {
+          const a = this.atoms[i].pos, b = this.atoms[j].pos;
+          const dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+          if (dx * dx + dy * dy + dz * dz <= cut * cut) bonds.push([i, j]);
+        }
+      }
+    }
+    this.bondCount = bonds.length;
+
+    const spacing = XTL.unitSpacing(m) * ANG;
+    const refMass = XTL.unitMass(m);
+    const amplitude = XTL.thermalAmplitude(refMass, m.debyeK, this.tempK) * ANG;
+    const extent = 2 * ball;
+    this.view = new LatticeView({
+      atoms: this.atoms, bonds,
+      amplitude, refMass, spacing,
+      omegaMax: 2 * Math.PI * XTL.debyeFrequency(m),
+      fogRange: extent * 0.85,
+      seed: (world.surfaceSeed % 65521) + 1,
+    });
+    this.root.add(this.view.group);
+
+    // Slow enough to watch. The fastest wave a crystal can carry goes round in
+    // about a tenth of a picosecond, so a second of wall clock is set to a bit
+    // less than one turn of it - and the long waves, which run slower because
+    // the dispersion bends over, swell underneath at a few seconds a cycle.
+    this.timeScale = (0.7 * 2 * Math.PI) / (2 * Math.PI * XTL.debyeFrequency(m));
+
+    const c = this.env.controls;
+    c.snapTo(new THREE.Vector3(0, 0, 0), extent * 1.45, 0.9, 1.15);
+    c.drift = 0.018;
+    c.minDistance = 3;
+    c.maxDistance = extent * 6;
+    const cam = this.env.engine.camera;
+    cam.near = 0.05; cam.far = extent * 40;
+    cam.updateProjectionMatrix();
+  }
+
+  update(dt: number): void {
+    this.simTime += dt * this.timeScale;
+    this.view.setTime(this.simTime);
+    if (this.fill !== this.fillWant) {
+      const k = 1 - Math.exp(-dt * 6);
+      this.fill += (this.fillWant - this.fill) * k;
+      if (Math.abs(this.fillWant - this.fill) < 1e-3) this.fill = this.fillWant;
+      this.view.setFill(this.fill);
+    }
+  }
+
+  /**
+   * Swell the atoms to the size they really are.
+   *
+   * Everything about a crystal is normally drawn as balls and sticks at a
+   * third of scale, because otherwise there is nothing to see - and what there
+   * is nothing to see of is the point. At full size the spheres touch and
+   * overlap and the structure disappears into a solid block, which is what a
+   * solid is. In quartz it is the oxygen that fills the space; the silicon is
+   * a small thing hiding in the gaps between them.
+   */
+  swell(): number {
+    this.fillWant = this.fillWant > 0.5 ? 0 : 1;
+    return this.fillWant;
+  }
+
+  rows(): Row[] {
+    const m = this.ground.mineral;
+    const rho = XTL.latticeDensity(m);
+    const d0 = XTL.nearestNeighbour(m);
+    const melt = m.meltK;
+    const shake = this.ground.shake;
+    const rows: Row[] = [
+      { k: 'mineral', v: `${m.name} · ${m.formula}`, accent: true },
+      { k: 'system', v: `${m.system} · ${m.group}` },
+      {
+        k: 'cell',
+        v: m.c
+          ? `a ${(m.a * 1e10).toFixed(3)} · c ${(m.c * 1e10).toFixed(3)} Å`
+          : `a ${(m.a * 1e10).toFixed(4)} Å`,
+      },
+      { k: 'nearest atom', v: (d0 * 1e10).toFixed(3), u: 'Å' },
+      { k: 'each surrounded by', v: `${XTL.coordination(m, 0)} of them` },
+      {
+        k: 'density',
+        // Mass in a cell over the volume of the cell, and nothing else. That it
+        // lands on the measured value is the check that the structure is real.
+        v: `${rho.toFixed(0)} kg/m³ · measured ${m.densityRef}`,
+      },
+      { k: 'atoms per m³', v: sig(XTL.numberDensity(m), 3) },
+      { k: 'temperature', v: `${this.tempK.toFixed(0)} K`, accent: true },
+      {
+        k: 'shaking through',
+        v: `${(shake * 100).toFixed(1)}% of the spacing`,
+        accent: true,
+      },
+      {
+        k: 'it gives way at',
+        // Not a prediction - the measured melting point. What is predicted is
+        // the ratio, and it comes out near a tenth for everything.
+        v: this.ground.molten
+          ? `${melt.toFixed(0)} K, and it is past it`
+          : `${melt.toFixed(0)} K, ${(melt - this.tempK).toFixed(0)} K away`,
+      },
+      { k: 'speed of sound', v: XTL.soundSpeed(m).toFixed(0), u: 'm/s' },
+      { k: 'Debye temperature', v: m.debyeK.toFixed(0), u: 'K' },
+      {
+        k: 'highest note',
+        // There is a shortest wave a lattice can carry, and it is two atoms
+        // long, because anything shorter has nothing left to wave.
+        v: `${(XTL.debyeFrequency(m) / 1e12).toFixed(1)} THz`,
+      },
+      {
+        k: 'in view',
+        v: `${commas(this.atoms.length)} atoms${
+          this.bondCount ? ` · ${commas(this.bondCount)} bonds` : ''}`,
+      },
+      {
+        k: 'stacked end to end',
+        // The number that says how far down this is. It is the same arithmetic
+        // as counting metre sticks out to the Kuiper belt, and it comes to
+        // about the same answer.
+        v: `${sig((2 * this.worldRadiusM) / m.a, 3)} cells would span ${this.worldName}`,
+      },
+    ];
+    for (const el of this.elements) {
+      const e = XTL.ELEMENTS[el];
+      rows.push({ k: e.name, v: e.origin });
+    }
+    return rows;
+  }
+
+  /** Click an atom and find out where its nuclei were assembled. */
+  override inspect(ndc: THREE.Vector2): Inspection | null {
+    const pts = this.atoms.map((a, index) => ({
+      pos: new THREE.Vector3(...a.pos), radius: a.radius * 1.6, index,
+    }));
+    const i = this.pickNearest(ndc, pts, 0.05);
+    if (i === null) return null;
+    const m = this.ground.mineral;
+    const key = m.sites[i % m.sites.length].el;
+    const e = XTL.ELEMENTS[key];
+    const amp = XTL.amplitudeOf(m, key, this.tempK);
+    return {
+      title: e.name,
+      kind: `${e.symbol} · element ${e.z}`,
+      swatch: `rgb(${e.color.map((c) => Math.round(255 * Math.sqrt(c))).join(',')})`,
+      rows: [
+        { k: 'mass', v: e.weight.toFixed(3), u: 'u' },
+        { k: 'protons', v: `${e.z}` },
+        { k: 'radius', v: (e.radiusM * 1e12).toFixed(0), u: 'pm' },
+        { k: 'moving through', v: `±${(amp * 1e12).toFixed(1)} pm` },
+        {
+          k: 'which is',
+          v: `${((amp / XTL.nearestNeighbour(m)) * 100).toFixed(1)}% of a bond`,
+        },
+      ],
+      note: `Made in ${e.origin}. Every one of these nuclei is older than the `
+        + `world it is now part of, and you have already flown past the kind of `
+        + `place it was made in.`,
+    };
+  }
+
+  scaleLabel(): string {
+    const d = this.env.controls.distance;
+    return d < 100 ? `${d.toFixed(1)} Å` : `${(d / 10).toFixed(1)} nm`;
+  }
+
+  child(): Target | null { return null; }
+
+  override dispose(): void { this.view.dispose(); super.dispose(); }
 }
 
 export function describePlanet(p: Planet, _system: string, star?: Star): Inspection {
@@ -3989,6 +4275,7 @@ export function makeStage(id: ScaleId, env: StageEnv, ctx: StageCtx): Stage {
     case 'system': return new SystemStage(env, ctx);
     case 'world': return new WorldStage(env, ctx);
     case 'surface': return new SurfaceStage(env, ctx);
+    case 'matter': return new MatterStage(env, ctx);
   }
 }
 

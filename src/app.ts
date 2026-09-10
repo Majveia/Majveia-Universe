@@ -35,6 +35,7 @@ const SCALE_LABELS: Record<ScaleId, string> = {
   system: 'System',
   world: 'World',
   surface: 'Surface',
+  matter: 'Matter',
 };
 
 const SYLLABLES = ['ka', 'thu', 'ma', 'vei', 'or', 'lyn', 'dra', 'sel', 'ith', 'no', 'zar', 'ea', 'vos', 'ri'];
@@ -534,8 +535,8 @@ export class App {
     if (!t) {
       this.flash(this.stage.id === 'world'
         ? 'there is no surface here — it is gas all the way down'
-        : this.stage.id === 'surface'
-          ? 'this is the bottom: you are standing on it'
+        : this.stage.id === 'matter'
+          ? 'below this the atom is mostly empty space, and that is another journey'
           : 'this is the smallest scale');
       return;
     }
@@ -830,6 +831,19 @@ export class App {
           if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
           else document.documentElement.requestFullscreen?.().catch(() => {});
           break;
+        case 'KeyE': {
+          // Atoms at the size they really are. Everything is normally drawn
+          // ball-and-stick at a third of scale because otherwise there is
+          // nothing to see - and what there is nothing to see of is the point.
+          const c = this.stage as unknown as { swell?: () => number };
+          if (!c.swell) { this.flash('there are no atoms to swell at this scale'); break; }
+          const on = c.swell() > 0.5;
+          this.mark('KeyE', on);
+          this.flash(on
+            ? 'atoms at full size — a solid, which is what it is'
+            : 'back to balls and sticks, at a third of scale');
+          break;
+        }
         case 'KeyP': this.capture(); break;
         case 'KeyL': {
           const c = this.stage as unknown as { observeDeepField?: () => boolean };
