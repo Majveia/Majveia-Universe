@@ -156,6 +156,50 @@ export interface Inspection {
   detection?: DetectionPlotOptions;
 }
 
+/**
+ * The planetary system a context points at, and the seed its sky was made from.
+ *
+ * Four stages needed the same five lines to answer this and one of them had
+ * quietly dropped the seed, so its starfield was a different starfield from the
+ * one directly above it.
+ */
+function systemOf(
+  env: StageEnv, ctx: StageCtx,
+): { system: PlanetarySystem; seed: number } {
+  const g = env.universe.galaxy(ctx.cluster ?? 0, ctx.member ?? 0);
+  return ctx.real
+    ? { system: solarSystem(), seed: 0x50143 }
+    : env.universe.system(g, ctx.star ?? 0);
+}
+
+/**
+ * The world a context is standing on, which may not be a planet.
+ *
+ * Below thirty bars of hydrogen a giant has no bottom, so the ladder hands you
+ * one of its moons instead - and from that point down a moon is a world like
+ * any other. The only thing that differs is what is in its sky, and that is
+ * the caller's business rather than this function's.
+ */
+function standingOn(system: PlanetarySystem, ctx: StageCtx): {
+  world: Planet;
+  host: Planet;
+  /** The moon, when the world is one; null when you are on the planet. */
+  moon: Planet['moons'][number] | null;
+  moonIndex: number;
+} {
+  const host = system.planets[ctx.planet ?? 0];
+  const mi = ctx.moon;
+  const onMoon = mi !== undefined && mi >= 0 && mi < host.moons.length;
+  return {
+    host,
+    moon: onMoon ? host.moons[mi] : null,
+    moonIndex: onMoon ? mi : -1,
+    world: onMoon
+      ? COMP.moonAsWorld(host.moons[mi], host, system.star.luminosityLsun, mi)
+      : host,
+  };
+}
+
 export abstract class Stage {
   readonly root = new THREE.Group();
   abstract readonly id: ScaleId;
@@ -2696,11 +2740,7 @@ export class WorldStage extends Stage {
   private eclipseDepth = 1;
 
   build(): void {
-    const u = this.env.universe;
-    const g = u.galaxy(this.ctx.cluster ?? 0, this.ctx.member ?? 0);
-    const { system, seed } = this.ctx.real
-      ? { system: solarSystem(), seed: 0x50143 }
-      : u.system(g, this.ctx.star ?? 0);
+    const { system, seed } = systemOf(this.env, this.ctx);
     const p = system.planets[this.ctx.planet ?? 0];
     this.planet = p;
     this.title = p.name;
@@ -2910,10 +2950,7 @@ export class WorldStage extends Stage {
   }
 
   override inspect(): Inspection | null {
-    const u = this.env.universe;
-    const g = u.galaxy(this.ctx.cluster ?? 0, this.ctx.member ?? 0);
-    const sys = this.ctx.real ? solarSystem() : u.system(g, this.ctx.star ?? 0).system;
-    return describePlanet(this.planet, this.title, sys.star);
+    return describePlanet(this.planet, this.title, systemOf(this.env, this.ctx).system.star);
   }
 
   child(): Target | null {
@@ -3066,22 +3103,11 @@ export class SurfaceStage extends Stage {
   private hasHalo = new Set<string>();
 
   build(): void {
-    const u = this.env.universe;
-    const g = u.galaxy(this.ctx.cluster ?? 0, this.ctx.member ?? 0);
-    const { system, seed } = this.ctx.real
-      ? { system: solarSystem(), seed: 0x50143 }
-      : u.system(g, this.ctx.star ?? 0);
-    const host = system.planets[this.ctx.planet ?? 0];
-    // Standing on a moon of it, if the planet itself has no bottom - or if you
-    // aimed at one. From here down it is a world like any other; the only
-    // difference is what is in its sky.
-    const mi = this.ctx.moon;
-    const onMoon = mi !== undefined && mi >= 0 && mi < host.moons.length;
-    const p = onMoon
-      ? COMP.moonAsWorld(host.moons[mi], host, system.star.luminosityLsun, mi)
-      : host;
+    const { system, seed } = systemOf(this.env, this.ctx);
+    const { world: p, host, moon, moonIndex: mi } = standingOn(system, this.ctx);
+    const onMoon = moon !== null;
     this.parent = onMoon ? host : null;
-    this.parentMoon = onMoon ? host.moons[mi] : null;
+    this.parentMoon = moon;
     this.planet = p;
     this.air = SKY.atmosphereOf(p);
     // Latitude, with one sign to be careful about. On a moon it is measured
@@ -3981,22 +4007,18 @@ export class MatterStage extends Stage {
 
   private bondCount = 0;
   private tempK = 288;
+  /** The readout's constants, worked out once: none of them can change here. */
+  private facts!: {
+    rho: number; bondPm: number; coord: number; n: number; vs: number;
+    thz: number; spanCells: number;
+  };
   /** 0 for ball and stick, 1 for atoms at the size they really are. */
   private fill = 0;
   private fillWant = 0;
 
   build(): void {
-    const u = this.env.universe;
-    const g = u.galaxy(this.ctx.cluster ?? 0, this.ctx.member ?? 0);
-    const { system } = this.ctx.real
-      ? { system: solarSystem() }
-      : u.system(g, this.ctx.star ?? 0);
-    const host = system.planets[this.ctx.planet ?? 0];
-    const mi = this.ctx.moon;
-    const onMoon = mi !== undefined && mi >= 0 && mi < host.moons.length;
-    const world = onMoon
-      ? COMP.moonAsWorld(host.moons[mi], host, system.star.luminosityLsun, mi)
-      : host;
+    const { system } = systemOf(this.env, this.ctx);
+    const { world } = standingOn(system, this.ctx);
     this.worldName = world.name;
     this.worldRadiusM = world.radiusM;
     this.tempK = world.surfaceK;
@@ -4060,6 +4082,16 @@ export class MatterStage extends Stage {
     }
     this.bondCount = bonds.length;
 
+    this.facts = {
+      rho: XTL.latticeDensity(m),
+      bondPm: XTL.nearestNeighbour(m) * 1e10,
+      coord: XTL.coordination(m, 0),
+      n: XTL.numberDensity(m),
+      vs: XTL.soundSpeed(m),
+      thz: XTL.debyeFrequency(m) / 1e12,
+      spanCells: (2 * this.worldRadiusM) / m.a,
+    };
+
     const spacing = XTL.unitSpacing(m) * ANG;
     const refMass = XTL.unitMass(m);
     const amplitude = XTL.thermalAmplitude(refMass, m.debyeK, this.tempK) * ANG;
@@ -4116,9 +4148,7 @@ export class MatterStage extends Stage {
   }
 
   rows(): Row[] {
-    const m = this.ground.mineral;
-    const rho = XTL.latticeDensity(m);
-    const d0 = XTL.nearestNeighbour(m);
+    const m = this.ground.mineral, f = this.facts;
     const melt = m.meltK;
     const shake = this.ground.shake;
     const rows: Row[] = [
@@ -4130,15 +4160,15 @@ export class MatterStage extends Stage {
           ? `a ${(m.a * 1e10).toFixed(3)} · c ${(m.c * 1e10).toFixed(3)} Å`
           : `a ${(m.a * 1e10).toFixed(4)} Å`,
       },
-      { k: 'nearest atom', v: (d0 * 1e10).toFixed(3), u: 'Å' },
-      { k: 'each surrounded by', v: `${XTL.coordination(m, 0)} of them` },
+      { k: 'nearest atom', v: f.bondPm.toFixed(3), u: 'Å' },
+      { k: 'each surrounded by', v: `${f.coord} of them` },
       {
         k: 'density',
         // Mass in a cell over the volume of the cell, and nothing else. That it
         // lands on the measured value is the check that the structure is real.
-        v: `${rho.toFixed(0)} kg/m³ · measured ${m.densityRef}`,
+        v: `${f.rho.toFixed(0)} kg/m³ · measured ${m.densityRef}`,
       },
-      { k: 'atoms per m³', v: sig(XTL.numberDensity(m), 3) },
+      { k: 'atoms per m³', v: sig(f.n, 3) },
       { k: 'temperature', v: `${this.tempK.toFixed(0)} K`, accent: true },
       {
         k: 'shaking through',
@@ -4153,13 +4183,13 @@ export class MatterStage extends Stage {
           ? `${melt.toFixed(0)} K, and it is past it`
           : `${melt.toFixed(0)} K, ${(melt - this.tempK).toFixed(0)} K away`,
       },
-      { k: 'speed of sound', v: XTL.soundSpeed(m).toFixed(0), u: 'm/s' },
+      { k: 'speed of sound', v: f.vs.toFixed(0), u: 'm/s' },
       { k: 'Debye temperature', v: m.debyeK.toFixed(0), u: 'K' },
       {
         k: 'highest note',
         // There is a shortest wave a lattice can carry, and it is two atoms
         // long, because anything shorter has nothing left to wave.
-        v: `${(XTL.debyeFrequency(m) / 1e12).toFixed(1)} THz`,
+        v: `${f.thz.toFixed(1)} THz`,
       },
       {
         k: 'in view',
@@ -4171,7 +4201,7 @@ export class MatterStage extends Stage {
         // The number that says how far down this is. It is the same arithmetic
         // as counting metre sticks out to the Kuiper belt, and it comes to
         // about the same answer.
-        v: `${sig((2 * this.worldRadiusM) / m.a, 3)} cells would span ${this.worldName}`,
+        v: `${sig(f.spanCells, 3)} cells would span ${this.worldName}`,
       },
     ];
     for (const el of this.elements) {
@@ -4271,6 +4301,18 @@ export class AtomStage extends Stage {
   private only = -1;
   private radiusM = 1e-10;
   private massNumber = 1;
+  /**
+   * Everything in the readout that cannot change while you are standing here.
+   *
+   * It is all a function of one integer. Recomputing it on every readout tick
+   * cost most of a millisecond, nearly all of it in two scans for the peak of
+   * a radial distribution that had already been scanned for at build time.
+   */
+  private facts!: {
+    config: string; valenceZeff: number; error: number; innerPeakPm: number;
+    nucleusFm: number; oneIn: number; kmNucleus: number; massPercent: number;
+    beta: number;
+  };
   /** Scene units per metre. One unit is a picometre. */
   private readonly unit = 1e12;
   private nucleus?: THREE.Mesh;
@@ -4294,6 +4336,7 @@ export class AtomStage extends Stage {
     // deciding which of them that is: one electron into each before any of
     // them takes a second. It is why carbon's cloud has lobes and neon's is a
     // ball, and it is visible from here.
+    const v0 = ATOM.valenceOf(e.z);
     this.specs = [];
     for (const sub of ATOM.configuration(e.z)) {
       const occ = hundOccupancy(sub.l, sub.count);
@@ -4309,7 +4352,24 @@ export class AtomStage extends Stage {
       }
     }
 
-    const cal = 1 / ATOM.hydrogenicError(e.z);
+    const err = ATOM.hydrogenicError(e.z);
+    const rn = ATOM.nuclearRadius(this.massNumber);
+    this.facts = {
+      config: ATOM.configurationText(e.z),
+      valenceZeff: ATOM.slaterZeff(e.z, v0.n, v0.l),
+      error: err,
+      innerPeakPm: ATOM.peakRadius(1, 0, ATOM.slaterZeff(e.z, 1, 0)) * 1e12,
+      nucleusFm: rn * 1e15,
+      oneIn: 1 / ATOM.emptiness(this.radiusM, this.massNumber),
+      // How big the nucleus would be if the atom were a kilometre across.
+      kmNucleus: 1000 * (rn / this.radiusM),
+      // An electron is one part in 1836 of a proton, so even hydrogen keeps
+      // all but a two-thousandth of itself in the part you cannot see.
+      massPercent: 100 * (1 - (e.z * 5.4858e-4) / e.weight),
+      beta: ATOM.innerElectronBeta(e.z),
+    };
+
+    const cal = 1 / err;
     this.cloud = new OrbitalCloud({
       orbitals: this.specs,
       points: this.env.quality() > 0.6 ? 46000 : 22000,
@@ -4322,8 +4382,8 @@ export class AtomStage extends Stage {
     // The nucleus, at true scale. It is there, it is in the right place, and
     // it is far too small to see - which is the point. Fly at it for long
     // enough and you do arrive.
-    const rn = ATOM.nuclearRadius(this.massNumber) * this.unit;
-    const nucGeo = new THREE.SphereGeometry(rn, 24, 16);
+    const rNuc = ATOM.nuclearRadius(this.massNumber) * this.unit;
+    const nucGeo = new THREE.SphereGeometry(rNuc, 24, 16);
     this.nucleus = new THREE.Mesh(nucGeo, new THREE.MeshBasicMaterial({
       color: new THREE.Color(1.0, 0.86, 0.62),
     }));
@@ -4335,7 +4395,7 @@ export class AtomStage extends Stage {
     c.drift = 0.02;
     // All the way down to the nucleus, if you have the patience. The scale bar
     // runs from picometres to femtometres on the way.
-    c.minDistance = rn * 2.5;
+    c.minDistance = rNuc * 2.5;
     c.maxDistance = extent * 24;
     this.timeScale = 1;
     this.reframe();
@@ -4378,15 +4438,11 @@ export class AtomStage extends Stage {
   }
 
   rows(): Row[] {
-    const e = this.element;
-    const v = ATOM.valenceOf(e.z);
-    const rn = ATOM.nuclearRadius(this.massNumber);
-    const inner = ATOM.innerElectronBeta(e.z);
-    // How big the nucleus would be if the atom were a kilometre across.
-    const km = 1000 * (rn / this.radiusM);
+    const e = this.element, f = this.facts;
+    const km = f.kmNucleus;
     return [
       { k: 'element', v: `${e.name} · ${e.symbol} · ${e.z} protons`, accent: true },
-      { k: 'configuration', v: ATOM.configurationText(e.z) },
+      { k: 'configuration', v: f.config },
       { k: 'showing', v: this.only < 0 ? 'every orbital at once' : this.specs[this.only].label,
         accent: this.only >= 0 },
       { k: 'radius', v: (this.radiusM * 1e12).toFixed(0), u: 'pm' },
@@ -4394,20 +4450,18 @@ export class AtomStage extends Stage {
         k: 'outer electron feels',
         // Slater's rules: the charge that is left after the inner electrons
         // have got in the way. It is what makes atoms shrink across a period.
-        v: `${ATOM.slaterZeff(e.z, v.n, v.l).toFixed(2)} protons, not ${e.z}`,
+        v: `${f.valenceZeff.toFixed(2)} protons, not ${e.z}`,
         accent: true,
       },
       {
         k: 'hydrogenic model',
-        v: `${ATOM.hydrogenicError(e.z) > 1.08 ? 'too big by' : 'within'} ×${
-          ATOM.hydrogenicError(e.z).toFixed(2)}`,
+        v: `${f.error > 1.08 ? 'too big by' : 'within'} ×${f.error.toFixed(2)}`,
       },
-      { k: 'innermost shell', v: (ATOM.peakRadius(1, 0, ATOM.slaterZeff(e.z, 1, 0)) * 1e12)
-        .toFixed(2), u: 'pm' },
-      { k: 'nucleus', v: (rn * 1e15).toFixed(2), u: 'fm', accent: true },
+      { k: 'innermost shell', v: f.innerPeakPm.toFixed(2), u: 'pm' },
+      { k: 'nucleus', v: f.nucleusFm.toFixed(2), u: 'fm', accent: true },
       {
         k: 'which is',
-        v: `1 part in ${sig(1 / ATOM.emptiness(this.radiusM, this.massNumber), 2)} of the volume`,
+        v: `1 part in ${sig(f.oneIn, 2)} of the volume`,
         accent: true,
       },
       {
@@ -4418,13 +4472,11 @@ export class AtomStage extends Stage {
       },
       {
         k: 'and yet',
-        // The mass is all in the part you cannot see. An electron is 1/1836 of
-        // a proton, so even hydrogen keeps 99.95% of itself in the nucleus.
-        v: `${(100 * (1 - (e.z * 5.4858e-4) / e.weight)).toFixed(2)}% of the mass is in it`,
+        v: `${f.massPercent.toFixed(2)}% of the mass is in it`,
       },
       {
         k: 'innermost electron',
-        v: `${(inner * 100).toFixed(1)}% of light speed`,
+        v: `${(f.beta * 100).toFixed(1)}% of light speed`,
       },
       { k: 'made in', v: e.origin },
     ];
@@ -4507,6 +4559,13 @@ export class NucleusStage extends Stage {
   private curve = new BindingCurve();
   private z = 14;
   private a = 28;
+  /** The readout's constants. A nucleus does not change its mind. */
+  private facts!: {
+    terms: NUC.BindingTerms; radiusFm: number; rho: number;
+    peak: { a: number; z: number; perNucleon: number };
+    gain: number; fission: number; decay: string; defect: number;
+    betaPercent: number; fermiMeV: number; chem: number; spoon: number;
+  };
   /** Scene units per metre. One unit is a femtometre. */
   private readonly unit = 1e15;
 
@@ -4562,6 +4621,23 @@ export class NucleusStage extends Stage {
     this.root.add(this.view.group);
     this.curve.setNucleus(this.a, this.z, `${e.symbol}-${this.a}`);
 
+    const rho = NUC.matterDensity(this.a);
+    this.facts = {
+      terms: NUC.bindingTerms(this.z, this.a),
+      radiusFm: NUC.nuclearRadius(this.a) * 1e15,
+      rho,
+      peak: NUC.bindingPeak(),
+      gain: NUC.fusionGain(this.z, this.a),
+      fission: NUC.fissionQ(this.z, this.a),
+      decay: NUC.decayMode(this.z, this.a),
+      defect: NUC.massDefect(this.z, this.a),
+      betaPercent: (NUC.fermiSpeed(this.a) / 2.99792458e8) * 100,
+      fermiMeV: NUC.fermiEnergyMeV(this.a),
+      chem: NUC.nuclearOverChemical(this.z, this.a),
+      // A teaspoon is five millilitres.
+      spoon: (rho * 5e-6) / 1e9,
+    };
+
     // A nucleon goes round in about half a zeptosecond, so a second of wall
     // clock is set to a couple of turns of it.
     this.timeScale = (2 * Math.PI) / omega * 1.6;
@@ -4585,21 +4661,16 @@ export class NucleusStage extends Stage {
   override overlay(): HTMLElement | null { return this.curve.el; }
 
   rows(): Row[] {
-    const t = NUC.bindingTerms(this.z, this.a);
-    const R = NUC.nuclearRadius(this.a);
-    const rho = NUC.matterDensity(this.a);
-    const peak = NUC.bindingPeak();
-    const gain = NUC.fusionGain(this.z, this.a);
-    const fis = NUC.fissionQ(this.z, this.a);
-    // A teaspoon is five millilitres.
-    const spoon = (rho * 5e-6) / 1e9;
+    const f = this.facts;
+    const t = f.terms, rho = f.rho, peak = f.peak, gain = f.gain, fis = f.fission;
+    const spoon = f.spoon;
     return [
       {
         k: 'nucleus',
         v: `${this.element.symbol}-${this.a} · ${this.z}p ${this.a - this.z}n`,
         accent: true,
       },
-      { k: 'radius', v: (R * 1e15).toFixed(2), u: 'fm' },
+      { k: 'radius', v: f.radiusFm.toFixed(2), u: 'fm' },
       {
         k: 'density',
         v: `${sig(rho, 3)} kg/m³ · ${sig(rho / 1000, 2)}× water`,
@@ -4625,7 +4696,7 @@ export class NucleusStage extends Stage {
       },
       { k: 'asymmetry', v: `${t.asymmetry.toFixed(1)} MeV, and pairing ${
         t.pairing >= 0 ? '+' : ''}${t.pairing.toFixed(1)}` },
-      { k: 'mass defect', v: `${(NUC.massDefect(this.z, this.a) * 100).toFixed(2)}% lighter than its parts` },
+      { k: 'mass defect', v: `${(f.defect * 100).toFixed(2)}% lighter than its parts` },
       {
         k: 'the iron peak',
         v: `${peak.perNucleon.toFixed(2)} MeV at A = ${peak.a}`,
@@ -4649,18 +4720,18 @@ export class NucleusStage extends Stage {
         k: 'splitting it',
         v: fis > 0 ? `gives ${fis.toFixed(0)} MeV` : `costs ${(-fis).toFixed(0)} MeV`,
       }] : []),
-      { k: 'it would', v: NUC.decayMode(this.z, this.a) },
+      { k: 'it would', v: f.decay },
       {
         k: 'nucleons move at',
-        v: `${(NUC.fermiSpeed(this.a) / 2.99792458e8 * 100).toFixed(0)}% of light speed`,
+        v: `${f.betaPercent.toFixed(0)}% of light speed`,
       },
       {
         k: 'with no heat',
-        v: `${NUC.fermiEnergyMeV(this.a).toFixed(0)} MeV of it, at absolute zero`,
+        v: `${f.fermiMeV.toFixed(0)} MeV of it, at absolute zero`,
       },
       ...(t.total > 0 ? [{
         k: 'against chemistry',
-        v: `${sig(NUC.nuclearOverChemical(this.z, this.a), 2)}× a chemical bond`,
+        v: `${sig(f.chem, 2)}× a chemical bond`,
       }] : []),
       { k: 'made in', v: this.element.origin },
       ...(NUC.tooSmallForTheFormula(this.a) ? [{

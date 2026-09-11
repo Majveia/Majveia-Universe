@@ -2,17 +2,43 @@
 
 An interactive simulation of the universe, built from physics rather than from
 art direction. It runs in a browser, generates everything from one seed, and
-lets you fly from the cosmic web down to the surface weather of a planet
-without a loading screen in between.
+lets you fly from the cosmic web down to the nucleus of one atom in the ground
+under your feet — nine scales and thirty-eight orders of magnitude — without a
+loading screen in between.
 
 ```
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 330 tests, mostly checking physics against measurement
+npm test             # 816 tests, mostly checking physics against measurement
 npm run bundle:single # one self-contained HTML file, no network dependencies
 ```
 
 ---
+
+## The ladder
+
+Nine scales, each one a place you can stand, and each one entered by aiming at
+something in the scale above and descending into it. Nothing is a menu: what
+you get is what you were pointing at.
+
+| | | |
+|---|---|---|
+| **Cosmos** | 10²⁵ m | the web, from a Gaussian random field and the Zel'dovich approximation |
+| **Cluster** | 10²³ m | galaxies on NFW orbits, losing their gas to ram pressure |
+| **Galaxy** | 10²¹ m | density waves, population synthesis, the stars resolved |
+| **System** | 10¹² m | a planetary system built by accretion, propagated by Kepler |
+| **World** | 10⁷ m | one planet, with its weather, its aurora and its moons |
+| **Surface** | 10⁰ m | standing on it, under its own sky, with the real ephemeris overhead |
+| **Matter** | 10⁻¹⁰ m | the crystal the ground is, shaking with its own phonons |
+| **Atom** | 10⁻¹¹ m | one atom of it, as the probability distribution it is |
+| **Nucleus** | 10⁻¹⁵ m | the part with the mass in it, and the curve that explains the rest |
+
+The bottom of the ladder explains the top of it. The binding energy curve
+peaks at iron, so a star can get energy by fusing anything lighter and none by
+fusing iron — which is why a star that has made iron stops holding itself up
+and collapses, and that collapse is the supernova four rungs above, which is
+how the oxygen in the ground you were standing on got out of the star it was
+made in. Click an atom at the Matter scale and it tells you which.
 
 ## What it actually simulates
 
@@ -551,6 +577,178 @@ Which is exactly the structure real emission nebulae have.
 
 ---
 
+### Standing on it
+
+Below the planet is its surface, and the physics of being on one is mostly the
+physics of looking up. The sky is not a gradient: Rayleigh scattering
+coefficients come from the gas's own refractive index and depolarisation
+through the King factor, the slant path through a curved atmosphere is the
+Chapman function rather than a secant — which matters at sunrise, where the
+secant diverges and the real air mass is 38 — and the multiple scattering that
+keeps a real sky from going black at the zenith is put back with one constant.
+Earth comes out at τ = 0.195 with an 8.6 km scale height and a 4.65 km horizon,
+Mars at τ = 0.552 and butterscotch, Mercury black at noon.
+
+Every other planet of the system is up there too, where it really is. Their
+positions are the actual orbits subtracted; their brightnesses are the standard
+photometric system — absolute magnitude from size and albedo, two inverse
+squares for the light's two legs, a Lambert phase function, then extinction by
+the same air that reddens the star. From Earth, Venus at −4.4; from Mars,
+**Earth is a morning star at −2.0**; from Europa, Earth at +1.4 and never more
+than eleven degrees from the sun. Nothing labels those. Inner planets cannot
+leave the sun because the angle to a smaller circle is capped at `asin(a/a₀)`,
+outer planets go backwards twice a synodic period, and Venus is brightest as a
+crescent — all of it out of one vector difference.
+
+The join between the ephemeris and the ground is a rotation built from two
+directions known on both sides: the world's axis, which stands at an altitude
+equal to the latitude, and the star, whose place the sundial already knows. So
+the star lands exactly where the sundial says, and everything else is carried
+rigidly with it.
+
+Eclipses happen because things line up, not because anything schedules them.
+Every disc in the sky is tested against the star; the sky shader is told what
+is in front of it and cuts the disc rather than dimming it, so the sun goes to
+a crescent and the crescent thins from the limb inward. Which plane a moon
+orbits in is decided by the Laplace radius, where the planet's equatorial bulge
+and the star's tide balance: 10.6 Earth radii for Earth against a measured ~10,
+40 Jupiter radii against ~32. Our Moon is six times outside that and follows
+the ecliptic, so eclipses come in seasons twice a year; every Galilean is well
+inside it and sits in Jupiter's equator, so they are eclipsed nearly every
+orbit. Hunting twenty-five years of Earth's sky from one fixed point, the
+closest the Moon comes to the sun is 0.070° against radii of 0.2664 and 0.2623
+— 81% covered, a crescent sun and a steel-grey afternoon. Deep partials from
+one place and totality almost never, which is how it goes.
+
+At totality from a moon there is a ring of copper light round the planet's
+limb: light that grazed through its atmosphere, lost its blue to Rayleigh, and
+bent far enough to reach you. Its colour is computed from that planet's own
+gas.
+
+### The ground
+
+The spheres a chemist draws at fixed distances are a lie of a specific kind,
+and one rung down is what is really there: a pattern of a handful of atoms,
+repeated by translation, without end.
+
+The structures are the measured ones, and the check is density — mass in a cell
+over the volume of the cell, nothing fitted. Quartz comes out at 2649 kg/m³
+against a measured 2648, iron at 7874 against 7874, rock salt at 2163 against
+2165, ice at 920 against 917. Coordination numbers land on the ones the
+structures are named for: six for rock salt, four for diamond, eight for
+body-centred iron, twelve for the big cation in a perovskite, one for a
+nitrogen molecule whose nearest neighbour is its own other half. Quartz's
+oxygen position is not copied from a table but solved for, by requiring every
+silicon to sit at the centre of a regular tetrahedron at the measured 1.609 Å
+bond — there is a position that does it exactly.
+
+Ice and methane keep hydrogens that are not at any crystallographic site — in
+ice each oxygen holds two of the four pointing at it and which two is a coin
+flip, which is why ice has entropy left at absolute zero. They still weigh what
+they weigh, and leaving them out shows as a density ten and twenty-five percent
+light.
+
+It moves, and the motion is phonons rather than jitter: a superposition of
+plane waves on a real acoustic branch, `ω = ω_max sin(ka/2)`, flattening at the
+zone boundary because a wave shorter than two atoms has nothing left to wave.
+Those waves are sound. The heat in a rock and a knock travelling through it are
+the same object. The amplitude is Debye with the zero-point term kept, because
+that term is why helium has no solid phase at ordinary pressure, and light
+atoms swing further — the oxygen in quartz visibly outmoves the silicon it is
+bonded to. The speed of sound falls out of the same Debye temperature: 6691 m/s
+for periclase against a measured 6600.
+
+Melting is reported as Lindemann's ratio rather than as a predicted
+temperature. Over a metal, two ionic crystals, a covalent network, a
+hydrogen-bonded framework and two stacks of molecules — things melting at 63 K
+and at 4400 K — the shaking at each one's own melting point comes out between
+six and thirteen percent of its spacing. Materials with nothing else in common
+agree on when to give up, within a factor of two, and that agreement is the
+whole content of the rule.
+
+Press **E** and the atoms swell from the third-scale balls of a diagram to the
+size they really are. The structure disappears into a solid block, which is
+what a solid is.
+
+### One atom
+
+There is no surface here either. What sets the size of an atom is the region an
+electron is likely to be found in, so this draws the distribution and nothing
+else: every point a place the electron might be, sampled from |ψ|², a fifth of
+the cloud retired and re-drawn every second. Nothing moves while that happens.
+An electron has no trajectory, and animating one would be the only lie in the
+picture.
+
+The wavefunctions are hydrogenic with associated Laguerre polynomials and the
+real spherical harmonics, and they verify: each normalises to 1.000 by
+integration, has exactly `n − l − 1` radial nodes, and matches the closed form
+`⟨r⟩ = (3n² − l(l+1))a₀/2Z` to five figures. The ground state peaks at the Bohr
+radius. Summed over a filled subshell the harmonics come to exactly
+`(2l+1)/4π` in every direction — Unsöld's theorem, and why a noble gas is a
+ball and bonds to nothing.
+
+Screening is Slater's rules, four numbers and some arithmetic from 1930, and it
+reproduces the published values exactly: iron's 4s electron feels 3.75 protons
+of the twenty-six, its 3d feels 6.25, its 1s feels 25.70. Across lithium to
+neon the valence electron gains exactly 0.65 of a proton per step and then
+collapses from 5.85 to 2.20 at sodium. That sawtooth is why atoms shrink left
+to right while getting heavier, and why sodium hands its electron to anything
+that asks. Occupancy follows Hund's rule, which is visible from here: carbon's
+two 2p electrons go into two different orbitals, so its cloud has lobes
+pointing somewhere rather than being a sphere — and that is where its bonds go.
+
+Where the model fails is reported. Hydrogen is exact, because hydrogen is what
+the model is. The second row is within three percent. A 4s orbital is out by a
+factor of two and a half, always too big, because a real 4s penetrates deep
+inside the closed shells and a hydrogenic function cannot. The cloud is drawn
+with that one factor divided out, so the picture is the size the atom is.
+
+The nucleus is drawn at true size, which is to say drawn and not visible. An
+iron atom a kilometre across would have a thirty-one millimetre nucleus holding
+all but a three-thousandth of the mass. It is really there, and the near plane
+follows the camera down nine orders of magnitude so it can be flown to.
+
+**Q** takes the cloud apart one orbital at a time. Isolating 2p is how you see
+that it is two lobes with a plane of nothing between them, which is invisible
+in the total density because the other two p orbitals fill that plane in.
+
+### The nucleus
+
+A drop of the densest material outside a black hole: a teaspoon of it weighs a
+trillion tonnes, and it is exactly what a neutron star is made of. It churns,
+because nucleons are fermions and cannot all settle to the bottom — they are
+forced up a ladder of momenta with no heat about at all, and the topmost is
+moving at 27% of light speed. Each is put on a circular orbit in the mean field
+at a radius drawn from the Woods-Saxon profile electron scattering measures,
+which makes the ensemble exactly stationary: the rms radius holds at 3.840 fm
+across every sample while all fifty-six nucleons move, some by seven
+femtometres.
+
+The physics is the Bethe-Weizsäcker mass formula — five terms treating the
+nucleus as a drop of incompressible charged liquid, written down in 1935. It
+puts every nucleus from carbon to uranium within three percent of its measured
+binding energy and most within one: iron-56 at 8.85 MeV per nucleon against
+8.79, lead-208 at 7.86 against 7.87, uranium-238 at 7.63 against 7.57. Setting
+its derivative to zero gives the floor of the valley of stability, which puts
+A = 16 at oxygen, A = 208 at lead and A = 238 at uranium. The alpha energy of
+uranium comes out at 4.3 MeV against 4.27, alpha decay first becomes allowed at
+A = 157 against a real onset near 145, and splitting a uranium gives 184 MeV
+against the ~200 everyone quotes.
+
+Its two failures are the same failure: helium-4 at 5.7 MeV per nucleon against
+7.07, and doubly magic lead-208 given five times too much alpha energy. A
+liquid drop has no shells, and at four nucleons or at 82-and-126 the shells are
+the whole answer. A lone proton is special-cased to zero — left to run, the
+asymmetry term alone reports it as unbound by 24 MeV, which is a category error
+rather than a small one.
+
+Above the readout is the binding energy curve, and standing on hydrogen it says
+the one thing that matters: two protons do not stick. Helium-2 is unbound, so
+the first step of the proton-proton chain needs one of them to turn into a
+neutron by the weak force in the moment they are touching. That almost never
+comes off, and it is why the sun takes ten billion years over something it has
+the fuel to do in minutes.
+
 ## Rendering
 
 Everything is rendered in linear light into a half-float HDR buffer, because a
@@ -619,6 +817,10 @@ looking at the output:
 | Y | run the star's whole life, to the nebula |
 | O | go to the Solar System |
 | T | true scale in a system |
+| `,` `.` | walk south or north, on a surface |
+| `;` | the microwave sky, from inside a cluster |
+| E | atoms at the size they really are |
+| Q | one orbital at a time |
 | X | aim with the device's own orientation |
 | U | hide the interface |
 | P | save a frame |
@@ -725,17 +927,22 @@ src/
   core/         constants, deterministic RNG
   cosmology/    LambdaCDM, the power spectrum, FFT, Zel'dovich, the worker
   physics/      Kepler solvers, orbital elements, relativity, N-body,
-                lensing, eclipses, magnetospheres
+                lensing, eclipses, magnetospheres, crystal structures,
+                atomic orbitals, the nuclear mass formula
   camera/       the orbit and flight rigs, touch gestures, device orientation
   astro/        blackbody colour, stellar evolution, planet formation,
                 spectra, supernovae, planetary nebulae, pulsars,
-                tidal disruption, binaries, comets
+                tidal disruption, binaries, comets, atmospheres and skies,
+                moons as places to stand, the planetary ephemeris
   galaxy/       kinematic density waves, population synthesis
   render/       the HDR engine and every shader
   sim/          the universe object graph and the scale ladder
   ui/           the interface
-tests/          483 tests against published measurements and against
+tests/          816 tests against published measurements and against
                 every edge of the gesture recogniser
+scripts/        browser probes: every scale in motion, the whole ladder on
+                touch, and a health check for the interface at real window
+                sizes
 ```
 
 ## Accuracy
@@ -757,6 +964,26 @@ the Crab pulsar's 3.8 trillion gauss, its 4.5×10³⁸ erg/s, a characteristic a
 that misses the true one by exactly as much as it should, and a tidally
 disrupted star whose first debris returns after 41 days and whose light curve
 falls as t^(−5/3).
+
+Down the bottom of the ladder the same rule applies. Earth's sky comes out at
+τ = 0.195 with an 8.6 km scale height; quartz at 2649 kg/m³ against a measured
+2648 and iron at 7874 against 7874; every silicon in quartz with exactly four
+oxygens at 1.609 Å; the speed of sound in periclase at 6691 m/s against 6600;
+the Lindemann ratio at melting between 0.06 and 0.13 for seven materials that
+melt between 63 K and 4400 K; hydrogen's 1s peaking at the Bohr radius and
+every orbital normalising to 1.000 with exactly `n − l − 1` nodes; Slater's
+screening reproducing iron's 3.75, 6.25 and 25.70 exactly; nuclear matter at
+0.146 nucleons per cubic femtometre with its nucleons at 0.27 c; iron-56 bound
+at 8.85 MeV per nucleon against 8.79 and uranium-238 at 7.63 against 7.57.
+
+Several tests exist because they caught something. `altAz` had the sign of its
+north component backwards, so the sun transited due north from London and the
+whole celestial sphere was a mirror image — invisible in an empty sky, and
+fatal the moment an ephemeris had to be laid on it. Two of the symmetry
+operations I had written down for quartz were wrong, which showed up as silicon
+with three oxygens instead of four. And a test asserting that every light
+nucleus fuses profitably failed on hydrogen: the model was right and the test
+was wrong, because two protons genuinely do not stick.
 
 Where the model is an approximation, it is one with a name and a range of
 validity. Zel'dovich is first-order Lagrangian perturbation theory: exact until
