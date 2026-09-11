@@ -9,7 +9,7 @@ loading screen in between.
 ```
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 816 tests, mostly checking physics against measurement
+npm test             # 829 tests, mostly checking physics against measurement
 npm run bundle:single # one self-contained HTML file, no network dependencies
 ```
 
@@ -32,6 +32,21 @@ you get is what you were pointing at.
 | **Matter** | 10⁻¹⁰ m | the crystal the ground is, shaking with its own phonons |
 | **Atom** | 10⁻¹¹ m | one atom of it, as the probability distribution it is |
 | **Nucleus** | 10⁻¹⁵ m | the part with the mass in it, and the curve that explains the rest |
+
+Along the bottom of the window is the only axis all nine share: forty-three
+decades of length, logarithmic, with the camera's standoff marked on it and a
+handful of real sizes notched along for anchors — a proton, a hydrogen atom, a
+person, the Earth, a light year, the observable universe. Each rung reports its
+standoff in whatever unit suits it, and those numbers are correct and
+completely incomparable; the strip is what says that the step from a crystal to
+an atom is one decade and the step from a planet to a star system is five.
+
+One of the notches is not a size but a limit. Green light is 550 nanometres
+from crest to crest, and nothing much smaller than that can be seen with light
+at all — so the mark sits between the surface and the lattice, and two of the
+nine rungs are on the far side of it. No eye and no microscope will ever look
+into a crystal or an atom the way you are looking into them, which is worth
+knowing while standing there.
 
 The bottom of the ladder explains the top of it. The binding energy curve
 peaks at iron, so a star can get energy by fusing anything lighter and none by
@@ -938,7 +953,7 @@ src/
   render/       the HDR engine and every shader
   sim/          the universe object graph and the scale ladder
   ui/           the interface
-tests/          816 tests against published measurements and against
+tests/          829 tests against published measurements and against
                 every edge of the gesture recogniser
 scripts/        browser probes: every scale in motion, the whole ladder on
                 touch, and a health check for the interface at real window

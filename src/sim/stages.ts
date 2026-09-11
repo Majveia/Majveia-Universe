@@ -220,8 +220,22 @@ export abstract class Stage {
   abstract child(ndc?: THREE.Vector2): Target | null;
   /** What the object under the cursor is, if anything. */
   inspect(_ndc: THREE.Vector2): Inspection | null { return null; }
+  /**
+   * How far the camera is standing off, in metres.
+   *
+   * The one number every scale has in common, and the only one that can be
+   * compared across them. Each rung works in whatever units suit it - scene
+   * units are megaparsecs up top and femtometres at the bottom - so this is
+   * where that gets converted back into something the rest of the program can
+   * put on a single axis.
+   */
+  abstract scaleMetres(): number;
+
   /** Human label for the current scale bar. */
-  abstract scaleLabel(): string;
+  scaleLabel(): string {
+    const [v, u] = formatDistance(this.scaleMetres());
+    return `${v} ${u}`;
+  }
   /**
    * Put the observer in motion at a fraction of the speed of light, along a
    * world-space direction. Stages that draw a sky transform it; the others
@@ -511,20 +525,52 @@ export class CosmosStage extends Stage {
 
   get drawn(): number { return this.web.drawnParticles; }
 
-  rows(): Row[] {
+  /**
+   * Everything the readout wants that is a function of the epoch.
+   *
+   * Which is most of it, and none of it changes unless the timeline moves or
+   * the cosmology is switched - so it is worked out when one of those happens
+   * rather than ten times a second. Four of these are integrals.
+   */
+  private epochFacts: {
+    a: number; c: Cosmology; z: number; ageGyr: number; D: number;
+    H: number; T: number; f: number;
+  } | null = null;
+
+  private facts(): NonNullable<CosmosStage['epochFacts']> {
     const c = this.env.cosmology;
     const a = this.env.epoch();
-    const z = zFromA(a);
-    const D = growthFactor(c, a);
-    const [dv, du] = formatDistance(this.env.controls.distance * MPC);
+    const have = this.epochFacts;
+    if (have && have.a === a && have.c === c) return have;
+    const next = {
+      a, c,
+      z: zFromA(a),
+      ageGyr: ageAt(c, a) / GYR,
+      D: growthFactor(c, a),
+      H: HofaKmsMpc(c, a),
+      T: Tcmb_a(c, a),
+      f: growthRate(c, a),
+    };
+    this.epochFacts = next;
+    return next;
+  }
+
+  rows(): Row[] {
+    const e = this.facts();
+    const [dv, du] = formatDistance(this.scaleMetres());
     return [
-      { k: 'redshift', v: z >= 0 ? sig(z, 4) : sig(z, 3), u: z < 0 ? 'future' : '', accent: true },
-      { k: 'cosmic time', v: (ageAt(c, a) / GYR).toFixed(3), u: 'Gyr' },
-      { k: 'scale factor', v: a.toFixed(4) },
-      { k: 'growth D(a)', v: D.toFixed(4) },
-      { k: 'H(z)', v: Math.round(HofaKmsMpc(c, a)).toString(), u: 'km/s/Mpc' },
-      { k: 'CMB', v: Tcmb_a(c, a).toFixed(2), u: 'K' },
-      { k: 'growth rate f', v: growthRate(c, a).toFixed(3) },
+      {
+        k: 'redshift',
+        v: e.z >= 0 ? sig(e.z, 4) : sig(e.z, 3),
+        u: e.z < 0 ? 'future' : '',
+        accent: true,
+      },
+      { k: 'cosmic time', v: e.ageGyr.toFixed(3), u: 'Gyr' },
+      { k: 'scale factor', v: e.a.toFixed(4) },
+      { k: 'growth D(a)', v: e.D.toFixed(4) },
+      { k: 'H(z)', v: Math.round(e.H).toString(), u: 'km/s/Mpc' },
+      { k: 'CMB', v: e.T.toFixed(2), u: 'K' },
+      { k: 'growth rate f', v: e.f.toFixed(3) },
       ...this.cmbRows(),
       { k: 'field of view', v: dv, u: du },
       { k: 'particles', v: commas(this.web.drawnParticles) },
@@ -532,23 +578,30 @@ export class CosmosStage extends Stage {
   }
 
   /** What the last-scattering surface is doing, while it is being shown. */
+  private cmbPeaks: { for: unknown; text: string } | null = null;
+
   private cmbRows(): Row[] {
     const s = this.cmbScales;
     if (!s) return [];
-    const peaks = peakMultipoles(s, 3);
+    // The peak multipoles are a root-find; they change when the surface does,
+    // which is when the cosmology is switched, and not otherwise.
+    if (!this.cmbPeaks || this.cmbPeaks.for !== s) {
+      this.cmbPeaks = {
+        for: s,
+        text: peakMultipoles(s, 3).map((x) => x.toFixed(0)).join(', '),
+      };
+    }
+    const peaks = this.cmbPeaks.text;
     return [
       { k: 'last scattering', v: `z = ${s.zStar.toFixed(0)}`, accent: true },
       { k: 'sound horizon', v: s.soundHorizonMpc.toFixed(0), u: 'Mpc' },
       { k: 'subtends', v: s.acousticAngleDeg.toFixed(2), u: '°' },
-      { k: 'acoustic peaks', v: `ℓ = ${peaks.map((p) => p.toFixed(0)).join(', ')}` },
+      { k: 'acoustic peaks', v: `ℓ = ${peaks}` },
       { k: 'showing', v: this.cmbMode === 1 ? 'as observed · ±3.4 mK' : 'dipole removed · ±340 µK' },
     ];
   }
 
-  scaleLabel(): string {
-    const [v, u] = formatDistance(this.env.controls.distance * MPC);
-    return `${v} ${u}`;
-  }
+  scaleMetres(): number { return this.env.controls.distance * MPC; }
 
   override inspect(ndc: THREE.Vector2): Inspection | null {
     const i = this.pickNearest(ndc, this.markerPos.map((pos, index) => ({
@@ -1075,10 +1128,12 @@ export class ClusterStage extends Stage {
     ];
   }
 
-  scaleLabel(): string {
-    const [v, u] = formatDistance(this.env.controls.distance * MPC);
-    if (this.band >= 0) return `${SZ.PLANCK_BANDS[this.band]} GHz · ${v} ${u}`;
-    return `${v} ${u}`;
+  scaleMetres(): number { return this.env.controls.distance * MPC; }
+
+  /** With the band in front, when the view is a microwave one. */
+  override scaleLabel(): string {
+    const base = super.scaleLabel();
+    return this.band >= 0 ? `${SZ.PLANCK_BANDS[this.band]} GHz · ${base}` : base;
   }
 
   override inspect(ndc: THREE.Vector2): Inspection | null {
@@ -2012,27 +2067,17 @@ export class GalaxyStage extends Stage {
     ];
   }
 
-  scaleLabel(): string {
+  scaleMetres(): number {
     // Every one of the things that can be mounted at this scale brings its own
     // ruler with it, because each has exactly one natural length: a black hole
     // has its gravitational radius, a neutron star has its ten kilometres, a
     // disrupted star has the astronomical unit, and the galaxy itself has the
-    // kiloparsec. Reporting one of those in another's units is how a readout
-    // starts saying a debris stream is twelve megaparsecs across.
-    if (this.merger) {
-      return `${(this.env.controls.distance * this.merger.rgM / 1e3).toFixed(0)} km`;
-    }
-    if (this.tde) {
-      const [v, u] = formatDistance(this.env.controls.distance * AU);
-      return `${v} ${u}`;
-    }
-    if (this.pulsarView) {
-      // Scene units are stellar radii, and a neutron star's is ten kilometres.
-      const [v, u] = formatDistance(this.env.controls.distance * (PSR.NS_RADIUS_CM / 100));
-      return `${v} ${u}`;
-    }
-    const [v, u] = formatDistance(this.env.controls.distance * 3.0857e19);
-    return `${v} ${u}`;
+    // kiloparsec. Scene units mean nothing until one of those is picked.
+    const d = this.env.controls.distance;
+    if (this.merger) return d * this.merger.rgM;
+    if (this.tde) return d * AU;
+    if (this.pulsarView) return d * (PSR.NS_RADIUS_CM / 100);
+    return d * 3.0857e19;
   }
 
   override inspect(ndc: THREE.Vector2): Inspection | null {
@@ -2616,10 +2661,7 @@ export class SystemStage extends Stage {
     this.evoEngulfed = 0;
   }
 
-  scaleLabel(): string {
-    const [v, u] = formatDistance(this.env.controls.distance * AU);
-    return `${v} ${u}`;
-  }
+  scaleMetres(): number { return this.env.controls.distance * AU; }
 
   private planetPoints(): { pos: THREE.Vector3; radius: number; index: number }[] {
     return this.view.slots.map((s, i) => ({
@@ -2944,9 +2986,10 @@ export class WorldStage extends Stage {
     this.sky.setBoost(beta, dir);
   }
 
-  scaleLabel(): string {
-    const [v, u] = formatDistance((this.env.controls.distance - 1) * this.planet.radiusM);
-    return `${v} ${u}`;
+  scaleMetres(): number {
+    // Scene units are planetary radii and the camera orbits the surface, so
+    // the standoff is one less than the distance.
+    return (this.env.controls.distance - 1) * this.planet.radiusM;
   }
 
   override inspect(): Inspection | null {
@@ -3939,10 +3982,7 @@ export class SurfaceStage extends Stage {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   }
 
-  scaleLabel(): string {
-    const [v, u] = formatDistance(this.env.controls.distance);
-    return `${v} ${u}`;
-  }
+  scaleMetres(): number { return this.env.controls.distance; }
 
   /**
    * Walk to a different latitude.
@@ -4242,10 +4282,8 @@ export class MatterStage extends Stage {
     };
   }
 
-  scaleLabel(): string {
-    const d = this.env.controls.distance;
-    return d < 100 ? `${d.toFixed(1)} Å` : `${(d / 10).toFixed(1)} nm`;
-  }
+  /** Scene units are angstroms all the way down here. */
+  scaleMetres(): number { return this.env.controls.distance * 1e-10; }
 
   /**
    * Down again, into one of them.
@@ -4484,12 +4522,8 @@ export class AtomStage extends Stage {
 
   override inspect(): Inspection | null { return null; }
 
-  scaleLabel(): string {
-    const d = this.env.controls.distance;
-    if (d >= 1) return `${d.toFixed(d < 10 ? 2 : 0)} pm`;
-    if (d >= 1e-3) return `${(d * 1000).toFixed(1)} fm`;
-    return `${(d * 1e6).toFixed(1)} am`;
-  }
+  /** Scene units are picometres. */
+  scaleMetres(): number { return this.env.controls.distance * 1e-12; }
 
   /** All the way in, to the part that has the mass in it. */
   child(): Target | null {
@@ -4747,10 +4781,8 @@ export class NucleusStage extends Stage {
     ];
   }
 
-  scaleLabel(): string {
-    const d = this.env.controls.distance;
-    return `${d.toFixed(d < 10 ? 2 : 1)} fm`;
-  }
+  /** Scene units are femtometres. */
+  scaleMetres(): number { return this.env.controls.distance * 1e-15; }
 
   child(): Target | null { return null; }
 

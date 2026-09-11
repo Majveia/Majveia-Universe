@@ -20,6 +20,7 @@ import {
 } from './sim/stages';
 import { Timeline } from './ui/timeline';
 import { Rows, el, sig, commas } from './ui/hud';
+import { ScaleStrip } from './ui/scalestrip';
 import { saveBlob } from './ui/save';
 import { spectrumCanvas } from './ui/spectrum';
 import { detectionCanvas } from './ui/detection';
@@ -121,6 +122,7 @@ export class App {
   private subEl: HTMLDivElement;
   private flashEl: HTMLDivElement;
   private warpEl: HTMLDivElement;
+  private strip = new ScaleStrip({ width: window.innerWidth });
   private helpEl: HTMLDivElement;
   private boot: HTMLDivElement;
   private bootBar: HTMLElement;
@@ -325,7 +327,7 @@ export class App {
 
     // Where a stage can mount an instrument of its own - a strain trace, say.
     this.overlayHost = el('div', 'overlay-host');
-    this.uiRoot.append(masthead, this.readout.el, this.timeline.el, this.warpEl,
+    this.uiRoot.append(masthead, this.readout.el, this.timeline.el, this.strip.el, this.warpEl,
       this.ladder, this.inspector, hint, rail, this.overlayHost, this.flashEl);
     document.body.append(this.helpEl);
 
@@ -1226,6 +1228,7 @@ export class App {
     const w = Math.round(vv?.width ?? window.innerWidth);
     const h = Math.round(vv?.height ?? window.innerHeight);
     this.engine.setSize(w, h, dpr);
+    this.strip.resize(w);
     this.stage?.onResize();
     this.mobile?.onResize();
   }
@@ -1340,9 +1343,9 @@ export class App {
             ` · γ ${lorentz(this.boost) < 100 ? lorentz(this.boost).toFixed(2)
               : lorentz(this.boost).toExponential(1)}`
           : '';
-        this.warpEl.textContent = (this.playing
-          ? `${warp.label} · ${this.stage.scaleLabel()}`
-          : `paused · ${this.stage.scaleLabel()}`) + rel;
+        // The scale used to be repeated here; the strip below carries it now,
+        // and carries the context that a bare number never could.
+        this.warpEl.textContent = (this.playing ? warp.label : 'paused') + rel;
       }
       // The sensor aims the camera before the rig is integrated, so a reading
       // and the frame it affects are never one apart.
@@ -1366,6 +1369,11 @@ export class App {
       // Forward is where the camera is pointing.
       this.engine.camera.getWorldDirection(this.boostDir);
       this.stage.setBoost(this.boost, this.boostDir);
+    }
+
+    if (this.stage) {
+      this.strip.set(this.stage.scaleMetres(), SCALE_LABELS[this.stage.id]);
+      this.strip.draw();
     }
 
     this.engine.render(dt);

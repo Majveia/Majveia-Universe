@@ -63,17 +63,21 @@ for (const [w, h] of SIZES) {
   await page.waitForFunction(() => !window.majveia.app.travelling, null, { timeout: 90000 });
   await page.waitForTimeout(900);
   const box = await page.evaluate(() => {
-    const l = document.querySelector('.ladder');
-    const r = document.querySelector('.readout');
-    const m = document.querySelector('.masthead');
-    const rect = (e) => (e && getComputedStyle(e).display !== 'none'
-      ? e.getBoundingClientRect() : null);
+    const rect = (sel) => {
+      const e = document.querySelector(sel);
+      return e && getComputedStyle(e).display !== 'none'
+        ? e.getBoundingClientRect() : null;
+    };
     const pack = (x) => (x ? { top: Math.round(x.top), bottom: Math.round(x.bottom),
       left: Math.round(x.left), right: Math.round(x.right) } : null);
-    return { ladder: pack(rect(l)), readout: pack(rect(r)), masthead: pack(rect(m)),
-      h: innerHeight };
+    return {
+      ladder: pack(rect('.ladder')), readout: pack(rect('.readout')),
+      masthead: pack(rect('.masthead')), strip: pack(rect('.strip')),
+      warp: pack(rect('.warp')), hint: pack(rect('.hint')),
+      h: innerHeight, w: innerWidth,
+    };
   });
-  const { ladder, readout, masthead } = box;
+  const { ladder, readout, masthead, strip, warp, hint } = box;
   const overlaps = (a, c) => !!a && !!c
     && a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom;
   check(`${w}×${h}  ladder clear of the readout`, !overlaps(ladder, readout),
@@ -82,6 +86,17 @@ for (const [w, h] of SIZES) {
     ladder ? `masthead to ${masthead.bottom}` : 'ladder hidden');
   check(`${w}×${h}  readout inside the window`, readout.top >= 0 && readout.bottom <= box.h,
     `${readout.top}-${readout.bottom} of ${box.h}`);
+  // The scale strip is the floor the rest of the interface stands on, so
+  // nothing may be standing in it. This is the check that was missing when it
+  // first went in at the bottom centre and ran straight through the readout's
+  // second column.
+  check(`${w}×${h}  strip spans the window`,
+    !!strip && strip.left <= 0 && strip.right >= box.w,
+    strip ? `${strip.left}-${strip.right} of ${box.w}` : 'missing');
+  for (const [name, other] of [['readout', readout], ['time', warp], ['hint', hint]]) {
+    check(`${w}×${h}  strip clear of the ${name}`, !overlaps(strip, other),
+      other ? `${name} to ${other.bottom}, strip from ${strip.top}` : `${name} hidden`);
+  }
 }
 
 console.log(fails === 0 ? '\nthe ladder is healthy' : `\n${fails} failed`);

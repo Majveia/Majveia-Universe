@@ -22,6 +22,10 @@
   --safe-l: env(safe-area-inset-left, 0px);
   /* The smallest a finger may be asked to hit. */
   --tap: 44px;
+  /* How much of the bottom edge the scale strip takes. Everything anchored
+     down there is offset by it, and it is zero where the strip is hidden. */
+  --strip: 34px;
+  --floor: calc(var(--edge) + var(--strip));
   /* How much of the shelf shows when it is down. Measured at runtime, because
      it depends on the safe area and on whether a timeline is in it; this is
      only the value the first frame is laid out with. */
@@ -158,7 +162,7 @@ html, body {
 
 /* --- Readout ------------------------------------------------------------- */
 .readout {
-  bottom: var(--edge);
+  bottom: var(--floor);
   left: var(--edge);
   display: grid;
   gap: 5px;
@@ -198,7 +202,7 @@ html, body {
 
 /* --- Timeline ------------------------------------------------------------ */
 .timeline {
-  bottom: calc(var(--edge) - 4px);
+  bottom: calc(var(--floor) - 4px);
   left: 50%;
   transform: translateX(-50%);
   width: min(640px, 52vw);
@@ -293,7 +297,7 @@ html, body {
 
 /* --- Hint ---------------------------------------------------------------- */
 .hint {
-  bottom: var(--edge);
+  bottom: var(--floor);
   right: var(--edge);
   text-align: right;
   font-size: 9.5px;
@@ -516,9 +520,27 @@ html, body {
 }
 
 /* --- Scale-transition and stage chrome ------------------------------------ */
+/* --- The scale strip ------------------------------------------------------
+   Forty-three decades of length, with the camera's standoff marked on it.
+
+   Full width along the very bottom, and everything else in the interface sits
+   above it. Partly because a wide axis is a legible one - a thousand pixels
+   gives each decade twenty-odd rather than twelve - and partly because the
+   bottom centre was never free: the readout grows two columns and runs most of
+   the way across, which the time readout had been quietly colliding with for
+   as long as it has existed. A strip that spans the window cannot collide with
+   anything, because everything is above it. */
+.strip {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+body.touch .strip { display: none; }
+
 .warp {
   left: 50%;
-  bottom: var(--edge);
+  bottom: var(--floor);
   transform: translateX(-50%);
   text-align: center;
   font-size: 10px;
@@ -529,7 +551,7 @@ html, body {
 }
 .flash {
   left: 50%;
-  bottom: calc(var(--edge) + 62px);
+  bottom: calc(var(--floor) + 62px);
   transform: translateX(-50%);
   text-align: center;
   font-size: 10px;
@@ -755,6 +777,8 @@ html, body {
 body.touch .hint,
 body.touch .rail,
 body.touch .ladder { display: none; }
+/* No strip on a phone, so nothing is standing on it. */
+body.touch { --strip: 0px; }
 body.touch .readout { position: static; }
 /* One column in the tray: there is no width to spare on a phone. */
 body.touch .readout.split { grid-auto-flow: row; grid-template-rows: none; }

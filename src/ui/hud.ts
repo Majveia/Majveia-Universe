@@ -87,8 +87,27 @@ export function commas(n: number): string {
 }
 
 /** Distance rendered in whichever astronomical unit keeps the number small. */
+/**
+ * One ruler for forty-three decades.
+ *
+ * The ladder runs from a nucleus to the observable universe, and every rung of
+ * it used to format its own number in its own unit - six copies of the same
+ * two lines and three hand-rolled variants for the small end, which is how a
+ * readout ends up disagreeing with itself across a transition. This is the
+ * whole span in one function, in the unit somebody working at that size would
+ * actually use: femtometres for a nucleus, angstroms for a lattice,
+ * astronomical units for a system, megaparsecs for the web.
+ */
 export function formatDistance(metres: number): [string, string] {
   const a = Math.abs(metres);
+  if (a === 0) return ['0', 'm'];
+  if (a < 1e-15) return [sig(metres * 1e18, 3), 'am'];
+  if (a < 1e-12) return [sig(metres * 1e15, 3), 'fm'];
+  if (a < 1e-10) return [sig(metres * 1e12, 3), 'pm'];
+  if (a < 1e-9) return [sig(metres * 1e10, 3), 'Å'];
+  if (a < 1e-6) return [sig(metres * 1e9, 3), 'nm'];
+  if (a < 1e-3) return [sig(metres * 1e6, 3), 'µm'];
+  if (a < 1) return [sig(metres * 1e3, 3), 'mm'];
   if (a < 1e4) return [sig(metres, 3), 'm'];
   if (a < 1.5e9) return [sig(metres / 1e3, 3), 'km'];
   if (a < 1e15) return [sig(metres / 1.495978707e11, 3), 'AU'];
