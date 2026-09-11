@@ -9,7 +9,7 @@ loading screen in between.
 ```
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 816 tests, mostly checking physics against measurement
+npm test             # 866 tests, mostly checking physics against measurement
 npm run bundle:single # one self-contained HTML file, no network dependencies
 ```
 
@@ -441,23 +441,145 @@ Everything downstream is derived:
 | Quantity | From |
 |---|---|
 | Radius | Chen & Kipping (2017), four regimes |
-| Temperature | Stellar flux and albedo, iterated (albedo depends on what condenses) |
 | Atmosphere | Jeans escape parameter per species |
-| Habitability | Kopparapu et al. (2013) limits, plus liquid water and pressure |
+| Temperature | An energy budget — see below |
+| Habitability | Liquid water on a surface, at a pressure, on a world that kept it |
 | Moons | Inside the Hill sphere, outside the Roche limit |
 | Rings | Inside the Roche limit |
 | Rotation | Tidal despinning timescale against the star's age |
+| Zonal jets | The Rhines scale |
 
 Surfaces are analytic: continents from fBm, ranges from ridged multifractal
-noise, relief shading from the elevation gradient, ice caps placed by latitude
-*and* temperature, deserts in the subtropics where the Hadley cells bring
-descending air, and craters only where there is no atmosphere to burn up
-impactors and no weather to erode the scars.
+noise, relief shading from the elevation gradient, and craters only where there
+is no atmosphere to burn up impactors and no weather to erode the scars. Where
+the ice and the deserts go is decided by the climate, below.
 
 Atmospheres use single-scattering Rayleigh extinction with `β ~ λ⁻⁴`, so limbs
 go blue and terminators redden because the path length says they should. Water
 is a smooth dielectric, so sunlight glints off an ocean in a narrow GGX lobe
 with a Fresnel weight - dark looking straight down, a mirror at grazing angles.
+
+### Climate
+
+A planet used to have one temperature. That is the one number about a world
+that a single number cannot carry. The Earth averages 288 K and that average
+is true of nowhere: it is 300 K on the equator and 255 K at the poles, it
+swings forty degrees between January and July over Siberia and four over the
+open Pacific, and the difference between those two facts is why one of them
+has trees.
+
+So every world now gets the actual equation solved on it — a seasonal diffusive
+energy balance model, Budyko and Sellers in 1969, put on a proper footing by
+North in 1975:
+
+```
+C(x) ∂T/∂t = S(x,t)[1 − a(T)]  −  OLR(T)  +  ∂/∂x[ D (1−x²) ∂T/∂x ]
+             ─────────────────     ──────     ────────────────────
+              what arrives          what       what the winds and
+                                    leaves     the currents carry off
+```
+
+on a grid of latitude bands, equal-area in `x = sin φ`, stepped through the
+orbit with the radiation linearised about each step so every step is one
+tridiagonal solve.
+
+The sunlight comes from Kepler and spherical trigonometry, the outgoing
+radiation from a grey atmosphere carrying a Clausius–Clapeyron water column, the
+heat capacity from the depth of an ocean's mixed layer against the mass of an
+air column, and the transport coefficient from the published scaling in rotation
+rate, pressure and molecular weight. Two constants in the greenhouse are fitted
+— to Earth's 33 K and Venus's 505 K — and one more to the *slope* at which
+Earth's outgoing radiation rises with temperature. Nothing else is. Given
+Earth's numbers the model returns Earth's climate, and given the others it
+returns theirs:
+
+| | model | measured |
+|---|---|---|
+| Earth, global mean | 286 K | 288 K |
+| Earth, equator → pole | 300 → 255 K | 299 → 250 K |
+| Earth's jet stream | 36 m/s, 3 jets | ~30 m/s, ~3 |
+| Earth's Hadley edge | 30° | ~30° |
+| Mars | 212 K, 50 K gradient | 210 K, ~60 K |
+| Venus | 741 K, isothermal to 0.1 K | 737 K, isothermal |
+| Titan | 103 K | 94 K (+ a −9 K anti-greenhouse) |
+| Jupiter's belts | 25 jets | ~20–30 |
+
+Three things come out of it that were never put in.
+
+**A planet can have two climates.** The albedo depends on the temperature and
+the temperature depends on the albedo, so the balance is nonlinear and can cross
+zero three times — two stable climates with a tipping point between them. The
+present-day Earth settles at 286 K from a warm start and 233 K from a cold one.
+Dim the Sun by a tenth and the warm branch stops existing, in one step, and does
+not come back when you turn the Sun up again. The Earth has done this at least
+twice.
+
+**Water sets a ceiling on what a planet can radiate.** Warm a wet world and
+Clausius–Clapeyron puts more vapour in the air, which warms it further; on Earth
+that feedback eats three-fifths of the planet's ability to cool itself — outgoing
+radiation climbs at 1.8 W/m²/K where a dry column would give 4.7. Push it
+far enough and it wins outright: the level a planet radiates from ends up inside
+the saturated part of its own column, and its emission stops depending on the
+ground's temperature at about 282 W/m². Simpson noticed the problem in 1927;
+Nakajima made it precise in 1992. A world absorbing more than that has *no
+equilibrium* with an ocean on it. Move the Earth to 0.85 AU and it does not get
+warmer — it stops having an answer.
+
+**And then the carbon has nowhere to go.** Carbon dioxide dissolves in rain, the
+rain weathers silicate rock, the sea buries the result as carbonate, and
+volcanoes put it back. Weathering roughly doubles for every ten degrees, so the
+loop is a thermostat with a gain of a few hundred: warm the planet and it scrubs
+its own air faster. Given nothing but Earth's sunlight it asks for a few hundred
+parts per million of CO₂, which is where Earth's has sat for as long as anyone
+has been able to check. Take the oceans away and there is no rain, so no
+weathering, so nothing to bury carbon — and every gram the planet ever outgassed
+stays in the sky.
+
+That chain is not written down anywhere. It is what the equations do, and what
+comes out the other end of it is Venus.
+
+The thermostat also sets its own setpoint, which is not 288 K either: 288 K is
+where *Earth's* volcanoes and *Earth's* rain happen to balance. A world
+outgassing harder settles hotter, and a world with no land has almost nothing
+for the rain to dissolve — so a waterworld is not a safer Earth, it is a hotter
+one with a broken regulator.
+
+**What you can see of it.** The whole solved field — latitude across, season
+down — goes to the surface shader as a texture, so:
+
+- Ice is drawn where the temperature crosses freezing, and the caps advance and
+  retreat as time runs. But being cold is not enough: there has to be water
+  there to freeze, which is why Mars is a red planet rather than a white one
+  despite being below freezing everywhere. What it does have is a bright winter
+  cap of *carbon dioxide*, frozen out of its own air at 148 K.
+- Mountains are white because of the lapse rate — a saturated parcel cools
+  6.5 K/km, so a three-kilometre range is twenty degrees colder than the plain
+  it stands on, and a thin-aired world's peaks are colder still.
+- Deserts sit under the descending branch of the Hadley cell, at the latitude
+  the planet's own rotation puts it. On Earth that is thirty degrees, and there
+  in one band are the Sahara, the Kalahari, the Atacama, the Arabian and the
+  Australian interior.
+- A giant's belts are counted by the Rhines scale. Turbulence on a rotating
+  sphere cannot make eddies larger than the scale at which the β effect turns
+  them into waves, so the energy goes into zonal jets instead. Jupiter fits two
+  dozen because it turns in ten hours and is eleven times wider than Earth,
+  which is how many you can count in a small telescope. Nothing about Jupiter's
+  stripes is decorative.
+
+Press `C` on a world and the whole field is drawn: the 273 K contour traced
+through the year, two curves half a year out of phase, breathing against each
+other. That is what a season looks like when you plot it.
+
+**Where the model ends.** It is one-dimensional and zonally symmetric, so it has
+no continents — Earth's real seasonal swing is larger than it reports because
+Earth's land is nearly all in one hemisphere. The greenhouse is grey, with two
+parameters fitted to Earth's 33 K and Venus's 505 K; Mars's and Titan's then come
+out as predictions, and the model has no business being trusted for a
+composition unlike any of them. Most of all it has no maximum-greenhouse outer
+edge, because that turnover needs CO₂ condensation and cloud physics a grey model
+cannot carry: the outer edge here is set instead by how much carbon a planet has
+and whether its interior is still hot enough to outgas it, which is a real limit
+and a different one.
 
 ### How any of it would be found
 
@@ -805,7 +927,7 @@ looking at the output:
 | enter / backspace | descend a scale / climb back |
 | space | run time |
 | `[` `]` | epoch, or time warp |
-| C | change the cosmology |
+| C | change the cosmology, or read a world’s climate |
 | V | tint the web by peculiar velocity |
 | B | show the microwave background |
 | J | fly at a fraction of light speed |
@@ -931,6 +1053,7 @@ src/
                 atomic orbitals, the nuclear mass formula
   camera/       the orbit and flight rigs, touch gestures, device orientation
   astro/        blackbody colour, stellar evolution, planet formation,
+                insolation, radiative transfer, climate, circulation,
                 spectra, supernovae, planetary nebulae, pulsars,
                 tidal disruption, binaries, comets, atmospheres and skies,
                 moons as places to stand, the planetary ephemeris
@@ -938,7 +1061,7 @@ src/
   render/       the HDR engine and every shader
   sim/          the universe object graph and the scale ladder
   ui/           the interface
-tests/          816 tests against published measurements and against
+tests/          866 tests against published measurements and against
                 every edge of the gesture recogniser
 scripts/        browser probes: every scale in motion, the whole ladder on
                 touch, and a health check for the interface at real window
@@ -964,6 +1087,18 @@ the Crab pulsar's 3.8 trillion gauss, its 4.5×10³⁸ erg/s, a characteristic a
 that misses the true one by exactly as much as it should, and a tidally
 disrupted star whose first debris returns after 41 days and whose light curve
 falls as t^(−5/3).
+
+The climate adds its own: Earth's June pole taking 524 W/m² — more than its
+equator ever gets — the 54° obliquity above which the poles beat the equator
+over a whole year, Earth's 33 K greenhouse and Venus's 505 K and Mars's 3 K and
+Titan's 20 K, the 282 W/m² ceiling on what a wet atmosphere can radiate, the
+1.8 W/m²/K with which Earth's outgoing radiation rises against the 4.7 a dry
+column would give, a 0.58 W/m²/K transport coefficient, a modelled Earth at
+286 K and Mars at 212 K and Venus at 741 K, a Hadley cell reaching 30° on Earth
+and the pole on Venus, three jets on Earth and two dozen on Jupiter, a
+continent swinging three times as far through the year as an ocean, a winter
+pole pinned at the frost point of its own air, and a present-day Earth with two
+stable climates fifty degrees apart.
 
 Down the bottom of the ladder the same rule applies. Earth's sky comes out at
 τ = 0.195 with an 8.6 km scale height; quartz at 2649 kg/m³ against a measured

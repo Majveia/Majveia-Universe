@@ -36,6 +36,8 @@
 
 import { G, K_B, M_PROTON, M_SUN, R_SUN, R_EARTH, AU, YEAR } from '../core/constants';
 import { jeansParameter, radiusFromMass, type Moon, type Planet, type Ring } from './planets';
+import { opticalDepth, scaleHeight, T_FREEZE, type Atmosphere } from './radiation';
+import { circulation } from './circulation';
 
 // ---------------------------------------------------------------------------
 // A moon, as a place to stand
@@ -135,12 +137,28 @@ export function moonAsWorld(
 ): Planet {
   const gravity = surfaceGravity(m.massKg, m.radiusM);
   const flux = tidalHeatFlux(m.radiusM, m.a, Math.max(m.e, 0.0015), parent.massKg);
-  const surfaceK = moonTemperature(starLsun, parent.au, m.albedo, flux);
-  const air = retainsAtmosphere(m.massKg, m.radiusM, surfaceK, m.icy,
+  const effectiveK = moonTemperature(starLsun, parent.au, m.albedo, flux);
+  const air = retainsAtmosphere(m.massKg, m.radiusM, effectiveK, m.icy,
     m.a / Math.max(parent.radiusM, 1));
   // Titan is 1.45 bar; scale from how comfortably it clears escape.
-  const lam = jeansParameter(m.massKg, m.radiusM, surfaceK, 28.013);
+  const lam = jeansParameter(m.massKg, m.radiusM, effectiveK, 28.013);
   const pressureBar = air ? Math.min(4, 0.02 * Math.max(0, lam - 55)) : 0;
+
+  // The column, and what it does to the ground under it. A moon that kept its
+  // nitrogen kept the methane with it, and methane is an infrared absorber, so
+  // the surface sits above the temperature the moon radiates at - Titan by
+  // about twenty degrees.
+  const column: Atmosphere = {
+    pressureBar,
+    greenhouseFraction: air ? 0.05 : 0,
+    molarMass: 28.013,
+    cp: 1040,
+    // Whatever water is here is ice, and the ice is the bedrock.
+    water: false,
+    humidity: 0,
+  };
+  const surfaceK = effectiveK
+    * Math.pow(1 + 0.75 * opticalDepth(effectiveK, column), 0.25);
 
   // A moon this close is locked, which is nearly all of them: the timescale
   // goes as the sixth power of the distance and they are all very close.
@@ -165,13 +183,22 @@ export function moonAsWorld(
     dayS: periodS,
     obliquity: 0,
     albedo: m.albedo,
-    teqK: surfaceK,
+    teqK: effectiveK,
     surfaceK,
+    effectiveK,
+    greenhouseK: surfaceK - effectiveK,
     pressureBar,
+    co2Bar: pressureBar * column.greenhouseFraction,
+    air: column,
     atmosphere: air ? 'N₂' : 'none',
+    // An icy moon is most of the way to being made of water; none of it is
+    // liquid where you are standing.
+    waterInventory: m.icy ? 0.9 : 0,
     // Ice is not liquid. A tidally heated icy moon has an ocean, but it is
     // under ten kilometres of crust and you are standing on the crust.
     oceanFraction: 0,
+    iceFraction: m.icy && surfaceK < T_FREEZE ? 0.9 : 0,
+    runaway: false,
     cloudCover: air ? 0.55 : 0,
     tidallyLocked: true,
     habitable: false,
@@ -184,6 +211,13 @@ export function moonAsWorld(
     ],
     surfaceSeed: Math.abs(Math.round(m.a)) ^ 0x9e37,
     magnetism: 0,
+    // A locked moon turns once a month, so its Rhines scale is the size of the
+    // whole body and it has one circulation cell, not a set of bands.
+    jets: circulation({
+      dayS: periodS, radiusM: m.radiusM, gravity, pressureBar,
+      gradientK: Math.max(2, surfaceK * 0.25), meanK: Math.max(surfaceK, 30),
+      scaleHeightM: scaleHeight(Math.max(surfaceK, 30), gravity, 28.013),
+    }).jets,
   };
 }
 
