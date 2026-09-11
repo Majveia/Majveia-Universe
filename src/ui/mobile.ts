@@ -94,6 +94,8 @@ const COMMANDS: Command[] = [
   { key: 'KeyR', label: 'dark ages', rank: 12, live: at('cosmos') },
   { key: 'KeyC', label: 'cosmology', rank: 13, live: at('cosmos') },
 
+  { key: 'Comma', label: '↓ south', rank: 4, live: has('step') },
+  { key: 'Period', label: '↑ north', rank: 5, live: has('step') },
   { key: 'KeyL', label: 'deep field', rank: 20, live: has('observeDeepField'), on: lit('KeyL') },
   {
     key: 'Semicolon', label: 'microwave', rank: 22,
@@ -112,6 +114,9 @@ const COMMANDS: Command[] = [
   { key: 'KeyN', label: 'listen', rank: 35, live: has('toggleChirpAudio'), on: lit('KeyN') },
 
   { key: 'KeyC', label: 'climate', rank: 36, live: has('toggleClimate'), on: lit('KeyC') },
+
+  { key: 'KeyE', label: 'full size', rank: 6, live: has('swell'), on: lit('KeyE') },
+  { key: 'KeyQ', label: 'one orbital', rank: 6, live: has('cycleOrbital'), on: lit('KeyQ') },
 
   { key: 'KeyY', label: 'a whole life', rank: 40, live: has('toggleEvolution'), on: lit('KeyY') },
   { key: 'KeyT', label: 'true scale', rank: 41, live: has('toggleTrueScale'), on: lit('KeyT') },

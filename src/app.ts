@@ -34,6 +34,10 @@ const SCALE_LABELS: Record<ScaleId, string> = {
   galaxy: 'Galaxy',
   system: 'System',
   world: 'World',
+  surface: 'Surface',
+  matter: 'Matter',
+  atom: 'Atom',
+  nucleus: 'Nucleus',
 };
 
 const SYLLABLES = ['ka', 'thu', 'ma', 'vei', 'or', 'lyn', 'dra', 'sel', 'ith', 'no', 'zar', 'ea', 'vos', 'ri'];
@@ -530,7 +534,14 @@ export class App {
     const aimed = usePointer && this.pointerActive
       ? this.stage.child(this.pointer) : null;
     const t = aimed ?? this.stage.child();
-    if (!t) { this.flash('this is the smallest scale'); return; }
+    if (!t) {
+      this.flash(this.stage.id === 'world'
+        ? 'there is no surface here — it is gas all the way down'
+        : this.stage.id === 'nucleus'
+          ? 'this is the bottom: everything above you is made of these'
+          : 'this is the smallest scale');
+      return;
+    }
     this.travel(t);
   }
 
@@ -586,11 +597,28 @@ export class App {
     this.readoutKeys = '';
     if (!this.stage) return;
     const rows = this.stage.rows();
-    for (const r of rows) {
-      this.readout.add({ key: r.k, label: r.k, accent: r.accent });
+    // Keyed by position, not by label. Two rows can honestly want the same
+    // label - the star is 'it is day' and the planet overhead is 'it is 28%
+    // lit' - and keying on the label meant the second one silently took the
+    // first one's slot and the first one never got a value written into it.
+    for (let i = 0; i < rows.length; i++) {
+      this.readout.add({ key: `${i}`, label: rows[i].k, accent: rows[i].accent });
     }
     this.readout.add({ key: '__fps', label: 'frame' });
+    // Filled in here as well as in the frame loop. The loop only writes values
+    // every sixth frame, so a rebuild left the readout showing a column of
+    // labels with nothing beside them until the next one came round - a
+    // hundred milliseconds normally, and two whole seconds on something slow.
+    for (let i = 0; i < rows.length; i++) this.readout.set(`${i}`, rows[i].v, rows[i].u);
     this.readoutKeys = rows.map((r) => r.k).join('\u0000');
+    // A long readout is folded into two columns rather than allowed to grow up
+    // the left edge into the ladder of scales. Standing on a moon there is
+    // simply more to say than there is anywhere else.
+    const split = rows.length > 13;
+    this.readout.el.classList.toggle('split', split);
+    this.readout.el.style.setProperty(
+      '--rows', String(split ? Math.ceil((rows.length + 1) / 2) : 1),
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -820,6 +848,31 @@ export class App {
           if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
           else document.documentElement.requestFullscreen?.().catch(() => {});
           break;
+        case 'KeyE': {
+          // Atoms at the size they really are. Everything is normally drawn
+          // ball-and-stick at a third of scale because otherwise there is
+          // nothing to see - and what there is nothing to see of is the point.
+          const c = this.stage as unknown as { swell?: () => number };
+          if (!c.swell) { this.flash('there are no atoms to swell at this scale'); break; }
+          const on = c.swell() > 0.5;
+          this.mark('KeyE', on);
+          this.flash(on
+            ? 'atoms at full size — a solid, which is what it is'
+            : 'back to balls and sticks, at a third of scale');
+          break;
+        }
+        case 'KeyQ': {
+          // One orbital at a time. Isolating 2p is how you see that it is two
+          // lobes with a plane of nothing between them - invisible in the
+          // total density, because the other two p orbitals fill that plane in.
+          const c = this.stage as unknown as { cycleOrbital?: () => string };
+          if (!c.cycleOrbital) { this.flash('there are no orbitals at this scale'); break; }
+          const which = c.cycleOrbital();
+          this.mark('KeyQ', which !== 'all of them');
+          this.rebuildReadout();
+          this.flash(which === 'all of them' ? 'the whole cloud again' : `just ${which}`);
+          break;
+        }
         case 'KeyP': this.capture(); break;
         case 'KeyL': {
           const c = this.stage as unknown as { observeDeepField?: () => boolean };
@@ -831,6 +884,18 @@ export class App {
               ? 'deep field · 1 Gpc · the cluster is lensing what is behind it'
               : 'back to the cluster');
           } else this.flash('deep fields are observed from a cluster');
+          break;
+        }
+        case 'Comma': case 'Period': {
+          // Walk north or south. It is the only navigation on the ground and
+          // it is the one that changes what you see: from the tropics the star
+          // passes overhead, from near the pole it scrapes the horizon and for
+          // half the year it does not come up at all.
+          const s2 = this.stage as unknown as { step?: (d: number) => number };
+          if (!s2.step) { this.flash('there is nowhere to walk from up here'); break; }
+          const lat = s2.step(code === 'Period' ? 8 : -8);
+          this.flash(`${Math.abs(lat).toFixed(0)}° ${lat >= 0 ? 'north' : 'south'}`);
+          this.rebuildReadout();
           break;
         }
         case 'Semicolon': {
@@ -1334,7 +1399,7 @@ export class App {
         if (ov) this.overlayHost.append(ov);
         this.mountedOverlay = ov;
       }
-      for (const r of rows) this.readout.set(r.k, r.v, r.u);
+      for (let i = 0; i < rows.length; i++) this.readout.set(`${i}`, rows[i].v, rows[i].u);
       this.readout.set('__fps', this.fps.toFixed(0), 'fps');
     }
   }
@@ -1426,6 +1491,7 @@ const HELP_HTML = `
       <dt>V</dt><dd>tint by peculiar velocity</dd>
       <dt>L</dt><dd>observe a cluster as a deep field</dd>
       <dt>;</dt><dd>observe a cluster in the microwave · 100 · 143 · 217 · 353 GHz</dd>
+      <dt>, .</dt><dd>walk south or north, on a surface</dd>
       <dt>K</dt><dd>show lensing critical curves</dd>
       <dt>M</dt><dd>collide this galaxy with another</dd>
       <dt>G</dt><dd>merge two black holes</dd>

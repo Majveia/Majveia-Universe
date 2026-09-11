@@ -60,7 +60,7 @@ const check = (name, ok, detail = '') => {
 
 // Down the whole ladder, tapping somewhere arbitrary each time - not on
 // anything in particular, which is the realistic case on a phone.
-const spots = [[120, 240], [260, 420], [195, 180], [150, 330]];
+const spots = [[120, 240], [260, 420], [195, 180], [44, 726]];
 const want = ['cluster', 'galaxy', 'system', 'world'];
 for (let i = 0; i < want.length; i++) {
   const before = await scale();
@@ -73,6 +73,46 @@ for (let i = 0; i < want.length; i++) {
     `${before} -> ${after}  "${await flash()}"  verbs=${JSON.stringify(g)} inspector=${insp}`);
   if (after !== want[i]) break;
 }
+
+// And the last rung.
+//
+// Not every world has one: a gas giant is gas all the way down and the ladder
+// legitimately ends there, so the walk above can finish on one. Land on a
+// world that does have a surface, and check the gesture takes you onto it.
+// travel() is refused outright while a scale change is still in flight, so
+// wait for the last one to land before asking for another.
+await page.waitForFunction(() => !window.majveia.app.travelling, null, { timeout: 60000 });
+await page.evaluate(() => window.majveia.travel('world',
+  { cluster: 0, member: 0, star: 0, real: 1, planet: 2 }));
+await page.waitForFunction(() => window.majveia.app.stage?.title === 'Earth', null, { timeout: 60000 });
+await page.waitForTimeout(3000);
+check('a rocky world has somewhere to stand',
+  await page.evaluate(() => !!window.majveia.app.stage.child()));
+await doubleTap(200, 300);
+check('double tap enters surface from world', (await scale()) === 'surface',
+  `-> ${await scale()}  "${await flash()}"`);
+check('the surface hands you the ground under it',
+  await page.evaluate(() => window.majveia.app.stage.child()?.id === 'matter'),
+  `-> ${await page.evaluate(() => JSON.stringify(window.majveia.app.stage.child()))}`);
+await doubleTap(200, 300);
+check('double tap enters matter from surface', (await scale()) === 'matter',
+  `-> ${await scale()}  "${await flash()}"`);
+check('the lattice hands you one of its atoms',
+  await page.evaluate(() => window.majveia.app.stage.child()?.id === 'atom'),
+  `-> ${await page.evaluate(() => window.majveia.app.stage.child()?.label)}`);
+await doubleTap(200, 300);
+check('double tap enters atom from matter', (await scale()) === 'atom',
+  `-> ${await scale()}  "${await flash()}"`);
+check('the atom hands you its nucleus',
+  await page.evaluate(() => window.majveia.app.stage.child()?.id === 'nucleus'),
+  `-> ${await page.evaluate(() => window.majveia.app.stage.child()?.label)}`);
+await doubleTap(200, 300);
+check('double tap enters nucleus from atom', (await scale()) === 'nucleus',
+  `-> ${await scale()}  "${await flash()}"`);
+check('and there the ladder ends',
+  await page.evaluate(() => window.majveia.app.stage.child() === null));
+check('with the binding curve up',
+  await page.evaluate(() => !!window.majveia.app.stage.overlay()));
 
 console.log(fails === 0 ? '\ndescending works everywhere' : `\n${fails} failed`);
 await browser.close();
