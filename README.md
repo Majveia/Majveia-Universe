@@ -1007,3 +1007,29 @@ the geometry and the differential streaming, but not the wave's own dynamics.
 The halo finder is peak identification with exclusion, not a friends-of-friends
 group finder. None of it is a substitute for a real N-body code - but none of
 it is made up either.
+
+## The Ten Thousand Things
+
+`lessons/tenthousand.html` is a standalone page — one file, no build — that takes
+five lines from the *Tao Te Ching* and puts the physics of the ladder under each
+one, as an instrument you can put your hand on.
+
+| | verse | instrument | the measurement |
+|---|---|---|---|
+| 一 | 當其無，有室之用 (11) | magnify an iron atom until the nucleus arrives | shell radii from Slater's rules; 1 part in 3.9×10¹³ |
+| 二 | 道法自然 (25) | drag the moon across the sun | limb-darkened circle overlap, integrated in annuli |
+| 三 | 反者道之動 (40) | walk the binding curve | Bethe–Weizsäcker along the valley of stability |
+| 四 | 三生萬物 (42) | the chain from hydrogen to iron | the seven real reactions, with their real Q values |
+| 五 | 視之不見 (14) | the resolution limit | λ/2NA, drawn as the blur it actually is |
+
+The page opens on a pixel-art loader — mountain, water, mist and a pale sun, a
+256×144 buffer blown up with smoothing off — that assembles itself block by
+block while the fonts land. The sun is draggable and the water takes ripples.
+
+Five terms in the prose (`subpixel`, `limb`, `return`, `pp`, `diffract`) carry
+their own looping animation on hover or focus, and the strip along the bottom
+is the same 43-decade ruler the simulation uses, tracking whichever lesson is
+in view. 陰陽 in the top right swaps which of paper and void is the ground.
+
+Open it directly in a browser: no server, no dependencies beyond the Google
+Fonts stylesheet, and it degrades to system serifs without it.
