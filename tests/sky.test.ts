@@ -4,7 +4,8 @@ import {
   rayleighBeta, erfcx, chapman, airMass, opticalDepth, transmittance,
   rayleighPhase, miePhase, skyRadiance, sunColourAtSurface, solarDeclination, blocked,
   hourAngle, altAz, daylightFraction, angularRadius, horizonDistance, horizonDip,
-  atmosphereOf, type Atmosphere,
+  atmosphereOf, groundIllumination, surfaceExposure, EXPOSURE_RANGE,
+  type Atmosphere,
 } from '../src/astro/sky';
 import { R_EARTH, R_SUN, AU, DEG } from '../src/core/constants';
 
@@ -23,6 +24,8 @@ function make(
 const EARTH = make(1.0, 288, 9.81, R_EARTH, 'N₂/O₂', 0.71, 0.67);
 const MARS = make(0.006, 210, 3.71, 3.3895e6, 'CO₂', 0, 0.05);
 const VENUS = make(92, 737, 8.87, 6.0518e6, 'CO₂', 0, 1);
+/** A world with nothing over it at all. */
+const VACUUM_AIR = make(0, 200, 1.6, 1.74e6, 'none');
 
 describe('the gases', () => {
   it('knows what the air is made of by the label the generator uses', () => {
@@ -628,6 +631,128 @@ describe('which way round the sky is', () => {
     for (const lat of [-60, -20, 0, 35, 70]) {
       expect(az(lat * DEG2, 0, -0.4)).toBeGreaterThan(0);
       expect(az(lat * DEG2, 0, -0.4)).toBeLessThan(180);
+    }
+  });
+});
+
+describe('what actually lands on the ground', () => {
+  const VACUUM = VACUUM_AIR;
+
+  it('is the beam and nothing else where there is no air', () => {
+    // On an airless world the only light on the ground came straight from the
+    // star, so it is cos of the zenith angle and there is no twilight at all.
+    for (const z of [0, DEG * 30, DEG * 60, DEG * 85]) {
+      const g = groundIllumination(VACUUM, z);
+      expect(g.diffuse, `${z}`).toBeCloseTo(0, 9);
+      expect(g.total).toBeCloseTo(Math.cos(z), 6);
+    }
+    // And the instant the star sets it is night.
+    expect(groundIllumination(VACUUM, DEG * 91).total).toBeCloseTo(0, 9);
+  });
+
+  it('lets most of the beam through a clear sky and adds a little from the sky', () => {
+    const g = groundIllumination(EARTH, 0);
+    expect(g.direct).toBeGreaterThan(0.75);   // a clear zenith sun
+    expect(g.direct).toBeLessThan(1);
+    expect(g.diffuse).toBeGreaterThan(0);     // and the sky is not black
+    expect(g.diffuse).toBeLessThan(g.direct); // but it is not the main event
+  });
+
+  it('turns the beam off and the sky on as the air thickens', () => {
+    // Venus is the limit case: ninety-two bars, no sun visible from the
+    // ground anywhere ever, and a surface you can still read a dial by.
+    const v = groundIllumination(VENUS, 0);
+    expect(v.direct).toBeLessThan(1e-3);
+    expect(v.diffuse).toBeGreaterThan(v.direct * 100);
+    // A few per cent of the sunlight gets down there, which is enough to see
+    // and to photograph by, and is what the Venera landers found.
+    expect(v.total).toBeGreaterThan(0.01);
+    expect(v.total).toBeLessThan(0.15);
+  });
+
+  it('never delivers more light than arrived', () => {
+    for (const a of [EARTH, MARS, VENUS, VACUUM]) {
+      for (const z of [0, DEG * 45, DEG * 80]) {
+        expect(groundIllumination(a, z).total).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('falls as the star goes down, all the way and never backwards', () => {
+    let prev = Infinity;
+    for (let d = 0; d <= 95; d += 5) {
+      const t = groundIllumination(EARTH, d * DEG).total;
+      expect(t, `${d}°`).toBeLessThanOrEqual(prev + 1e-9);
+      expect(t).toBeGreaterThanOrEqual(0);
+      prev = t;
+    }
+  });
+
+  it('leaves something in the sky after the star has set, which is twilight', () => {
+    const set = groundIllumination(EARTH, DEG * 93);
+    expect(set.direct).toBe(0);
+    expect(set.diffuse).toBeGreaterThan(0);
+    // And it is gone by the time the star is well down.
+    expect(groundIllumination(EARTH, DEG * 115).total).toBeLessThan(set.total);
+  });
+});
+
+describe('the aperture', () => {
+  const opts = (z: number, over: Partial<Parameters<typeof surfaceExposure>[0]> = {}) => ({
+    flux: 1, albedo: 0.3, atmosphere: EARTH, sunZenith: z, ...over,
+  });
+
+  it('is tightest with the star overhead and opens as it sets', () => {
+    const noon = surfaceExposure(opts(0));
+    expect(surfaceExposure(opts(DEG * 60))).toBeGreaterThan(noon);
+    expect(surfaceExposure(opts(DEG * 85))).toBeGreaterThan(surfaceExposure(opts(DEG * 60)));
+  });
+
+  it('never stops down past its own midday setting', () => {
+    // There is no light brighter than the star overhead, so nothing should
+    // ever ask for a smaller aperture than that.
+    const noon = surfaceExposure(opts(0));
+    for (const d of [0, 20, 50, 80, 100, 170]) {
+      expect(surfaceExposure(opts(d * DEG))).toBeGreaterThanOrEqual(noon - 1e-9);
+    }
+  });
+
+  it('stops opening six stops down, so the night stays dark', () => {
+    // The whole reason for the bound. Without it the floor under the
+    // calculation sends the aperture to infinity in the small hours and the
+    // night sky comes out looking like an overcast afternoon.
+    const noon = surfaceExposure(opts(0));
+    const midnight = surfaceExposure(opts(Math.PI));
+    expect(midnight / noon).toBeCloseTo(EXPOSURE_RANGE, 6);
+    expect(midnight).toBeLessThan(noon * (EXPOSURE_RANGE + 1e-9));
+  });
+
+  it('follows the light without matching it, which is what adapting means', () => {
+    // An exponent of one would be a light meter and every hour of the day
+    // would come out the same grey. The displayed brightness has to move.
+    const bright = groundIllumination(EARTH, 0).total;
+    const dim = groundIllumination(EARTH, DEG * 75).total;
+    const eNoon = surfaceExposure(opts(0));
+    const eLow = surfaceExposure(opts(DEG * 75));
+    const shownNoon = bright * eNoon;
+    const shownLow = dim * eLow;
+    expect(shownLow).toBeLessThan(shownNoon);        // the evening is darker
+    expect(shownLow / shownNoon).toBeGreaterThan(dim / bright); // but not by all of it
+  });
+
+  it('opens further for a fainter star and a darker ground', () => {
+    const base = surfaceExposure(opts(0));
+    expect(surfaceExposure(opts(0, { flux: 0.05 }))).toBeGreaterThan(base);
+    expect(surfaceExposure(opts(0, { albedo: 0.05 }))).toBeGreaterThan(base);
+  });
+
+  it('copes with a world that has no air and one that has ninety-two bars', () => {
+    for (const a of [VACUUM_AIR, VENUS]) {
+      for (const z of [0, DEG * 45, DEG * 120]) {
+        const e = surfaceExposure(opts(z, { atmosphere: a }));
+        expect(Number.isFinite(e), `${z}`).toBe(true);
+        expect(e).toBeGreaterThan(0);
+      }
     }
   });
 });

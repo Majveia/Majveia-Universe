@@ -12,7 +12,7 @@ the same coordinate.
 ```
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 884 tests, mostly checking physics against measurement
+npm test             # 896 tests, mostly checking physics against measurement
 npm run bundle:single # one self-contained HTML file, no network dependencies
 ```
 
@@ -777,6 +777,46 @@ closest the Moon comes to the sun is 0.070° against radii of 0.2664 and 0.2623
 — 81% covered, a crescent sun and a steel-grey afternoon. Deep partials from
 one place and totality almost never, which is how it goes.
 
+**And standing on it means being lit by it.** The scene runs over nine decades
+between a star overhead and starlight, the display has two, so something has to
+give — and what gives on a real world is the observer. The aperture follows the
+light rather than matching it, `exposure ∝ L^−0.72`, so a morning really is
+dimmer than midday and a world round a dim star really is dimmer than one round
+a bright one, and neither is a sheet of white paper. It stops following six
+stops down, which is what leaves the night dark enough for the galaxy to come up
+in it: 92% of a night frame is still pure black. And it follows the star and
+nothing else — an eclipse is not in that calculation anywhere, because an
+aperture that opened while the light was being taken away would hide the one
+event worth standing there for.
+
+What counts as the light on the ground is both ways a photon can get to it. The
+beam, `T cos z`, through the slant path the Chapman function gives. And the sky
+itself, from the two-stream solution for a slab that scatters and does not
+absorb — `1 / (1 + ¾ τ (1 − g))` — which is nearly nothing on a clear world and
+the whole answer on a thick one. Ninety-two bars of Venus deliver about four per
+cent of the sunlight to the ground, which is enough to photograph by and is what
+the Venera landers found.
+
+It used to be the beam alone at an assumed forty-five degrees, which is two
+errors pointing the same way. Every clear world at midday came out two stops
+hot, with the sunlit ground brighter than the sky that was lighting it; a world
+under seven bars came out so far the other way that only a hard clamp at ninety
+was keeping it on the screen; and the exposure was fixed at the moment of
+arrival, so walking a world from dawn to dusk changed the colour of the light
+and never the amount. Measured across nine worlds, the daylit frames used to sit
+between 106 and 243 out of 255 with no black anywhere in any of them. They now
+span 43 to 210, and a day on one world runs 2.48 at midnight to 0.41 at noon.
+
+And the ground has a surface. The landform terms have nothing finer than about
+forty metres in them, which is right for a mountain range, so there is a
+separate grain term at the scale of the ground itself — but the level patch that
+stops the camera being buried in a hillside was multiplying the whole height
+field, grain and all. It was flattening the one term that exists to give the
+near field a texture, over exactly the fifty metres that fill the bottom of
+every frame, and the result was a painted slab under a real sky. The levelling
+is for the landforms now: a two-metre swell cannot bury a camera standing
+thirteen metres up, so it does not need protecting from.
+
 At totality from a moon there is a ring of copper light round the planet's
 limb: light that grazed through its atmosphere, lost its blue to Rayleigh, and
 bent far enough to reach you. Its colour is computed from that planet's own
@@ -1098,13 +1138,15 @@ src/
   render/       the HDR engine and every shader
   sim/          the universe object graph and the scale ladder
   ui/           the interface
-tests/          884 tests against published measurements and against
+tests/          896 tests against published measurements and against
                 every edge of the gesture recogniser
 scripts/        browser probes: every scale in motion, the whole ladder on
                 touch, every rung's two clocks, a difference of the light cone
-                against the snapshot it replaces, and a health check for the
-                interface at real window sizes and for the switches whose only
-                effect is a number
+                against the snapshot it replaces, a census of every world in a
+                seed that has a surface, a tour that stands on ten of them and
+                measures what is in the frame, a whole day on one of them, and
+                a health check for the interface at real window sizes and for
+                the switches whose only effect is a number
 ```
 
 ## Accuracy
@@ -1160,6 +1202,17 @@ operations I had written down for quartz were wrong, which showed up as silicon
 with three oxygens instead of four. And a test asserting that every light
 nucleus fuses profitably failed on hydrogen: the model was right and the test
 was wrong, because two protons genuinely do not stick.
+
+The light on a surface is checked the same way. An airless world gets `cos z`
+and no twilight at all; a clear one gets three quarters of the beam at the
+zenith and a little from the sky; Venus gets between one and fifteen per cent of
+the sunlight to the ground with no sun visible in it anywhere; nothing anywhere
+receives more light than fell on the top of its own air; and the total falls
+monotonically from the zenith to below the horizon and leaves something behind
+when the star has set, which is twilight. The aperture is never tighter than its
+own midday setting, opens exactly six stops and stops, and shows an evening
+darker than a noon by less than the light is — which is the whole content of the
+word *adapting*.
 
 One thing no unit test could have caught, because it was wiring rather than
 physics. The cosmology handed to a scale was copied in once, when the scale was

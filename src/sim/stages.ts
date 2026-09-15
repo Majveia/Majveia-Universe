@@ -3370,6 +3370,9 @@ export class SurfaceStage extends Stage {
   private eyeH = 1.7;
   /** The display gain everything in this scene is drawn at. */
   private exposure = 1;
+  /** The star's flux at this orbit and the ground's reflectance, for it. */
+  private starFlux = 1;
+  private groundAlbedo = 0.3;
 
   // The ephemeris: everything in the system that is not the ground you are
   // standing on. Held as bodies rather than planets so a moon is one too.
@@ -3628,16 +3631,23 @@ export class SurfaceStage extends Stage {
     // Expose for the sunlit ground, which is the brightest thing that is
     // reliably in frame: the sky can be anything from a black vacuum to ninety
     // bars of opaque carbon dioxide, and exposing for it would make half the
-    // worlds in the simulation unviewable. The ground estimate is a mid-height
-    // star seen through this world's own air.
-    const flux = (this.starRGB[0] + this.starRGB[1] + this.starRGB[2]) / 3;
-    const albedo = (p.color[0] + p.color[1] + p.color[2]) / 3;
-    const through = SKY.transmittance(this.air, Math.PI / 4)[1];
-    const ground = Math.max(1e-4, albedo * flux * 0.62 * through);
-    this.exposure = Math.min(90, 0.24 / ground);
-    this.view.setExposure(this.exposure);
+    // worlds in the simulation unviewable.
+    //
+    // What counts as the light on the ground is `SKY.groundIllumination`, and
+    // it is both terms - the beam through the slant path and the sky's own
+    // light coming down - at the angle the star is actually at. This used to
+    // be the beam alone at an assumed forty-five degrees, which is two
+    // separate errors pointing the same way: a clear world at midday came out
+    // two stops hot, with the sunlit ground brighter than the sky that was
+    // lighting it, and a world under seven bars came out so far the other way
+    // that only a hard clamp at ninety was keeping it on the screen.
+    this.starFlux = (this.starRGB[0] + this.starRGB[1] + this.starRGB[2]) / 3;
+    this.groundAlbedo = (p.color[0] + p.color[1] + p.color[2]) / 3;
 
+    // aim() first: the exposure is a function of where the star is, and until
+    // this runs it is nowhere.
     this.aim();
+    this.adaptExposure(Infinity);
     this.placeMoons();
     this.placeWanderers();
     this.applyLight();
@@ -3757,9 +3767,40 @@ export class SurfaceStage extends Stage {
     this.simTime += dt * this.timeScale;
     this.sky.mesh.position.copy(this.env.engine.camera.position);
     this.aim();
+    this.adaptExposure(dt);
     this.placeMoons();
     this.placeWanderers();
     this.applyLight();
+  }
+
+  /**
+   * Open and close the aperture as the star climbs and sets.
+   *
+   * It follows the light rather than matching it - `SKY.surfaceExposure` uses
+   * an exponent short of one - so a morning really is dimmer than noon, and it
+   * stops following altogether six stops down, which is what leaves the night
+   * dark enough for the galaxy to come up in it.
+   *
+   * It follows the star and nothing else. An eclipse is not in this
+   * calculation anywhere, on purpose: the aperture must not open while the
+   * light is being taken away, or the one event worth standing here for would
+   * happen and the frame would look the same throughout.
+   *
+   * The slew is wall time, not simulated time. It is an eye, and an eye does
+   * not know that the day has been sped up four hundred times.
+   */
+  private adaptExposure(dt: number): void {
+    const target = SKY.surfaceExposure({
+      flux: this.starFlux,
+      albedo: this.groundAlbedo,
+      atmosphere: this.air,
+      sunZenith: Math.PI / 2 - this.altitude,
+    });
+    if (!(target > 0) || !Number.isFinite(target)) return;
+    const k = Number.isFinite(dt) ? 1 - Math.exp(-Math.max(0, dt) / 0.8) : 1;
+    const from = this.exposure > 0 ? Math.log(this.exposure) : Math.log(target);
+    this.exposure = Math.exp(from + (Math.log(target) - from) * k);
+    this.view?.setExposure(this.exposure);
   }
 
   /**
