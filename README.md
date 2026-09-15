@@ -4,12 +4,15 @@ An interactive simulation of the universe, built from physics rather than from
 art direction. It runs in a browser, generates everything from one seed, and
 lets you fly from the cosmic web down to the nucleus of one atom in the ground
 under your feet — nine scales and thirty-eight orders of magnitude — without a
-loading screen in between.
+loading screen in between. One key turns the ruler along the bottom from metres
+into seconds, and at the top of the ladder that stops being a change of units:
+the web becomes the observer's own past light cone, where distance and age are
+the same coordinate.
 
 ```
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 829 tests, mostly checking physics against measurement
+npm test             # 884 tests, mostly checking physics against measurement
 npm run bundle:single # one self-contained HTML file, no network dependencies
 ```
 
@@ -54,6 +57,145 @@ fusing iron — which is why a star that has made iron stops holding itself up
 and collapses, and that collapse is the supernova four rungs above, which is
 how the oxygen in the ground you were standing on got out of the star it was
 made in. Click an atom at the Matter scale and it tells you which.
+
+## The other axis
+
+Forty-three decades of length along the bottom of the window, and one key turns
+all of it into seconds.
+
+Nothing moves when you press it. Every length on that ruler is also a duration —
+the time light takes to cross it — and dividing a logarithmic axis by a constant
+is a shift, except that this axis is *defined* by that division, so it is not
+even that. The notches stay exactly where they are and only their names change.
+"A light year" becomes "a year", which is what a light year is. "An AU" becomes
+the eight and a third minutes that sunlight is old when it arrives. "Green
+light" becomes one wave of itself, 1.83 femtoseconds. The Earth becomes 42
+milliseconds, the Sun 4.6 seconds, a person 5.7 nanoseconds. And the observable
+universe becomes 93 billion years of crossing, for a universe 13.8 billion years
+old — which is the horizon problem, in one notch, next to the notch for the age.
+
+Over the top of that goes the thing the length axis could never show. Every
+object has two clocks. The first is not really its own: it is `size / c`, the
+shortest interval in which one side of the thing can learn anything about the
+other, and nothing the object does can be faster than it. The second is what the
+object actually takes to do the thing it does — go round once, fall in, ring,
+turn — which is `size / v`, where v is whatever moves there. Divide one by the
+other and the size cancels:
+
+```
+own clock / light clock  =  c / v
+```
+
+So the distance between an object's two clocks, measured in decades on a
+logarithmic axis, is `log₁₀(c/v)` and nothing else. That is drawn as a bar
+between an open mark and a filled one, and the bar says the same thing about a
+galaxy cluster and a grain of quartz.
+
+For anything gravity holds together, v is the orbital speed at its own surface,
+and then `c/v = √(2R/r_s)`: the gap between the two clocks is the square root of
+how far the thing is from being a black hole. It closes only where gravity turns
+relativistic, and on the whole ladder there are exactly two places where it
+closes — a horizon, and the universe itself, where the Hubble length recedes at
+exactly c and the two clocks are one clock, 14.45 billion years long.
+
+Below the waterline gravity is nothing and the rule survives intact. In a
+crystal v is the speed of sound, because a sound wave and a thermal phonon are
+the same object, and the gap is c/vₛ. In an atom v is the electron's, which is
+αc, so the gap is 1/α = 137.036 — the plainest appearance the fine structure
+constant makes anywhere in here, and the atom's own clock comes out at
+a₀/(αc) = ħ/E_h = 24.19 attoseconds, which is the atomic unit of time arriving
+from the other direction rather than being put in by hand. In a nucleus v is the
+Fermi speed, about 0.27c, and the gap is down to under four.
+
+Which gives the ladder a shape it did not obviously have. One walk down it —
+`?seed=ORIGIN&real=1`, so the bottom six rungs are the real Solar System, the
+Earth, the quartz under your feet and an iron nucleus in it:
+
+| | light across it | its own clock | what moves | decades apart |
+|---|---|---|---|---|
+| **Cosmos** | 14.5 Gyr | 14.5 Gyr | the expansion, at c | 0.00 |
+| **Cluster** | 9.9 Myr | 2.31 Gyr | galaxies falling | 2.37 |
+| **Galaxy** | 34 kyr | 27.7 Myr | the disc | 2.91 |
+| **System** | 6.5 h | 50.6 yr | an orbit, at 14 AU | 4.84 |
+| **World** | 21.3 ms | 13.4 min | a low orbit | 4.58 |
+| **Surface** | 21.3 ms | 3.81 h | the world turning | **5.81** |
+| **Matter** | 775 zs | 63.3 fs | sound | 4.91 |
+| **Atom** | 370 zs | 36.7 as | an electron | 2.00 |
+| **Nucleus** | 14.3 ys | 52.6 ys | nucleons | 0.57 |
+
+`scripts/clocks.mjs` prints exactly that table out of a running browser, which
+is how it got here.
+
+The gap is widest in the middle and closes at both ends. The fast parts of the
+universe are the very largest and the very smallest; everything between them —
+planets, rocks, us — is the slow part, and the slowest thing on the entire
+ladder is standing still on the ground.
+
+The top and the bottom of that table turn out to be the same law. For anything
+gravity holds together the clock depends on nothing but density — eighty-four
+minutes for a low orbit round anything as dense as the Earth, whatever its size,
+which is also the period of a pendulum swung through a hole bored straight
+through the middle, and the period every inertial navigation system is tuned to
+so that its errors oscillate instead of growing. Apply the same formula to the
+universe at its own critical density and the free-fall time comes out at exactly
+π/2 Hubble times — which is why the age of the universe and the time it would
+take to fall in on itself are the same number to within a factor of two, and it
+is not a coincidence but a cancellation.
+
+### The past light cone
+
+At the cosmic scale the same key does something else, because it is the same
+statement.
+
+Every picture of cosmic structure ever made, including the one further up this
+page, is a *snapshot*: every particle shown at the same cosmic time, which is a
+thing no instrument has ever seen or could see. What a telescope collects is the
+past light cone — the surface in spacetime made of everything whose light is
+arriving now — and on it, distance and age are the same coordinate. A galaxy a
+billion light years away is a billion years young, and it is young in the only
+sense that matters here: the structure around it has had a billion years less to
+collapse.
+
+The construction is exact and it needs one function the cosmology already had.
+Conformal time `η(a) = ∫ c da/(a²H)` is comoving distance travelled by light, so
+a photon leaving at `a_e` and arriving at `a_obs` has crossed
+`r = η(a_obs) − η(a_e)`, and inverting that gives the emission epoch at every
+distance. η is the comoving particle horizon, which was already there under that
+name; it is sampled once per cosmology and everything after it is a lookup in a
+monotone table. In the vertex shader `D` stops being a uniform: each particle's
+growth factor comes from its own distance to the observer, solved rather than
+evaluated by two fixed-point steps, because the displacement moves the particle,
+which moves it along the cone, which changes the displacement.
+
+Nothing else in the shader changes. The density, the collapse classification and
+the colour all follow whatever epoch they are handed, so the far field goes
+smooth and cold without anything having been told to make it.
+
+Structure thins with distance. Near the observer the filaments are as collapsed
+as they are today; further out the same filaments are caught earlier and are
+fainter, smoother, less finished. Across a 620 Mpc box that is z = 0.15 and a
+growth factor of 0.93; at the far corner of the tiling, 1.5 Gpc out, it is
+z = 0.39 and 0.82. Differenced against the snapshot from the same camera, the
+cone keeps 83% of the light near the observer and 75% at the edge of the frame,
+and the gradient between those two numbers is the whole effect. It is not loud,
+and it is not meant to be: that is what six hundred megaparsecs actually look
+like. Drag the timeline back and it stops being subtle — an observer at z = 3
+has a horizon a third the size and sees the far side of their own box at a
+growth factor of 0.13 against 0.32 next door.
+
+And the cone ends. Past `η(a_obs)` no light has arrived, so the table saturates
+at a growth factor of zero and the field goes back to the unperturbed Gaussian it
+started as. The horizon is not a wall put there for the picture; it is where the
+integral runs out. Press **B** and the surface of last scattering is the wall the
+cone ends at, which is not a coincidence but the same sentence said twice. (In a
+620 Mpc box with Planck's parameters you will not reach it: today's horizon is
+14.2 Gpc, nine times the tiling. Einstein–de Sitter at high redshift will.)
+
+The observer is left standing wherever the camera was when the key was pressed,
+and does not follow it afterwards — which is the whole reason to do it this way
+round. Fly away and the cone is there as an object: a bubble of present-day
+structure around a marked point, thinning outward through every epoch of
+collapse.
 
 ## What it actually simulates
 
@@ -834,6 +976,7 @@ looking at the output:
 | T | true scale in a system |
 | `,` `.` | walk south or north, on a surface |
 | `;` | the microwave sky, from inside a cluster |
+| `'` | read the axis in seconds, and the web on its own light cone |
 | E | atoms at the size they really are |
 | Q | one orbital at a time |
 | X | aim with the device's own orientation |
@@ -858,7 +1001,7 @@ reaches exactly as far. One table backs both, so they cannot drift apart.
 | tap | inspect |
 | double tap | go in a scale |
 | two-finger tap | climb back out |
-| pull up the shelf | the numbers for wherever you are |
+| pull up the shelf | the numbers for wherever you are, and its two clocks |
 | the marks, right edge | the five scales |
 
 Pinch zooms about the point between the fingers rather than the middle of the
@@ -940,10 +1083,12 @@ tuned.
 ```
 src/
   core/         constants, deterministic RNG
-  cosmology/    LambdaCDM, the power spectrum, FFT, Zel'dovich, the worker
+  cosmology/    LambdaCDM, the power spectrum, FFT, Zel'dovich, the worker,
+                the past light cone
   physics/      Kepler solvers, orbital elements, relativity, N-body,
                 lensing, eclipses, magnetospheres, crystal structures,
-                atomic orbitals, the nuclear mass formula
+                atomic orbitals, the nuclear mass formula, the two clocks
+                every scale has
   camera/       the orbit and flight rigs, touch gestures, device orientation
   astro/        blackbody colour, stellar evolution, planet formation,
                 spectra, supernovae, planetary nebulae, pulsars,
@@ -953,11 +1098,13 @@ src/
   render/       the HDR engine and every shader
   sim/          the universe object graph and the scale ladder
   ui/           the interface
-tests/          829 tests against published measurements and against
+tests/          884 tests against published measurements and against
                 every edge of the gesture recogniser
 scripts/        browser probes: every scale in motion, the whole ladder on
-                touch, and a health check for the interface at real window
-                sizes
+                touch, every rung's two clocks, a difference of the light cone
+                against the snapshot it replaces, and a health check for the
+                interface at real window sizes and for the switches whose only
+                effect is a number
 ```
 
 ## Accuracy
@@ -991,6 +1138,20 @@ screening reproducing iron's 3.75, 6.25 and 25.70 exactly; nuclear matter at
 0.146 nucleons per cubic femtometre with its nucleons at 0.27 c; iron-56 bound
 at 8.85 MeV per nucleon against 8.79 and uranium-238 at 7.63 against 7.57.
 
+The clocks are checked the same way, and against numbers that come from
+somewhere else. A low orbit round anything as dense as the Earth takes 84.35
+minutes; the Sun's free-fall time is 1770 seconds, which is the number the
+textbooks quote; the universe's free-fall time at its own critical density is
+exactly π/2 Hubble times, to twelve figures, because the two expressions differ
+by that and nothing else. A 1s electron in gold runs at 0.577c. Diamond rings at
+21.5 femtoseconds and lead at 457. The gap between an object's two clocks is
+`√(2R/r_s)` for the Earth, the Sun and a neutron star alike, and √2 at a
+Schwarzschild radius. And the light cone's inversion of conformal time is
+checked against `comovingDistance`, which is a different integral over a
+different variable: they agree on the redshift at six distances, on a horizon of
+46 billion light years, and on 7.9 and 10.5 Gyr of look-back time to z = 1 and
+z = 2.
+
 Several tests exist because they caught something. `altAz` had the sign of its
 north component backwards, so the sun transited due north from London and the
 whole celestial sphere was a mirror image — invisible in an empty sky, and
@@ -999,6 +1160,17 @@ operations I had written down for quartz were wrong, which showed up as silicon
 with three oxygens instead of four. And a test asserting that every light
 nucleus fuses profitably failed on hydrogen: the model was right and the test
 was wrong, because two protons genuinely do not stick.
+
+One thing no unit test could have caught, because it was wiring rather than
+physics. The cosmology handed to a scale was copied in once, when the scale was
+built - so pressing **C** swapped the label in the masthead to Einstein-de
+Sitter and the running universe went on integrating Planck 2018 behind it, with
+the age, the growth factor and H(z) all still answering for a cosmology that was
+no longer the one being claimed. Every function involved was correct and tested;
+the value simply stopped arriving. It is a getter now, and `scripts/health.mjs`
+checks that the age really does fall from 13.8 Gyr to Einstein-de Sitter's 9.6
+and come back - because a switch whose only effect is a number is exactly the
+kind that can stop working without anybody noticing.
 
 Where the model is an approximation, it is one with a name and a range of
 validity. Zel'dovich is first-order Lagrangian perturbation theory: exact until

@@ -55,6 +55,61 @@ for (const [id, ctx] of Object.entries(CTX)) {
   check(`${id} readout tick under 0.2 ms`, r.rowsMs < 0.2, `${r.rowsMs} ms`);
 }
 
+// --- The switches whose effect is a number rather than a picture.
+//
+// Both of these are one line of wiring away from being silently decorative,
+// and both were. Pressing C used to swap the label in the masthead and leave
+// the running scene integrating the cosmology it was built with, so the age of
+// the universe in the readout went on answering for Planck while the screen
+// said Einstein-de Sitter. There is nothing to see in a screenshot either way,
+// which is exactly why it needs a probe.
+console.log('\n--- switches that change numbers rather than pictures ---');
+await page.evaluate(() => window.majveia.travel('cosmos', {}));
+await page.waitForFunction(() => !window.majveia.app.travelling, null, { timeout: 90000 });
+await page.waitForTimeout(1200);
+const ages = async () => page.evaluate(() => {
+  const r = window.majveia.app.stage.rows();
+  const find = (k) => r.find((x) => x.k === k)?.v;
+  return { age: parseFloat(find('cosmic time')), z: find('redshift'),
+    cone: !!window.majveia.app.stage.onLightCone,
+    reading: window.majveia.app.strip?.reading };
+});
+const planck = await ages();
+await page.evaluate(() => window.majveia.app.runKey('KeyC'));
+await page.waitForTimeout(1500);
+const eds = await ages();
+// Einstein-de Sitter is t = (2/3)/H0, which is 9.6 Gyr against Planck's 13.8.
+check('C reaches the running scene', Math.abs(planck.age - eds.age) > 2,
+  `${planck.age.toFixed(2)} Gyr -> ${eds.age.toFixed(2)} Gyr`);
+check('and lands on the right number', eds.age > 9 && eds.age < 10.4,
+  `Einstein-de Sitter should be about 9.6 Gyr`);
+// Round the rest of the way back to Planck: there are five of them.
+for (let i = 0; i < 4; i++) await page.evaluate(() => window.majveia.app.runKey('KeyC'));
+await page.waitForTimeout(1200);
+check('and comes back round to where it started',
+  Math.abs((await ages()).age - planck.age) < 0.2, `${(await ages()).age.toFixed(2)} Gyr`);
+
+// And the axis in seconds, which at this rung also puts the web on its cone.
+await page.evaluate(() => window.majveia.app.runKey('Quote'));
+await page.waitForTimeout(1200);
+const on = await page.evaluate(() => {
+  const r = window.majveia.app.stage.rows();
+  return { cone: !!window.majveia.app.stage.onLightCone,
+    reading: window.majveia.app.strip.reading,
+    observing: r.find((x) => x.k === 'observing')?.v,
+    horizon: r.find((x) => x.k === 'your horizon')?.v };
+});
+check("' turns the axis into seconds", on.reading === 'time', on.reading);
+check('and the web onto its light cone', on.cone && !!on.observing,
+  `${on.observing ?? 'no row'} · horizon ${on.horizon ?? '?'}`);
+await page.evaluate(() => window.majveia.app.runKey('Quote'));
+await page.waitForTimeout(900);
+const off = await page.evaluate(() => ({
+  cone: !!window.majveia.app.stage.onLightCone,
+  reading: window.majveia.app.strip.reading }));
+check('and both go back together', !off.cone && off.reading === 'length',
+  `${off.reading} · cone ${off.cone}`);
+
 console.log('\n--- the interface, at the window sizes people have ---');
 for (const [w, h] of SIZES) {
   await page.setViewportSize({ width: w, height: h });

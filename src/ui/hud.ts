@@ -117,8 +117,30 @@ export function formatDistance(metres: number): [string, string] {
   return [sig(metres / 3.0856775814913673e16 / 1e9, 3), 'Gpc'];
 }
 
+/**
+ * The same ruler, for time.
+ *
+ * `formatDistance` covers forty-three decades of length because the ladder
+ * spans that much; this has to cover forty-four of time, because the ladder
+ * divided by c spans that much - from light crossing a proton to the age of
+ * the universe. It used to stop at the second and fall back to scientific
+ * notation below it, which is fine for an orbital period and useless for a
+ * lattice: the whole bottom half of the ladder measures itself in attoseconds
+ * and femtoseconds, and those are units people actually use.
+ *
+ * Everything from one second up is unchanged, because a day is a day.
+ */
 export function formatTime(seconds: number): [string, string] {
   const a = Math.abs(seconds);
+  if (a === 0) return ['0', 's'];
+  if (a < 1e-21) return [sig(seconds * 1e24, 3), 'ys'];
+  if (a < 1e-18) return [sig(seconds * 1e21, 3), 'zs'];
+  if (a < 1e-15) return [sig(seconds * 1e18, 3), 'as'];
+  if (a < 1e-12) return [sig(seconds * 1e15, 3), 'fs'];
+  if (a < 1e-9) return [sig(seconds * 1e12, 3), 'ps'];
+  if (a < 1e-6) return [sig(seconds * 1e9, 3), 'ns'];
+  if (a < 1e-3) return [sig(seconds * 1e6, 3), 'µs'];
+  if (a < 1) return [sig(seconds * 1e3, 3), 'ms'];
   if (a < 120) return [sig(seconds, 3), 's'];
   if (a < 7200) return [sig(seconds / 60, 3), 'min'];
   if (a < 3 * 86400) return [sig(seconds / 3600, 3), 'h'];

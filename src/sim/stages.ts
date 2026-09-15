@@ -21,10 +21,11 @@ import { Engine } from '../render/engine';
 import { Controls } from '../camera/controls';
 import { Universe } from './universe';
 import {
-  Cosmology, growthFactor, growthRate, zFromA, ageAt, HofaKmsMpc, Tcmb_a,
+  Cosmology, growthFactor, growthRate, zFromA, ageAt, Hofa, HofaKmsMpc, Tcmb_a,
 } from '../cosmology/lcdm';
 import { peculiarVelocityFactor } from '../cosmology/zeldovich';
-import { CosmicWebRenderer } from '../render/cosmicweb';
+import { type LightCone, lightCone } from '../cosmology/lightcone';
+import { CONE_N, CosmicWebRenderer } from '../render/cosmicweb';
 import { CmbView } from '../render/cmbview';
 import { MergerView } from '../render/mergerview';
 import { PulsarView } from '../render/pulsarview';
@@ -93,8 +94,11 @@ import type { DetectionPlotOptions } from '../ui/detection';
 import { blackbodyRGB } from '../astro/blackbody';
 import { RNG, hash3 } from '../core/rng';
 import { stateAt } from '../physics/kepler';
-import { AU, GYR, MPC, M_EARTH, M_JUPITER, MYR, R_EARTH, R_SUN, YEAR, DAY, G, M_SUN, LY } from '../core/constants';
+import { AU, C, GYR, MPC, M_EARTH, M_JUPITER, MYR, R_EARTH, R_SUN, YEAR, DAY, G, M_SUN, LY } from '../core/constants';
 import { sig, commas, formatDistance, formatTime } from '../ui/hud';
+import {
+  type Clock, atomClock, expanding, gravitating, latticeClock, nucleusClock,
+} from '../physics/clock';
 
 export type ScaleId =
   'cosmos' | 'cluster' | 'galaxy' | 'system' | 'world' | 'surface' | 'matter'
@@ -231,6 +235,19 @@ export abstract class Stage {
    */
   abstract scaleMetres(): number;
 
+  /**
+   * The two clocks of whatever this rung is a rung of, or null where nothing
+   * here keeps time.
+   *
+   * The companion to `scaleMetres`, and the same idea: every scale works in
+   * its own units and none of the numbers can be compared until they are
+   * reduced to something shared. There it was metres; here it is a size and a
+   * speed, from which the time light takes to cross the thing and the time the
+   * thing takes to do anything both follow - and their ratio, c/v, is the one
+   * quantity that means the same on all nine rungs.
+   */
+  clock(): Clock | null { return null; }
+
   /** Human label for the current scale bar. */
   scaleLabel(): string {
     const [v, u] = formatDistance(this.scaleMetres());
@@ -322,6 +339,16 @@ export class CosmosStage extends Stage {
   restDistance = 1;
   /** Strength of the last-scattering sky while the opening run dissolves it. */
   private cmbFade = 0;
+
+  // --- The past light cone.
+  /** Where the observer is standing, box coordinates. Null when off. */
+  private coneObs: THREE.Vector3 | null = null;
+  private cone: LightCone | null = null;
+  /** How far the growth table reaches: the furthest particle drawn, Mpc. */
+  private coneMaxMpc = 0;
+  /** The epoch and cosmology the table was last built for. */
+  private coneBuilt: { a: number; c: Cosmology } | null = null;
+  private coneMark?: THREE.Points;
 
   build(): void {
     const field = this.env.universe.field;
@@ -472,6 +499,93 @@ export class CosmosStage extends Stage {
     this.cmb.setBrightness(CMB_BRIGHT * strength);
   }
 
+  /**
+   * Stop showing a snapshot and start showing what could actually be seen.
+   *
+   * The observer is left standing wherever the camera was when this was turned
+   * on, and does not follow it afterwards - which is the whole reason to do
+   * it this way round. Fly away from the observer afterwards and the cone is
+   * there as an object: a bubble of present-day structure round the point of
+   * view, thinning outward through every epoch of collapse, and past the
+   * horizon the primordial field with no structure in it at all. Press B and
+   * the surface of last scattering is the wall it ends at, which is not a
+   * coincidence but the same statement.
+   */
+  observeLightCone(on?: boolean): boolean {
+    const want = on ?? !this.coneObs;
+    if (!want) {
+      this.coneObs = null;
+      this.coneBuilt = null;
+      this.web.setLightCone(new THREE.Vector3(), 1, null);
+      if (this.coneMark) this.coneMark.visible = false;
+      return false;
+    }
+    const box = this.env.universe.field.boxMpc;
+    this.cone = lightCone(this.env.cosmology);
+    this.coneObs = this.env.engine.camera.position.clone();
+    // The table has to reach the furthest particle that is actually drawn,
+    // which is a corner of the three-by-three-by-three tiling and not the box.
+    let far = 0;
+    for (let i = 0; i < 8; i++) {
+      const c = new THREE.Vector3(
+        i & 1 ? 2 * box : -box, i & 2 ? 2 * box : -box, i & 4 ? 2 * box : -box);
+      far = Math.max(far, c.distanceTo(this.coneObs));
+    }
+    this.coneMaxMpc = far;
+    this.coneBuilt = null;
+    this.ensureConeMark();
+    return true;
+  }
+
+  get onLightCone(): boolean { return this.coneObs !== null; }
+
+  /**
+   * A ring where the observer is standing.
+   *
+   * Without it the cone is a bubble with no centre, and the one thing you have
+   * to know to read the picture is which point everything else is old relative
+   * to.
+   */
+  private ensureConeMark(): void {
+    if (!this.coneMark) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
+      g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
+      this.coneMark = new THREE.Points(g, new THREE.RawShaderMaterial({
+        glslVersion: THREE.GLSL3,
+        transparent: true, blending: THREE.AdditiveBlending,
+        depthTest: false, depthWrite: false,
+        uniforms: {},
+        vertexShader: `precision highp float;
+          uniform mat4 modelViewMatrix; uniform mat4 projectionMatrix;
+          in vec3 position;
+          void main() {
+            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+            gl_Position = projectionMatrix * mv;
+            gl_PointSize = 17.0;
+          }`,
+        fragmentShader: `precision highp float;
+          out vec4 fragColor;
+          void main() {
+            vec2 d = gl_PointCoord * 2.0 - 1.0;
+            float r = length(d);
+            if (r > 1.0) discard;
+            // A ring with a dot in it: the observer, and where they are.
+            float ring = smoothstep(0.62, 0.74, r) * smoothstep(1.0, 0.86, r);
+            float dot_ = smoothstep(0.22, 0.10, r);
+            fragColor = vec4(vec3(1.0, 0.93, 0.82) * (ring * 0.85 + dot_ * 0.95), 1.0);
+          }`,
+      }));
+      this.coneMark.frustumCulled = false;
+      this.root.add(this.coneMark);
+    }
+    const p = this.coneMark.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const o = this.coneObs ?? new THREE.Vector3();
+    p.setXYZ(0, o.x, o.y, o.z);
+    p.needsUpdate = true;
+    this.coneMark.visible = true;
+  }
+
   /** Scales of the last-scattering surface, for the readout. */
   get cmbScales(): CmbView['scales'] | null {
     return this.cmbMode > 0 && this.cmb ? this.cmb.scales : null;
@@ -484,6 +598,19 @@ export class CosmosStage extends Stage {
     const field = this.env.universe.field;
     this.web.setGrowth(D);
     this.web.setCamera(this.env.engine.camera.position);
+    // The table is a function of the observer's own epoch, so dragging the
+    // timeline moves the observer along their world line and the whole cone
+    // with them. Sixty-four lookups into an array that is already built, and
+    // only when the epoch or the cosmology has actually changed.
+    if (this.coneObs && this.cone) {
+      const c = this.env.cosmology;
+      if (!this.coneBuilt || this.coneBuilt.a !== a || this.coneBuilt.c !== c) {
+        if (this.cone.cosmology !== c) this.cone = lightCone(c);
+        this.web.setLightCone(
+          this.coneObs, this.coneMaxMpc, this.cone.table(a, this.coneMaxMpc, CONE_N));
+        this.coneBuilt = { a, c };
+      }
+    }
     if ((this.cmbMode > 0 || this.cmbFade > 0) && this.cmb) {
       this.cmb.render(this.env.engine.renderer);
       this.cmb.mesh.position.copy(this.env.engine.camera.position);
@@ -509,9 +636,23 @@ export class CosmosStage extends Stage {
       0.30 * Math.min(1, Math.max(0, (D - 0.25) / 0.5));
     const p = (this.markers.geometry.getAttribute('position') as THREE.BufferAttribute);
     const knots = field.knots;
+    const obs = this.coneObs;
+    const cone = obs ? this.cone : null;
     for (let i = 0; i < this.nodeCount; i++) {
       const k = knots[i];
-      const x = k.qx + D * k.px, y = k.qy + D * k.py, z = k.qz + D * k.pz;
+      // The same fixed point the shader solves, on two hundred markers rather
+      // than two million particles: a halo's marker has to sit on the halo,
+      // and on a cone the halo is wherever its own epoch put it.
+      let d = D;
+      if (cone && obs) {
+        for (let it = 0; it < 2; it++) {
+          const dx = k.qx + d * k.px - obs.x;
+          const dy = k.qy + d * k.py - obs.y;
+          const dz = k.qz + d * k.pz - obs.z;
+          d = cone.growthAt(a, Math.sqrt(dx * dx + dy * dy + dz * dz));
+        }
+      }
+      const x = k.qx + d * k.px, y = k.qy + d * k.py, z = k.qz + d * k.pz;
       p.setXYZ(i, x, y, z);
       this.markerPos[i].set(x, y, z);
     }
@@ -571,9 +712,38 @@ export class CosmosStage extends Stage {
       { k: 'H(z)', v: Math.round(e.H).toString(), u: 'km/s/Mpc' },
       { k: 'CMB', v: e.T.toFixed(2), u: 'K' },
       { k: 'growth rate f', v: e.f.toFixed(3) },
+      ...this.coneRows(e.a),
       ...this.cmbRows(),
       { k: 'field of view', v: dv, u: du },
       { k: 'particles', v: commas(this.web.drawnParticles) },
+    ];
+  }
+
+  /**
+   * What the cone reaches, while it is running.
+   *
+   * The effect is real but it is not loud at a box's width - a tenth of the
+   * growth factor across six hundred megaparsecs - so the numbers are worth
+   * having on the screen beside it. Drag the timeline back and they stop being
+   * subtle: an observer at z = 3 has a horizon a third the size and sees most
+   * of their own box as the unperturbed field it started as.
+   */
+  private coneRows(a: number): Row[] {
+    const k = this.cone, obs = this.coneObs;
+    if (!k || !obs) return [];
+    const box = this.env.universe.field.boxMpc;
+    const zBox = k.redshiftAt(a, box);
+    const far = k.redshiftAt(a, this.coneMaxMpc);
+    const horizon = k.horizonMpc(a);
+    return [
+      { k: 'observing', v: 'the past light cone', accent: true },
+      { k: 'one box out', v: `z = ${zBox.toFixed(3)} · ${k.lookbackGyr(a, box).toFixed(2)} Gyr ago` },
+      { k: 'the far corner', v: Number.isFinite(far)
+        ? `z = ${far.toFixed(2)} · D = ${k.growthAt(a, this.coneMaxMpc).toFixed(3)}`
+        : 'past the horizon — the field, unperturbed' },
+      { k: 'your horizon', v: horizon < box * 3
+        ? `${commas(horizon)} Mpc · inside this box`
+        : `${commas(horizon)} Mpc` },
     ];
   }
 
@@ -602,6 +772,20 @@ export class CosmosStage extends Stage {
   }
 
   scaleMetres(): number { return this.env.controls.distance * MPC; }
+
+  /**
+   * The universe's own clock, which is the one object on the ladder that has
+   * only one.
+   *
+   * Its size is the Hubble length and what sits at that distance is receding
+   * at exactly c - that is what the Hubble length is - so light across it and
+   * it across itself are the same interval, and the gap that every other rung
+   * has is shut. The value is 1/H, which is not a constant: drag the timeline
+   * back and the clock speeds up with the expansion.
+   */
+  override clock(): Clock {
+    return expanding(Hofa(this.env.cosmology, this.env.epoch()));
+  }
 
   override inspect(ndc: THREE.Vector2): Inspection | null {
     const i = this.pickNearest(ndc, this.markerPos.map((pos, index) => ({
@@ -1129,6 +1313,26 @@ export class ClusterStage extends Stage {
   }
 
   scaleMetres(): number { return this.env.controls.distance * MPC; }
+
+  /**
+   * A cluster's clock is its crossing time: the virial radius over the speed
+   * the galaxies in it actually move at.
+   *
+   * It comes out at a couple of billion years, which is an appreciable
+   * fraction of the age of the universe - so a cluster has only crossed itself
+   * a few times since it formed, and that is exactly why the galaxies falling
+   * into it are still recognisably falling in rather than mixed.
+   */
+  override clock(): Clock {
+    const cl = this.env.universe.cluster(this.ctx.cluster ?? 0);
+    const sigma = this.orbits ? this.orbits.dispersionKms() : cl.sigmaKms;
+    // Not just 'galaxies': the readout already has a row of that name for how
+    // many there are, and two rows with one label is how a readout starts
+    // lying about which number is which.
+    return {
+      size: cl.radiusMpc * MPC, speed: Math.max(1, sigma) * 1e3, what: 'galaxies falling',
+    };
+  }
 
   /** With the band in front, when the view is a microwave one. */
   override scaleLabel(): string {
@@ -1969,6 +2173,34 @@ export class GalaxyStage extends Stage {
   }
 
   /**
+   * Whatever is actually mounted here, and its clock.
+   *
+   * Three of the four are worth watching on the axis. A galaxy turns at two
+   * hundred kilometres a second and sits three decades off the speed of light.
+   * A pulsar's equator is at a few per cent of it and sits two. And a black
+   * hole binary eleven seconds from merging closes the gap live: the
+   * separation shrinks, the orbital speed climbs through a third of c, and the
+   * two clocks walk into each other as the thing rings down.
+   */
+  override clock(): Clock | null {
+    if (this.merger) {
+      const b = this.merger.binary, st = this.merger.state;
+      if (!(st.separationM > 0)) return null;
+      return gravitating((b.m1 + b.m2) * M_SUN, st.separationM, 'two black holes');
+    }
+    if (this.pulsar) {
+      const r = PSR.NS_RADIUS_CM / 100;
+      return { size: r, speed: PSR.surfaceBeta(this.pulsar.periodS) * C, what: 'the equator' };
+    }
+    if (this.tde) return null;
+    const g = this.params;
+    const rSun = 2.2 * g.discScaleKpc;
+    const v = rotationCurve(g, rSun);
+    if (!(v > 0)) return null;
+    return { size: rSun * 3.0857e19, speed: v * 1e3, what: 'the disc' };
+  }
+
+  /**
    * What is known about a neutron star, and how.
    *
    * Only two of these are measured: the period and how fast it is lengthening.
@@ -2663,6 +2895,24 @@ export class SystemStage extends Stage {
 
   scaleMetres(): number { return this.env.controls.distance * AU; }
 
+  /**
+   * A system has no single clock, which is the interesting thing about it.
+   *
+   * It is a continuum of orbits and the one you are looking at is the one at
+   * the radius you are standing off at, so this is a live reading of Kepler's
+   * third law: pull back and the clock slows as the three-halves power of the
+   * distance. Nothing else on the ladder does that - every other rung has one
+   * size and therefore one clock.
+   */
+  override clock(): Clock {
+    const st = this.builtSystem.star;
+    const rStar = st.radiusRsun * R_SUN;
+    // No orbits inside a star. Below its surface the enclosed mass falls away
+    // too, so the honest thing is to stop at the photosphere.
+    const r = Math.max(this.env.controls.distance * AU, rStar);
+    return gravitating(st.currentMassMsun * M_SUN, r, 'an orbit here');
+  }
+
   private planetPoints(): { pos: THREE.Vector3; radius: number; index: number }[] {
     return this.view.slots.map((s, i) => ({
       pos: s.worldPos,
@@ -2990,6 +3240,19 @@ export class WorldStage extends Stage {
     // Scene units are planetary radii and the camera orbits the surface, so
     // the standoff is one less than the distance.
     return (this.env.controls.distance - 1) * this.planet.radiusM;
+  }
+
+  /**
+   * A world's clock is the orbit that skims it, and it depends on nothing but
+   * the density.
+   *
+   * Eighty-four minutes for anything as dense as the Earth, whatever its size -
+   * which is the period of low orbit, of a pendulum swung through a hole bored
+   * through the middle, and of the errors in every inertial navigation system
+   * ever built. Two pi of these radians.
+   */
+  override clock(): Clock {
+    return gravitating(this.planet.massKg, this.planet.radiusM, 'a low orbit');
   }
 
   override inspect(): Inspection | null {
@@ -3868,7 +4131,7 @@ export class SurfaceStage extends Stage {
         v: this.locked ? 'always' : day <= 0 ? 'never'
           : formatTime(day * this.dayS).join(' '),
       },
-      { k: 'local time', v: this.locked ? 'no days here' : this.clock() },
+      { k: 'local time', v: this.locked ? 'no days here' : this.localTime() },
       ...this.parentRows(),
       ...this.siblingRows(),
       ...this.wandererRows(),
@@ -3975,7 +4238,7 @@ export class SurfaceStage extends Stage {
   }
 
   /** The time of day, on a clock with this planet's hours in it. */
-  private clock(): string {
+  private localTime(): string {
     const f = ((this.simTime / this.dayS) % 1 + 1) % 1;
     const h = Math.floor(f * 24);
     const m = Math.floor((f * 24 - h) * 60);
@@ -3983,6 +4246,27 @@ export class SurfaceStage extends Stage {
   }
 
   scaleMetres(): number { return this.env.controls.distance; }
+
+  /**
+   * Standing on the ground, the clock is the day - and it is the slowest thing
+   * on the whole ladder.
+   *
+   * What is moving is the world, carrying you round its own axis at a few
+   * hundred metres a second, and the size that goes with that speed is the
+   * world's radius. Earth's four hundred and sixty-five metres a second puts
+   * the two clocks nearly six decades apart, further than anything above or
+   * below: the widest gap in the simulation is the one you are standing in.
+   * A tidally locked world has no day at all, so there it falls back to the
+   * orbit that skims it.
+   */
+  override clock(): Clock | null {
+    const R = this.planet.radiusM;
+    const day = Math.abs(this.dayS);
+    if (this.locked || !(day > 0) || !Number.isFinite(day)) {
+      return gravitating(this.planet.massKg, R, 'a low orbit');
+    }
+    return { size: R, speed: (2 * Math.PI * R) / day, what: 'the world turning' };
+  }
 
   /**
    * Walk to a different latitude.
@@ -4286,6 +4570,20 @@ export class MatterStage extends Stage {
   scaleMetres(): number { return this.env.controls.distance * 1e-10; }
 
   /**
+   * Below the waterline gravity is nothing and the rule survives anyway.
+   *
+   * A crystal's signal speed is sound - a sound wave and a thermal phonon are
+   * the same object - so its own clock is one cell crossed at a few thousand
+   * metres a second, about a tenth of a picosecond, and the gap from light is
+   * c over the speed of sound. Which is five decades, almost exactly what a
+   * planet's is: rock and a low orbit are the same distance from light.
+   */
+  override clock(): Clock {
+    const m = this.ground.mineral;
+    return latticeClock(XTL.unitSpacing(m), XTL.soundSpeed(m));
+  }
+
+  /**
    * Down again, into one of them.
    *
    * Aim at an atom and you go into that one - the only place on the ladder
@@ -4524,6 +4822,20 @@ export class AtomStage extends Stage {
 
   /** Scene units are picometres. */
   scaleMetres(): number { return this.env.controls.distance * 1e-12; }
+
+  /**
+   * An atom's clock is its outermost electron going round, and its gap is the
+   * fine structure constant.
+   *
+   * For hydrogen that is exact: the Bohr radius over alpha times c is the
+   * atomic unit of time, 24.19 attoseconds, and the two clocks sit 1/alpha =
+   * 137 apart. Heavier atoms are screened, so the outer electron feels a few
+   * protons rather than all of them and sits in a higher shell, and both of
+   * those are already worked out upstairs for the readout.
+   */
+  override clock(): Clock {
+    return atomClock(this.radiusM, this.facts.valenceZeff, ATOM.valenceOf(this.element.z).n);
+  }
 
   /** All the way in, to the part that has the mass in it. */
   child(): Target | null {
@@ -4783,6 +5095,18 @@ export class NucleusStage extends Stage {
 
   /** Scene units are femtometres. */
   scaleMetres(): number { return this.env.controls.distance * 1e-15; }
+
+  /**
+   * At the bottom of the ladder the gap has almost closed again.
+   *
+   * Nucleons sit in a well deep enough that the exclusion principle alone puts
+   * them at about a quarter of the speed of light with no heat at all, so a
+   * nucleus crosses itself only four times slower than light does. The only
+   * other place the two clocks come this close is the top of the ladder.
+   */
+  override clock(): Clock {
+    return nucleusClock(NUC.nuclearRadius(this.a), NUC.fermiSpeed(this.a));
+  }
 
   child(): Target | null { return null; }
 

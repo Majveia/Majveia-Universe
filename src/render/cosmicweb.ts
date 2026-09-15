@@ -17,13 +17,25 @@
  * The box is periodic, so it tiles seamlessly: neighbouring copies are drawn as
  * instances at reduced particle counts, which is what makes the volume feel
  * unbounded without a seam anywhere.
+ *
+ * And the whole of that can be run on a light cone instead of a snapshot, in
+ * which case D is not a uniform at all: every particle gets the growth factor
+ * of the epoch its light left, looked up from its own distance to the
+ * observer. See `cosmology/lightcone.ts` for where the table comes from. The
+ * only thing that changes here is where D comes from, which is the point -
+ * everything downstream, the density, the collapse classification, the colour,
+ * follows the epoch it is given without being told anything else.
  */
 
 import * as THREE from 'three';
 import type { CosmicWebField } from '../cosmology/zeldovich';
 
+/** Entries in the light cone's growth table. Small: it is a smooth curve. */
+export const CONE_N = 64;
+
 const VERT = /* glsl */ `
 precision highp float;
+#define CONE_N ${CONE_N}
 
 in vec3 position;      // Lagrangian coordinate q, Mpc
 in vec3 aPsi;          // displacement at D = 1, Mpc
@@ -50,6 +62,10 @@ uniform float uVelocityTint;
 uniform float uVelocityFactor;
 uniform float uSlice;        // 0 = full volume, >0 = thickness of a slab in Mpc
 uniform vec3 uSliceNormal;
+uniform float uCone;         // 0 = one epoch everywhere, 1 = the past light cone
+uniform vec3 uConeObs;       // where the observer stands, Mpc, box coordinates
+uniform float uConeMax;      // the comoving distance the table spans, Mpc
+uniform float uConeD[CONE_N];// growth factor against distance, from the observer out
 
 out vec3 vColor;
 out float vAlpha;
@@ -70,17 +86,46 @@ vec3 webRamp(float t) {
   return mix(c3, c4, (t - 0.75) / 0.25);
 }
 
+/**
+ * Growth factor at comoving distance r from the observer, along the cone.
+ *
+ * The table already contains the whole of the cosmology: the inversion of
+ * conformal time, the horizon it saturates at, and the growth factor itself.
+ * Past the last entry it stays at whatever the horizon gave, which is zero -
+ * the unperturbed field, because no light from further has arrived.
+ */
+float coneGrowth(float r) {
+  float t = clamp(r / uConeMax, 0.0, 1.0) * float(CONE_N - 1);
+  int i = int(floor(t));
+  int j = min(i + 1, CONE_N - 1);
+  return mix(uConeD[i], uConeD[j], t - float(i));
+}
+
 void main() {
   vec3 q = position;
-  vec3 pos = q + uD * aPsi + aTile * uBox;
+  vec3 base = q + aTile * uBox;
+
+  // Snapshot: one epoch for the whole box, which is what a simulation gives.
+  // Cone: the epoch each particle's light left, which is what a telescope
+  // gives. The displacement moves the particle, which moves it along the cone,
+  // which changes the displacement - so it is solved rather than evaluated.
+  // Two fixed-point steps is ample: the displacement is a few Mpc and the
+  // table is smooth over hundreds.
+  float D = uD;
+  if (uCone > 0.5) {
+    D = coneGrowth(distance(base + D * aPsi, uConeObs));
+    D = coneGrowth(distance(base + D * aPsi, uConeObs));
+  }
+
+  vec3 pos = base + D * aPsi;
 
   // Zel'dovich density: the Jacobian of the Lagrangian-to-Eulerian map.
-  vec3 f = vec3(1.0) - uD * aLambda;
+  vec3 f = vec3(1.0) - D * aLambda;
   float jac = f.x * f.y * f.z;
   float dens = 1.0 / max(abs(jac), 0.02);
 
   // How many principal axes have collapsed at this epoch: 0 void .. 3 knot
-  vec3 coll = step(vec3(0.0), uD * aLambda);
+  vec3 coll = step(vec3(0.0), D * aLambda);
   float webType = coll.x + coll.y + coll.z;
 
   // Colour carries two independent facts at once: *how* a region collapsed
@@ -214,6 +259,10 @@ export class CosmicWebRenderer {
       uVelocityFactor: { value: 0 },
       uSlice: { value: 0 },
       uSliceNormal: { value: new THREE.Vector3(0, 0, 1) },
+      uCone: { value: 0 },
+      uConeObs: { value: new THREE.Vector3() },
+      uConeMax: { value: 1 },
+      uConeD: { value: new Float32Array(CONE_N).fill(1) },
     });
 
     const mkGeo = (tileOffsets: Float32Array, count: number) => {
@@ -281,6 +330,26 @@ export class CosmicWebRenderer {
 
   /** Set the linear growth factor - this is the time control. */
   setGrowth(D: number): void { this.each((u) => { u.uD.value = D; }); }
+
+  /**
+   * Run the field on the observer's past light cone instead of on one epoch.
+   *
+   * `table` is the growth factor sampled uniformly in comoving distance from
+   * the observer out to `maxMpc`, which is where `cosmology/lightcone.ts`
+   * works it out. Passing null puts the snapshot back.
+   */
+  setLightCone(obs: THREE.Vector3, maxMpc: number, table: Float32Array | null): void {
+    this.each((u) => {
+      u.uCone.value = table ? 1 : 0;
+      if (!table) return;
+      (u.uConeObs.value as THREE.Vector3).copy(obs);
+      u.uConeMax.value = Math.max(1e-3, maxMpc);
+      (u.uConeD.value as Float32Array).set(table.subarray(0, CONE_N));
+    });
+  }
+
+  /** Whether the field is currently being drawn on a cone. */
+  get onCone(): boolean { return this.mat.uniforms.uCone.value > 0.5; }
 
   setCamera(p: THREE.Vector3): void {
     this.each((u) => (u.uCamera.value as THREE.Vector3).copy(p));
