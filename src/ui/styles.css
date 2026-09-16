@@ -23,8 +23,9 @@
   /* The smallest a finger may be asked to hit. */
   --tap: 44px;
   /* How much of the bottom edge the scale strip takes. Everything anchored
-     down there is offset by it, and it is zero where the strip is hidden. */
-  --strip: 34px;
+     down there is offset by it, and it is zero where the strip is hidden.
+     Three lanes: the reading, the clock bar, and the ruler itself. */
+  --strip: 44px;
   --floor: calc(var(--edge) + var(--strip));
   /* How much of the shelf shows when it is down. Measured at runtime, because
      it depends on the safe area and on whether a timeline is in it; this is

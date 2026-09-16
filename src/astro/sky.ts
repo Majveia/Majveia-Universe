@@ -453,6 +453,134 @@ export function sunColourAtSurface(
   return [starRGB[0] * t[0], starRGB[1] * t[1], starRGB[2] * t[2]];
 }
 
+/**
+ * How much light actually lands on the ground, per unit of the star's flux.
+ *
+ * Two terms, because there are two ways for a photon to get down here. The
+ * beam is what survives the trip through the air along the slant path and
+ * lands on a surface tilted away from it by the zenith angle - `T cos z`, and
+ * it is the whole answer in a vacuum and almost none of it on a world with
+ * seven bars over it. The rest arrives from the sky itself: light that was
+ * taken out of the beam, scattered, and came down anyway.
+ *
+ * The diffuse term is the zenith radiance the sky module already computes,
+ * spread over a hemisphere - `pi * L`. That is a uniform-sky approximation and
+ * it is a known one: a real sky is brighter near the horizon than at the
+ * zenith, so this is an underestimate by something like a third on a clear
+ * day. It has the two limits right, which is what it is for. As the air thins
+ * it goes to nothing and the beam is everything; as the air thickens the beam
+ * dies and the diffuse term is everything, which is why a thick enough
+ * atmosphere is bright at the ground with no sun visible anywhere in it.
+ *
+ * It is also what keeps twilight from being midnight. The beam is gone the
+ * moment the star sets, but the sky above is still lit from underneath for a
+ * while, and `skyRadiance` says so on its own.
+ */
+export function groundIllumination(
+  a: Atmosphere, sunZenith: number,
+): { direct: number; diffuse: number; total: number } {
+  const mu = Math.cos(sunZenith);
+  const tm = mean3(transmittance(a, sunZenith));
+  const direct = Math.max(0, mu) * tm;
+
+  // The diffuse part, from the two-stream solution for a slab that scatters
+  // and does not absorb: everything that goes in comes out, some of it up and
+  // some of it down, and the fraction that reaches the bottom is
+  //
+  //     1 / (1 + (3/4) tau (1 - g))
+  //
+  // for a vertical optical depth tau and an asymmetry g. It is the standard
+  // Eddington result and it has the two ends right - unity for no air, and a
+  // slow 1/tau decline for a lot of it - where a single-scattering estimate
+  // has the thick end badly wrong. Ninety-two bars of Venus transmit about
+  // four per cent of the sunlight to the ground rather than the two parts in a
+  // thousand one scattering event predicts, and the ground down there is lit
+  // well enough to photograph.
+  const tauV = mean3(opticalDepth(a, 0));
+  const colR = a.scaleHeightM * mean3(a.betaR);
+  const colM = a.aerosolScaleHeightM * a.betaM;
+  const g = colR + colM > 0 ? (a.aerosolG * colM) / (colR + colM) : 0;
+  const slab = 1 / (1 + 0.75 * tauV * (1 - g));
+  const twoStream = Math.max(0, mu) * Math.max(0, slab - tm);
+
+  // And twilight, which the slab knows nothing about: once the star is under
+  // the horizon the beam is gone, but the air overhead is still lit from
+  // underneath and the ground is still lit by that. Only the curved, marched
+  // sky has anything to say here, so it takes over exactly where the other
+  // term runs out.
+  const glow = Math.PI * mean3(skyRadiance(a, 0, sunZenith, mu, 16));
+
+  const diffuse = Math.min(1, Math.max(twoStream, glow));
+  // Nothing on the ground can receive more than fell on the top of the air.
+  return { direct, diffuse, total: Math.min(1, direct + diffuse) };
+}
+
+const mean3 = (v: [number, number, number]): number => (v[0] + v[1] + v[2]) / 3;
+
+/**
+ * The exposure a surface should be shown at.
+ *
+ * The scene is lit over something like nine decades between noon and starlight
+ * and the display has two, so something has to give, and what gives in a real
+ * observer is the observer. This is that, as a power law: the exposure chases
+ * the light with an exponent short of one, so the frame gets darker as the
+ * star goes down - by much less than the light does, which is what adaptation
+ * means - and it never gets so dark that there is nothing to see or so bright
+ * that the ground turns to paper.
+ *
+ * An exponent of 1 would be a light meter: noon, dusk and a moonless night
+ * would all come out the same mid-grey, and the whole point of standing on a
+ * world as it turns would be gone. An exponent of 0 is a fixed exposure, which
+ * is what this was, and it puts the sunlit ground at the top of the range at
+ * midday on every clear world.
+ *
+ * `aim` is where the sunlit ground should land in linear light before the tone
+ * curve; it is a number the renderer's own transfer curve chose, not one with
+ * a physical meaning.
+ */
+export function surfaceExposure(opts: {
+  /** The star's flux at this orbit, in units where the Sun at 1 AU is 1. */
+  flux: number;
+  /** Mean reflectance of the ground. */
+  albedo: number;
+  atmosphere: Atmosphere;
+  /** Where the star is now, radians from the zenith. */
+  sunZenith: number;
+  aim?: number;
+  adapt?: number;
+  /** How far it may open up from its own overhead-star setting. */
+  range?: number;
+}): number {
+  const { flux, albedo, atmosphere, sunZenith } = opts;
+  const aim = opts.aim ?? EXPOSURE_AIM;
+  const adapt = opts.adapt ?? EXPOSURE_ADAPT;
+  const range = opts.range ?? EXPOSURE_RANGE;
+  const at = (z: number): number => {
+    const ground = Math.max(1e-9, albedo * flux * groundIllumination(atmosphere, z).total);
+    return aim / Math.pow(ground, adapt);
+  };
+  // The reference is this world with its star overhead, which is the most
+  // light it will ever get and therefore the tightest the aperture ever needs
+  // to be. Everything else opens up from there, and only so far: without a
+  // stop the floor under a moonless sky sends it to infinity and the night
+  // comes out looking like an overcast afternoon, which is the one thing a
+  // simulation of standing on a world must not do.
+  const ref = at(0);
+  return Math.max(ref, Math.min(ref * range, at(sunZenith)));
+}
+
+/**
+ * Where the sunlit ground lands, how hard the exposure chases the light, and
+ * how far it is allowed to chase it.
+ *
+ * All three were measured rather than reasoned: the renderer's tone curve was
+ * swept over four decades on four worlds, and these are the values that put a
+ * lit landscape in the middle of the range instead of at the top of it.
+ */
+export const EXPOSURE_AIM = 0.11;
+export const EXPOSURE_ADAPT = 0.72;
+export const EXPOSURE_RANGE = 6;
+
 // ---------------------------------------------------------------------------
 // Where the star is
 // ---------------------------------------------------------------------------
