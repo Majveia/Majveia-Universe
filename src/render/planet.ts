@@ -24,6 +24,9 @@ import * as THREE from 'three';
 import { NOISE_GLSL } from './shaders/noise';
 import { ECLIPSE_GLSL } from './shaders/eclipse';
 import type { Planet } from '../astro/planets';
+import { condensationTemperature, type Climate } from '../astro/climate';
+import { climateTexture, type ClimateTexture } from './climatetex';
+import { moistLapseRate } from '../astro/radiation';
 import { R_EARTH } from '../core/constants';
 
 const SURFACE_VERT = /* glsl */ `
@@ -61,12 +64,15 @@ uniform float uTime;
 uniform float uOcean;        // sea-level fraction 0..1
 uniform float uIce;          // ice-cap extent 0..1
 uniform float uCloud;        // cloud cover 0..1
+uniform float uIceThreshold; // K below which there is ice here
+uniform float uFrostK;       // K at which the air itself frosts onto the ground
 uniform float uType;         // 0 rocky, 1 gas giant, 2 ice, 3 lava, 4 living
 uniform float uRoughness;
 uniform float uAtmoDensity;
 uniform float uAtmoBar;
 uniform vec3 uAtmoColor;
 uniform float uNightLights;
+uniform float uLife;
 uniform float uRadius;
 uniform float uObliquity;
 uniform vec3 uRingNormal;
@@ -75,6 +81,24 @@ uniform float uRingOuter;
 uniform float uRingOpacity;
 uniform float uLavaGlow;
 uniform float uReliefStrength;
+
+// --- Climate. A grid of the solved energy balance: latitude across, season
+// down. Sampling it is how the surface finds out what the weather is where it
+// is standing, rather than being told where to put its ice.
+uniform sampler2D uClimate;
+uniform float uHasClimate;
+uniform vec2 uClimRange;     // K at texel value 0 and 1
+uniform float uSeason;       // fraction of the orbit, 0 to 1
+uniform float uLapseRate;    // K per unit of terrain elevation
+uniform float uJetFreq;      // zonal jets, as a spatial frequency in sin(lat)
+uniform float uLocked;       // 1 if the coordinate is angle from the substellar point
+uniform vec3 uSubstellar;    // body-frame direction of the star, for a locked world
+
+/** Temperature at a point on the surface, before the terrain is accounted for. */
+vec4 climateAt(vec3 pn) {
+  float u = uLocked > 0.5 ? (1.0 - dot(pn, uSubstellar)) * 0.5 : pn.y * 0.5 + 0.5;
+  return texture(uClimate, vec2(clamp(u, 0.002, 0.998), uSeason));
+}
 
 const float PI = 3.14159265359;
 
@@ -116,7 +140,12 @@ void main() {
     q.y *= 3.0;
     q = warp(q, 0.55, 1.6);
     q = warp(q, 0.22, 3.4);
-    float bands = sin(zonal * 26.0 + fbm(q * 1.3, 5, 2.0, 0.55) * 5.5);
+    // The number of belts is not a choice. Turbulence on a rotating sphere
+    // cannot make eddies bigger than the Rhines scale, so the energy goes into
+    // zonal jets instead, and how many fit across the planet is set by its
+    // rotation and its size. Jupiter gets about two dozen; a slow rotator gets
+    // one cell per hemisphere and no stripes at all.
+    float bands = sin(zonal * uJetFreq + fbm(q * 1.3, 5, 2.0, 0.55) * 5.5);
     float fine = fbm(q * 4.0 + vec3(uTime * 0.02, 0.0, 0.0), 5, 2.1, 0.5);
     float t = clamp(bands * 0.5 + 0.5 + fine * 0.22, 0.0, 1.0);
     albedo = mix(uColorA, uColorB, t);
@@ -175,13 +204,34 @@ void main() {
     float depth = smoothstep(sea - 0.35, sea, elev);
     vec3 water = mix(deep, shallow, depth);
 
+    vec4 clim = climateAt(p);
+    // Height above sea level, in metres, and the temperature that costs. A
+    // saturated air parcel cools 6.5 K for every kilometre it rises, so a
+    // three-kilometre range is twenty degrees colder than the plain it stands
+    // on - which is why there is snow on mountains at the equator.
+    float altitude = max(elev - sea, 0.0);
+    float bandK = mix(uClimRange.x, uClimRange.y, clim.r);
+    float surfK = uHasClimate > 0.5 ? bandK - altitude * uLapseRate : 300.0 - abs(lat) * 60.0;
+    float rain = uHasClimate > 0.5 ? clim.b * 3.0 : 1.0;
+
     vec3 lowland = uColorA;
     vec3 highland = mix(uColorA, vec3(0.30, 0.27, 0.24), smoothstep(sea + 0.05, sea + 0.45, elev));
     vec3 rock = mix(lowland, highland, 0.55);
-    // Aridity band: deserts cluster near the subtropics, where the Hadley
-    // cells bring dry descending air.
-    float arid = smoothstep(0.12, 0.42, abs(lat)) * (1.0 - smoothstep(0.55, 0.8, abs(lat)));
-    rock = mix(rock, vec3(0.50, 0.36, 0.20), arid * 0.45 * (1.0 - uOcean * 0.6));
+    // Deserts are where the Hadley cell's descending branch lands, and the
+    // model puts that branch where the planet's rotation puts it - not at a
+    // latitude written down here. On Earth it comes out at thirty degrees,
+    // which is the Sahara, the Kalahari, the Atacama and the Australian
+    // interior, in one band.
+    float arid = smoothstep(0.85, 0.25, rain);
+    rock = mix(rock, vec3(0.50, 0.36, 0.20), arid * 0.55 * (1.0 - uOcean * 0.5));
+
+    // Where it is warm enough and wet enough, and something is alive to take
+    // advantage of it.
+    if (uLife > 0.001) {
+      float warm = smoothstep(273.0, 283.0, surfK) * smoothstep(325.0, 305.0, surfK);
+      float green = warm * smoothstep(0.5, 1.3, rain) * uLife;
+      rock = mix(rock, vec3(0.055, 0.135, 0.045), green * 0.85);
+    }
 
     albedo = mix(water, rock, land);
     spec = mix(0.55, 0.03, land);
@@ -195,11 +245,29 @@ void main() {
       albedo += crater * 0.06;
     }
 
-    // Ice caps: latitude and elevation, softened by the noise field so the
-    // edge is ragged rather than a drawn circle.
-    float capNoise = fbm(q * 3.0 + vec3(51.0), 4, 2.0, 0.5) * 0.16;
-    float icy = smoothstep(1.0 - uIce - 0.12, 1.0 - uIce + 0.06, abs(lat) + capNoise)
-              + smoothstep(sea + 0.42, sea + 0.62, elev) * 0.8 * step(0.02, uIce);
+    // Ice, where the energy budget says the water is frozen - and nowhere
+    // else. No latitude is written down: the cap edge is wherever this world's
+    // own solved temperature crosses 273 K at this point in its year, and it
+    // advances and retreats as that point moves. The noise only roughens the
+    // boundary, so it reads as a coastline rather than a drawn circle.
+    float capNoise = fbm(q * 3.0 + vec3(51.0), 4, 2.0, 0.5) * 3.5;
+    float icy;
+    if (uHasClimate > 0.5) {
+      // Cold is not enough. There has to be water here to freeze, and a world
+      // with only a trace of it can only whiten its very coldest ground - so
+      // the threshold is the temperature below which this planet's own water
+      // inventory runs out, not the freezing point. Mars is below freezing
+      // everywhere and is not a white planet.
+      icy = smoothstep(uIceThreshold + 2.0, uIceThreshold - 2.0, surfK + capNoise);
+      // Below the frost point the atmosphere itself snows onto the ground,
+      // water or no water. That is what the bright winter cap on Mars is:
+      // carbon dioxide, out of the air, a metre thick, gone again by spring.
+      icy = max(icy, smoothstep(uFrostK + 1.5, uFrostK - 1.5, surfK + capNoise * 0.5));
+    } else {
+      float cn = capNoise * 0.045;
+      icy = smoothstep(1.0 - uIce - 0.12, 1.0 - uIce + 0.06, abs(lat) + cn)
+          + smoothstep(sea + 0.42, sea + 0.62, elev) * 0.8 * step(0.02, uIce);
+    }
     icy = clamp(icy, 0.0, 1.0);
     albedo = mix(albedo, vec3(0.70, 0.75, 0.82), icy);
     spec = mix(spec, 0.25, icy);
@@ -248,7 +316,12 @@ void main() {
     // tracks, a wet equator and dry subtropics. Latitude moves the *threshold*
     // rather than the field, so the requested cover is roughly what comes out -
     // scaling the field instead put Earth's 67% under total overcast.
-    float belt = 0.55 + 0.45 * cos(lat * 9.0);
+    // Cloud follows the circulation, and the circulation is solved: the
+    // rising branch is overcast, the descending branch is clear, and the belt
+    // moves through the year because the rain belt does.
+    vec4 cc = climateAt(p);
+    float belt = uHasClimate > 0.5 ? clamp(cc.b * 2.6, 0.15, 1.6)
+                                   : 0.55 + 0.45 * cos(lat * 9.0);
     float thresh = 0.86 - 0.44 * uCloud * belt;
     float cover = smoothstep(thresh - 0.06, thresh + 0.06, c);
     // Cloud tops are lit by the star and by nothing else worth speaking of: the
@@ -447,6 +520,12 @@ export interface PlanetVisualOptions {
   /** World radius the planet should be drawn at, in scene units. */
   radius: number;
   segments?: number;
+  /**
+   * The solved climate, if there is one. With it, the ice goes where the
+   * energy budget puts it and moves with the seasons; without it, the surface
+   * falls back to placing a cap by latitude, which is what it used to do.
+   */
+  climate?: Climate;
 }
 
 export class PlanetView {
@@ -463,6 +542,8 @@ export class PlanetView {
   worldRadius: number;
   private atmoRatio = 1;
   private ringRatio: [number, number] = [0, 0];
+  private climateTex?: ClimateTexture;
+  private substellar = new THREE.Vector3(1, 0, 0);
 
   constructor(readonly planet: Planet, opts: PlanetVisualOptions) {
     const R = opts.radius;
@@ -492,12 +573,24 @@ export class PlanetView {
         uOcean: { value: planet.oceanFraction },
         uIce: { value: iceExtent },
         uCloud: { value: planet.cloudCover },
+        uIceThreshold: { value: -1 },
+        uFrostK: { value: -1 },
         uType: { value: typeCode },
         uRoughness: { value: 0.8 },
         uAtmoDensity: { value: Math.min(1, planet.pressureBar) },
         uAtmoBar: { value: planet.pressureBar },
         uAtmoColor: { value: new THREE.Vector3(0.3, 0.5, 1) },
         uNightLights: { value: planet.biosphere > 0.62 ? (planet.biosphere - 0.62) * 2.6 : 0 },
+        uLife: { value: planet.biosphere },
+        uClimate: { value: null as THREE.Texture | null },
+        uHasClimate: { value: 0 },
+        uClimRange: { value: new THREE.Vector2(200, 320) },
+        uSeason: { value: 0 },
+        uLapseRate: { value: 0 },
+        // Half a period per jet across sin(latitude), which runs -1 to 1.
+        uJetFreq: { value: Math.max(4, planet.jets * Math.PI * 0.5) },
+        uLocked: { value: planet.tidallyLocked ? 1 : 0 },
+        uSubstellar: { value: new THREE.Vector3(1, 0, 0) },
         uRadius: { value: R },
         uObliquity: { value: planet.obliquity },
         uRingNormal: { value: new THREE.Vector3(0, 1, 0) },
@@ -513,6 +606,36 @@ export class PlanetView {
         uReliefStrength: { value: 1.0 / (1.0 + planet.pressureBar * 0.35 + planet.oceanFraction) },
       },
     });
+
+    // --- The climate, if one has been solved.
+    if (opts.climate) {
+      const cl = opts.climate;
+      this.climateTex = climateTexture(cl, planet.pressureBar);
+      const u = this.surfMat.uniforms;
+      u.uClimate.value = this.climateTex.texture;
+      u.uHasClimate.value = 1;
+      u.uClimRange.value.set(this.climateTex.range[0], this.climateTex.range[1]);
+      // How cold it has to be here before there is ice on the ground. Every
+      // point of the seasonal field is ranked by temperature and the coldest
+      // share of it equal to the planet's water inventory is what freezes; if
+      // there is more water than there is cold ground, the threshold is simply
+      // the freezing point and every cold place is white.
+      u.uIceThreshold.value = iceThreshold(cl, planet.waterInventory);
+      // Below the frost point of its own air the atmosphere snows onto the
+      // ground, water or no water. That is Mars's bright winter cap.
+      u.uFrostK.value = planet.pressureBar > 1e-4
+        ? condensationTemperature(planet.air) : -1;
+      // Elevation in the terrain field runs about +-1; call one unit six
+      // kilometres, which puts a tall range at Himalayan height. The lapse
+      // rate is the planet's own - moist where there is water to condense,
+      // dry where there is not - so a thin-aired world's mountains are colder
+      // than a thick-aired one's by the ratio of their gravities.
+      const relief = 6000;
+      const lapse = planet.pressureBar > 0.01
+        ? moistLapseRate(planet.gravity, cl.meanK, planet.pressureBar, planet.air.cp)
+        : 0;
+      u.uLapseRate.value = lapse * relief;
+    }
 
     this.surface = new THREE.Mesh(
       new THREE.SphereGeometry(R, Math.max(seg, 160), Math.max(seg, 160) / 2), this.surfMat);
@@ -653,6 +776,23 @@ export class PlanetView {
     this.surfMat.uniforms.uSunDir.value.copy(sunDir);
     this.surfMat.uniforms.uSunColor.value.copy(sunColor);
     this.surfMat.uniforms.uTime.value = timeS;
+    // Where the planet is in its year. The ice line follows this: run time
+    // forward and the caps grow through one hemisphere's winter and melt back
+    // through its summer, at the latitude the energy budget puts them.
+    if (this.climateTex) {
+      this.surfMat.uniforms.uSeason.value =
+        (timeS / Math.max(this.planet.periodS, 1)) % 1;
+      if (this.planet.tidallyLocked) {
+        // The star does not move in this world's sky, so the substellar point
+        // is fixed in the body frame: it is the surface's own rotation that
+        // has to be undone to find it.
+        const spin = this.surface.rotation.y;
+        this.substellar.set(
+          sunDir.x * Math.cos(spin) + sunDir.z * Math.sin(spin), sunDir.y,
+          -sunDir.x * Math.sin(spin) + sunDir.z * Math.cos(spin)).normalize();
+        this.surfMat.uniforms.uSubstellar.value.copy(this.substellar);
+      }
+    }
     // Sidereal rotation
     this.surface.rotation.y = (timeS / Math.max(Math.abs(this.planet.dayS), 1)) *
       Math.PI * 2 * Math.sign(this.planet.dayS || 1);
@@ -669,6 +809,7 @@ export class PlanetView {
   }
 
   dispose(): void {
+    this.climateTex?.dispose();
     this.surface.geometry.dispose();
     this.surfMat.dispose();
     this.atmosphere?.geometry.dispose();
@@ -711,3 +852,23 @@ export function atmosphereBeta(p: Planet): [number, number, number] {
 }
 
 export { R_EARTH };
+
+
+/**
+ * The temperature below which a world actually has ice on the ground.
+ *
+ * Being below freezing is necessary and nowhere near sufficient: the whole of
+ * Mars is below freezing and the whole of Mars is not white, because there is
+ * almost no water on it to freeze. So every point of the seasonal field is
+ * ranked by temperature, and the coldest share of it equal to the planet's
+ * water inventory is what ends up covered. A world with oceans has more water
+ * than cold ground and the answer comes back as the freezing point; a world
+ * with a trace has only its poles.
+ */
+export function iceThreshold(cl: Climate, waterInventory: number): number {
+  const w = Math.min(1, Math.max(0, waterInventory));
+  if (w <= 0.002) return -1;
+  const sorted = Float32Array.from(cl.field).sort();
+  const k = Math.min(sorted.length - 1, Math.floor(w * sorted.length));
+  return Math.min(273.15, sorted[k]);
+}

@@ -531,7 +531,7 @@ if (params.get('mode') === 'merger') {
 // --- Optional subsystem: one planet, close up.
 if (params.get('mode') === 'planet') {
   const { makeStar } = await import('./astro/stellar');
-  const { buildSystem } = await import('./astro/planets');
+  const { buildSystem, hasClimate, planetClimate } = await import('./astro/planets');
   const { PlanetView } = await import('./render/planet');
   engine.scene.remove(view.group);
   const st = makeStar(Number(params.get('mass') ?? 1), Number(params.get('age') ?? 4.6), 0);
@@ -554,7 +554,10 @@ if (params.get('mode') === 'planet') {
     target = sys.planets.find(match);
   }
   if (!target) target = sys.planets[0];
-  const pv = new PlanetView(target, { radius: 1, segments: 160 });
+  const climate = params.get('noclimate') === '1' || !hasClimate(target)
+    ? undefined : planetClimate(target, st, st.luminosityLsun);
+  const pv = new PlanetView(target, { radius: 1, segments: 160, climate });
+  (window as unknown as Record<string, unknown>).labClimate = climate;
   engine.scene.add(pv.group);
   controls.snapTo(new THREE.Vector3(), Number(params.get('d') ?? 2.9),
     Number(params.get('theta') ?? 0.6), Number(params.get('phi') ?? 1.2));
