@@ -1,0 +1,2219 @@
+<title>The Ten Thousand Things</title>
+<meta name="description" content="Five lines from the Tao Te Ching that turn out to be literally true about matter, each one with the physics under your hand." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Noto+Serif+SC:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" />
+
+<style>
+/* ───────────────────────────────────────────────────────────────────────────
+   Paper and void.
+
+   The page is bone. The instruments are holes cut in it. One accent (jade)
+   does the structural work on paper; a warmer ember does it inside the dark,
+   where a cool accent would disappear. Cinnabar appears once, as a seal,
+   which is where a seal belongs.
+
+   Yin and yang are not a theme switcher bolted on: the page is about form and
+   emptiness, and swapping which one is the ground is the cheapest way to feel
+   that. Both states are painted explicitly.
+   ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  --paper:   #e4e5de;
+  --paper-2: #dcded5;
+  --ink:     #14181a;
+  --ink-2:   #414a48;
+  --mist:    #7d857f;
+  --rule:    #c3c7bc;
+  --void:    #07090a;
+  --void-2:  #0d1113;
+  --jade:    #33685b;
+  --jade-lo: #6f9a8e;
+  --ember:   #e39a45;
+  --cinnabar:#b8412e;
+  --sel:     #cfd6cb;
+
+  --measure: 34rem;
+  --step--1: 0.8125rem;
+  --step-0:  1.0625rem;
+  --step-1:  1.3125rem;
+  --step-2:  1.75rem;
+  --step-3:  2.5rem;
+  --step-4:  clamp(2.75rem, 7vw, 4.75rem);
+  --edge: clamp(1.25rem, 4vw, 3rem);
+}
+
+/* Yin: the ground becomes the void. Same palette, inverted roles. */
+:root.yin {
+  --paper:   #07090a;
+  --paper-2: #0d1113;
+  --ink:     #ddded6;
+  --ink-2:   #a2aaa4;
+  --mist:    #767e79;
+  --rule:    #242b2c;
+  --void:    #000204;
+  --void-2:  #080c0e;
+  --jade:    #74a99b;
+  --jade-lo: #40756a;
+  --sel:     #1d2a27;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Spectral, Georgia, "Times New Roman", serif;
+  font-size: var(--step-0);
+  line-height: 1.62;
+  font-weight: 300;
+  -webkit-font-smoothing: antialiased;
+  transition: background 520ms ease, color 520ms ease;
+  overflow-x: hidden;
+}
+::selection { background: var(--sel); }
+
+/* The tooth of the paper. One layer, almost subliminal, and it inverts with
+   the ground so the void never looks like flat plastic. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.34;
+  background-image:
+    radial-gradient(circle at 17% 23%, rgba(0,0,0,.05) 0 1px, transparent 1px),
+    radial-gradient(circle at 71% 61%, rgba(0,0,0,.04) 0 1px, transparent 1px),
+    radial-gradient(circle at 43% 87%, rgba(0,0,0,.045) 0 1px, transparent 1px);
+  background-size: 7px 7px, 11px 11px, 13px 13px;
+  mix-blend-mode: multiply;
+}
+:root.yin body::before { mix-blend-mode: screen; opacity: 0.16; }
+
+.wrap {
+  max-width: 1180px;
+  margin-inline: auto;
+  padding-inline: var(--edge);
+  padding-block: 0 8rem;
+  position: relative;
+  z-index: 2;
+}
+.col {
+  max-width: var(--measure);
+  margin-inline: auto;
+}
+
+/* ── Type ─────────────────────────────────────────────────────────────────── */
+h1, h2, h3 { font-weight: 400; text-wrap: balance; margin: 0; }
+p { margin: 0; }
+.stack { display: flex; flex-direction: column; }
+.stack > * + * { margin-top: var(--gap, 1.15rem); }
+
+.label {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6875rem;
+  letter-spacing: 0.19em;
+  text-transform: uppercase;
+  color: var(--mist);
+  font-weight: 400;
+}
+.han {
+  font-family: "Noto Serif SC", Spectral, serif;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+}
+.lede { font-size: var(--step-1); line-height: 1.55; color: var(--ink); }
+.quiet { color: var(--ink-2); }
+.num { font-variant-numeric: tabular-nums; }
+
+/* ── The loader ───────────────────────────────────────────────────────────── */
+#boot {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--paper);
+  display: grid;
+  place-items: center;
+  cursor: crosshair;
+  transition: opacity 900ms cubic-bezier(.4,0,.2,1);
+}
+#boot.gone { opacity: 0; pointer-events: none; }
+#bootCanvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+.boot-meta {
+  position: absolute;
+  left: var(--edge);
+  right: var(--edge);
+  bottom: clamp(1.25rem, 5vh, 3rem);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem;
+  pointer-events: none;
+}
+.boot-meta .label { color: var(--ink-2); }
+
+/* ── Hero ─────────────────────────────────────────────────────────────────── */
+.hero {
+  padding-block: clamp(4rem, 12vh, 8rem) clamp(3rem, 8vh, 5rem);
+}
+.hero h1 {
+  font-size: var(--step-4);
+  line-height: 0.98;
+  letter-spacing: -0.022em;
+  font-weight: 300;
+}
+.hero h1 em { font-style: italic; color: var(--jade); }
+.hero .han { font-size: clamp(2rem, 6vw, 3.25rem); line-height: 1.15; color: var(--ink-2); }
+
+/* ── Lessons ──────────────────────────────────────────────────────────────── */
+.lesson { padding-block: clamp(3.5rem, 9vh, 6.5rem) 0; }
+.lesson-head { display: flex; gap: 1.4rem; align-items: baseline; }
+.lesson-head .mark {
+  font-family: "Noto Serif SC", serif;
+  font-size: var(--step-2);
+  color: var(--jade);
+  line-height: 1;
+  flex: 0 0 auto;
+  width: 1.4em;
+}
+.verse {
+  font-family: "Noto Serif SC", serif;
+  font-size: clamp(1.6rem, 4.4vw, 2.35rem);
+  line-height: 1.42;
+  letter-spacing: 0.06em;
+  margin-top: 0.25rem;
+}
+.gloss {
+  font-style: italic;
+  font-size: var(--step-1);
+  color: var(--ink-2);
+  margin-top: 0.35rem;
+}
+.attrib { margin-top: 0.4rem; }
+
+/* ── The instrument: a window cut in the paper ────────────────────────────── */
+.instrument {
+  margin-top: 2.25rem;
+  background: var(--void);
+  color: #e8eae6;
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.05) inset,
+    0 18px 46px -24px rgba(0,0,0,.6);
+}
+:root.yin .instrument { box-shadow: 0 0 0 1px var(--rule); }
+.inst-stage { position: relative; display: block; width: 100%; }
+.inst-stage canvas { display: block; width: 100%; height: auto; touch-action: none; }
+.inst-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7rem 1rem 0.85rem;
+  border-top: 1px solid rgba(255,255,255,.09);
+  background: var(--void-2);
+}
+.readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 1.5rem;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+.readout b { font-weight: 500; color: var(--ember); }
+.readout span { color: #79827d; }
+.hintline {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.6875rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6c7570;
+}
+
+input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  width: min(320px, 100%);
+  height: 22px;
+  background: transparent;
+  cursor: ew-resize;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 2px; background: rgba(255,255,255,.2);
+}
+input[type="range"]::-moz-range-track { height: 2px; background: rgba(255,255,255,.2); }
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 13px; height: 13px; margin-top: -5.5px;
+  border-radius: 50%; background: var(--ember);
+  border: 0;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 13px; height: 13px; border: 0; border-radius: 50%; background: var(--ember);
+}
+input[type="range"]:focus-visible { outline: 2px solid var(--ember); outline-offset: 4px; }
+
+.btn {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.6875rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #cdd3cf;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 1px;
+  padding: 0.42rem 0.8rem;
+  cursor: pointer;
+  transition: border-color 180ms, color 180ms, background 180ms;
+}
+.btn:hover { border-color: var(--ember); color: var(--ember); }
+.btn[aria-pressed="true"] { background: var(--ember); border-color: var(--ember); color: #0a0c0b; }
+.btn:focus-visible { outline: 2px solid var(--ember); outline-offset: 3px; }
+
+/* A caption under the window, on paper, in the page's voice. */
+.after { margin-top: 1.6rem; }
+
+/* ── Terms with their own small animation ─────────────────────────────────── */
+.term {
+  font-weight: 400;
+  color: var(--ink);
+  border-bottom: 1px dashed var(--jade-lo);
+  cursor: help;
+  padding-bottom: 1px;
+}
+.term:focus-visible { outline: 2px solid var(--jade); outline-offset: 2px; }
+#pop {
+  position: fixed;
+  z-index: 50;
+  width: 268px;
+  background: var(--void);
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 2px;
+  padding: 0;
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 150ms ease, transform 150ms ease;
+  box-shadow: 0 20px 44px -22px rgba(0,0,0,.75);
+}
+#pop.on { opacity: 1; transform: none; }
+#pop canvas { display: block; width: 100%; height: auto; }
+#pop .pop-txt {
+  padding: 0.6rem 0.75rem 0.72rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: #b9c1bc;
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+#pop .pop-txt b { color: var(--ember); font-weight: 500; }
+
+/* ── The spine: 43 decades along the bottom ───────────────────────────────── */
+#spine {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: 46px;
+  z-index: 40;
+  pointer-events: none;
+  background: linear-gradient(to top, var(--paper) 62%, transparent);
+}
+#spine canvas { display: block; width: 100%; height: 46px; }
+@media (max-width: 620px) { #spine { display: none; } }
+
+/* ── Chrome ───────────────────────────────────────────────────────────────── */
+.topbar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 41;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.9rem var(--edge);
+  pointer-events: none;
+}
+.topbar > * { pointer-events: auto; }
+.yinyang {
+  width: 26px; height: 26px;
+  border: 0; padding: 0; background: none; cursor: pointer;
+  border-radius: 50%;
+}
+.yinyang:focus-visible { outline: 2px solid var(--jade); outline-offset: 3px; }
+
+.rule { height: 1px; background: var(--rule); border: 0; margin: 0; }
+
+.close { padding-block: clamp(4rem, 10vh, 7rem) 2rem; text-align: center; }
+.seal {
+  display: inline-grid;
+  place-items: center;
+  width: 62px; height: 62px;
+  background: var(--cinnabar);
+  color: #f6efe6;
+  font-family: "Noto Serif SC", serif;
+  font-size: 1.55rem;
+  line-height: 1;
+  border-radius: 2px;
+  letter-spacing: 0;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.12) inset;
+}
+
+@media (max-width: 560px) {
+  .lesson-head { flex-direction: column; gap: 0.3rem; }
+  .lesson-head .mark { width: auto; }
+  .inst-bar { flex-direction: column; align-items: flex-start; }
+}
+</style>
+
+<div id="boot">
+  <canvas id="bootCanvas"></canvas>
+  <div class="boot-meta">
+    <div class="label" id="bootWhat">assembling mountain and water</div>
+    <div class="label num" id="bootPct">0%</div>
+  </div>
+</div>
+
+<div class="topbar">
+  <span class="label">道 · nine scales</span>
+  <button class="yinyang" id="yin" aria-label="Swap ground and figure" title="陰陽 — swap ground and figure">
+    <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+      <circle cx="16" cy="16" r="15" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".5"/>
+      <path d="M16 1a15 15 0 0 0 0 30 7.5 7.5 0 0 1 0-15 7.5 7.5 0 0 0 0-15z" fill="currentColor"/>
+      <circle cx="16" cy="8.5" r="2.1" fill="var(--paper)"/>
+      <circle cx="16" cy="23.5" r="2.1" fill="currentColor"/>
+    </svg>
+  </button>
+</div>
+
+<main class="wrap">
+
+  <header class="hero col stack" style="--gap:1.5rem">
+    <div class="label">Tao Te Ching · and the nine scales under your feet</div>
+    <h1>Five old lines that turn out to be <em>literally true</em> about matter.</h1>
+    <p class="lede quiet">
+      Not metaphor. Each of these was written two and a half thousand years before anyone
+      could weigh an atom, and each one describes something that was later measured — the
+      emptiness inside a stone, the place where fusion stops paying, the exact size below
+      which looking no longer works. The instruments below are the real arithmetic. Put
+      your hand on them.
+    </p>
+    <p class="label">Drag · slide · click. Every panel is live.</p>
+  </header>
+
+  <hr class="rule" />
+
+  <!-- ── 一 ───────────────────────────────────────────────────────────────── -->
+  <section class="lesson" id="l1">
+    <div class="col">
+      <div class="lesson-head">
+        <span class="mark han">一</span>
+        <div>
+          <div class="verse han">鑿戶牖以為室，當其無，有室之用。</div>
+          <div class="gloss">Cut doors and windows to make a room; it is the emptiness that makes it useful.</div>
+          <div class="label attrib">Tao Te Ching, 11</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="instrument">
+      <div class="inst-stage"><canvas id="cEmpty" width="1600" height="900"></canvas></div>
+      <div class="inst-bar">
+        <label class="hintline" for="rEmpty">magnify
+          <input type="range" id="rEmpty" min="0" max="1000" value="0" aria-label="Magnification" />
+        </label>
+        <div class="readout" id="oEmpty"></div>
+        <button class="btn" id="bEmpty" aria-pressed="false">draw it the usual way</button>
+      </div>
+    </div>
+
+    <div class="col after stack">
+      <p>
+        That is an iron atom. Twenty-six electrons, and a nucleus holding all but a
+        four-thousandth of the weight. Magnify until the cloud leaves the frame and there is
+        nothing — and nothing — and then a single point, nine femtometres across.
+      </p>
+      <p class="quiet">
+        The volume ratio is one part in <b class="num">3.9×10¹³</b>. Every picture you have
+        ever seen of an atom draws that nucleus about three thousand times too wide, because
+        drawn honestly it is <span class="term" data-term="subpixel" tabindex="0">smaller than a pixel</span>.
+        You are not mostly water. You are mostly nothing, arranged very carefully.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── 二 ───────────────────────────────────────────────────────────────── -->
+  <section class="lesson" id="l2">
+    <div class="col">
+      <div class="lesson-head">
+        <span class="mark han">二</span>
+        <div>
+          <div class="verse han">人法地，地法天，天法道，道法自然。</div>
+          <div class="gloss">Earth follows heaven, heaven follows the Way, and the Way follows what is so of itself.</div>
+          <div class="label attrib">Tao Te Ching, 25</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="instrument">
+      <div class="inst-stage"><canvas id="cEcl" width="1600" height="900"></canvas></div>
+      <div class="inst-bar">
+        <div class="hintline">drag the dark disc across the sun</div>
+        <div class="readout" id="oEcl"></div>
+        <button class="btn" id="bEcl">let it run</button>
+      </div>
+    </div>
+
+    <div class="col after stack">
+      <p>
+        Nothing here is scheduled. There is no eclipse event and no trigger. There are two
+        circles with real angular radii, and the light is whatever the overlap leaves — so
+        the sky dims because the sun is covered, and not the other way round.
+      </p>
+      <p class="quiet">
+        The fall is not linear, and that is the part worth feeling. A star is
+        <span class="term" data-term="limb" tabindex="0">limb darkened</span>: bright in the
+        middle, dim at the rim. The first bite costs less light than its area and the last
+        sliver costs far more, which is why an eclipse seems to do almost nothing for an hour
+        and then everything in ninety seconds. <em>道法自然</em> — it follows from what it is.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── 三 ───────────────────────────────────────────────────────────────── -->
+  <section class="lesson" id="l3">
+    <div class="col">
+      <div class="lesson-head">
+        <span class="mark han">三</span>
+        <div>
+          <div class="verse han">反者道之動。</div>
+          <div class="gloss">Returning is the motion of the Way.</div>
+          <div class="label attrib">Tao Te Ching, 40</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="instrument">
+      <div class="inst-stage"><canvas id="cBind" width="1600" height="900"></canvas></div>
+      <div class="inst-bar">
+        <label class="hintline" for="rBind">nucleons
+          <input type="range" id="rBind" min="4" max="238" value="12" aria-label="Mass number" />
+        </label>
+        <div class="readout" id="oBind"></div>
+        <button class="btn" id="bBind">go to iron</button>
+      </div>
+    </div>
+
+    <div class="col after stack">
+      <p>
+        Every element is on this curve, and the curve turns. To the left, joining two nuclei
+        gives energy back — that is what a star is, and it is the only reason the sky has
+        anything in it. To the right, splitting gives energy back. At the top, neither does.
+      </p>
+      <p class="quiet">
+        The peak sits at <b class="num">A = 58</b>, which is iron. A star that has fused its
+        way up to iron has arrived somewhere with no downhill left in any direction: it can
+        no longer hold itself up, and it falls in — in about one second. That collapse is a
+        supernova, and it is how the iron got out. The
+        <span class="term" data-term="return" tabindex="0">return</span> is not a metaphor
+        here; it is the sign of a derivative.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── 四 ───────────────────────────────────────────────────────────────── -->
+  <section class="lesson" id="l4">
+    <div class="col">
+      <div class="lesson-head">
+        <span class="mark han">四</span>
+        <div>
+          <div class="verse han">道生一，一生二，二生三，三生萬物。</div>
+          <div class="gloss">The Way bears one, one bears two, two bears three, and three bears the ten thousand things.</div>
+          <div class="label attrib">Tao Te Ching, 42</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="instrument">
+      <div class="inst-stage"><canvas id="cGen" width="1600" height="900"></canvas></div>
+      <div class="inst-bar">
+        <div class="hintline">click a step, or let it run</div>
+        <div class="readout" id="oGen"></div>
+        <button class="btn" id="bGen">from the beginning</button>
+      </div>
+    </div>
+
+    <div class="col after stack">
+      <p>
+        Hydrogen was made in the first three minutes and nothing else was. Everything after
+        it had to be assembled inside something, one step at a time, and the steps are
+        countable: two hydrogens are
+        <span class="term" data-term="pp" tabindex="0">not enough</span>, three heliums make
+        a carbon, carbon and helium make oxygen, and from there the shells of a dying star do
+        the rest until they reach iron and stop.
+      </p>
+      <p class="quiet">
+        The oxygen you are breathing was made in the helium-burning shell of a star more than
+        eight times the mass of the sun, and thrown out when that star collapsed. The iron in
+        your blood is mostly from white dwarfs detonating. <em>三生萬物</em> — and it took
+        about nine billion years.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── 五 ───────────────────────────────────────────────────────────────── -->
+  <section class="lesson" id="l5">
+    <div class="col">
+      <div class="lesson-head">
+        <span class="mark han">五</span>
+        <div>
+          <div class="verse han">視之不見，名曰夷。</div>
+          <div class="gloss">Look at it and you do not see it: call it the featureless.</div>
+          <div class="label attrib">Tao Te Ching, 14</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="instrument">
+      <div class="inst-stage"><canvas id="cSee" width="1600" height="900"></canvas></div>
+      <div class="inst-bar">
+        <label class="hintline" for="rSee">scale
+          <input type="range" id="rSee" min="0" max="1000" value="408" aria-label="Scale along the ruler" />
+        </label>
+        <div class="readout" id="oSee"></div>
+        <button class="btn" id="bSee">go to the limit</button>
+      </div>
+    </div>
+
+    <div class="col after stack">
+      <p>
+        Green light is five hundred and fifty nanometres from crest to crest, and no
+        arrangement of glass will ever resolve much below half of that. It is not a
+        engineering problem. It is the size of the ruler.
+      </p>
+      <p class="quiet">
+        Slide past that mark and the panel stops being able to show you anything, because
+        that is what happens. Two of the nine scales — the crystal and the atom — are on the
+        far side of it. Everything anyone knows about them was inferred from
+        <span class="term" data-term="diffract" tabindex="0">how things scatter</span>, never
+        seen. 視之不見: look at it and you do not see it. The line was written about the Way.
+        It is also the specification of a microscope.
+      </p>
+    </div>
+  </section>
+
+  <hr class="rule" style="margin-top:5rem" />
+
+  <footer class="close col stack" style="--gap:1.4rem">
+    <div class="seal han" aria-hidden="true">道</div>
+    <p class="lede">
+      Nine scales, thirty-eight orders of magnitude, and the same handful of rules the whole
+      way down.
+    </p>
+    <p class="quiet" style="font-size:var(--step--1)">
+      Every number on this page is measured or derived from the standard models: Slater
+      screening, the Bethe–Weizsäcker mass formula, limb-darkened circle overlap, the
+      Rayleigh criterion. The verses are Laozi, arranged by someone who noticed.
+    </p>
+  </footer>
+</main>
+
+<div id="pop" role="tooltip" aria-hidden="true">
+  <canvas id="popCanvas" width="536" height="260"></canvas>
+  <div class="pop-txt" id="popTxt"></div>
+</div>
+
+<div id="spine"><canvas id="spineCanvas" width="2400" height="92"></canvas></div>
+
+<script>
+(() => {
+'use strict';
+
+/* ═══ small tools ═══════════════════════════════════════════════════════════ */
+const $ = (s) => document.querySelector(s);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const ease = (t) => t * t * (3 - 2 * t);
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Crisp on a 4K panel without paying for it twice. */
+function fit(cv, cssW, cssH) {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = Math.round(cssW * dpr), h = Math.round(cssH * dpr);
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return g;
+}
+
+/** Each instrument runs only while it is on screen. */
+const live = new Set();
+function register(el, fn) {
+  const entry = { el, fn, on: false };
+  new IntersectionObserver((es) => {
+    for (const e of es) {
+      entry.on = e.isIntersecting;
+      if (entry.on) live.add(entry); else live.delete(entry);
+    }
+  }, { rootMargin: '120px' }).observe(el);
+  return entry;
+}
+let t0 = performance.now();
+function frame(now) {
+  const t = (now - t0) / 1000;
+  for (const e of live) { try { e.fn(t); } catch (_) { /* keep the others alive */ } }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* Pointer helper: drag on a canvas in 0..1 coordinates. */
+function onDrag(cv, handler) {
+  let down = false;
+  const at = (ev) => {
+    const r = cv.getBoundingClientRect();
+    return { x: (ev.clientX - r.left) / r.width, y: (ev.clientY - r.top) / r.height };
+  };
+  cv.addEventListener('pointerdown', (e) => {
+    down = true; cv.setPointerCapture(e.pointerId); handler(at(e), true); e.preventDefault();
+  });
+  cv.addEventListener('pointermove', (e) => { if (down) handler(at(e), false); });
+  cv.addEventListener('pointerup', () => { down = false; });
+  cv.addEventListener('pointercancel', () => { down = false; });
+  return { hover: (fn) => cv.addEventListener('pointermove', (e) => { if (!down) fn(at(e)); }) };
+}
+
+/* ═══ physics, the real formulas ════════════════════════════════════════════ */
+const SEMF = { V: 15.75, S: 17.80, C: 0.711, A: 23.70, P: 11.18 };
+
+function bindingTerms(z, a) {
+  if (a < 2) return { total: 0, per: 0 };
+  const N = a - z;
+  const volume = SEMF.V * a;
+  const surface = -SEMF.S * Math.pow(a, 2 / 3);
+  const coulomb = -(SEMF.C * z * (z - 1)) / Math.cbrt(a);
+  const asym = -(SEMF.A * (a - 2 * z) ** 2) / a;
+  const evenZ = z % 2 === 0, evenN = N % 2 === 0;
+  const pair = evenZ === evenN ? (evenZ ? 1 : -1) * (SEMF.P / Math.sqrt(a)) : 0;
+  const total = volume + surface + coulomb + asym + pair;
+  return { total, per: total / a, volume, surface, coulomb, asym, pair };
+}
+const perNucleon = (z, a) => bindingTerms(z, a).per;
+/** The floor of the valley of stability: dB/dZ = 0. */
+const stableZ = (a) => {
+  const c = Math.pow(a, 2 / 3);
+  return (4 * SEMF.A * a + SEMF.C * c) / (2 * SEMF.C * c + 8 * SEMF.A);
+};
+const curveAt = (a) => perNucleon(Math.round(stableZ(a)), a);
+
+/** Two circles: the fraction of the star's disc that is hidden. */
+function coveredFraction(d, R, r) {
+  d = Math.abs(d);
+  if (!(R > 0) || r <= 0 || d >= R + r) return 0;
+  if (d <= Math.abs(R - r)) return r >= R ? 1 : (r * r) / (R * R);
+  const d2 = d * d, R2 = R * R, r2 = r * r;
+  const ca = clamp((d2 + R2 - r2) / (2 * d * R), -1, 1);
+  const cb = clamp((d2 + r2 - R2) / (2 * d * r), -1, 1);
+  const tri = Math.sqrt(Math.max(0, (-d + r + R) * (d + r - R) * (d - r + R) * (d + r + R)));
+  return clamp((R2 * Math.acos(ca) + r2 * Math.acos(cb) - 0.5 * tri) / (Math.PI * R2), 0, 1);
+}
+/** The fraction of a ring at radius x hidden by a disc of radius rho at distance d. */
+function arcCovered(x, d, rho) {
+  if (rho <= 0 || x < 0) return 0;
+  if (d <= 1e-12) return x <= rho ? 1 : 0;
+  if (x <= 1e-12) return d <= rho ? 1 : 0;
+  if (x + d <= rho) return 1;
+  if (d >= x + rho || x >= d + rho) return 0;
+  return Math.acos(clamp((x * x + d * d - rho * rho) / (2 * x * d), -1, 1)) / Math.PI;
+}
+/** Light left, with the star limb darkened. Integrated in annuli. */
+function eclipseLight(sep, R, r, u = 0.6) {
+  if (!(R > 0) || !(r > 0)) return 1;
+  const d = Math.abs(sep) / R, rho = r / R;
+  if (d >= 1 + rho) return 1;
+  if (rho >= 1 && d <= rho - 1) return 0;
+  let hid = 0, tot = 0;
+  const N = 96, dx = 1 / N;
+  for (let k = 0; k < N; k++) {
+    const x = (k + 0.5) * dx;
+    const mu = Math.sqrt(Math.max(0, 1 - x * x));
+    const w = (1 - u * (1 - mu)) * 2 * x * dx;
+    tot += w; hid += w * arcCovered(x, d, rho);
+  }
+  return tot > 0 ? clamp(1 - hid / tot, 0, 1) : 1;
+}
+
+/* ═══ palette, read from the sheet so yin/yang carries through ══════════════ */
+const cssvar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let PAL = {};
+function readPalette() {
+  PAL = {
+    paper: cssvar('--paper'), paper2: cssvar('--paper-2'),
+    ink: cssvar('--ink'), ink2: cssvar('--ink-2'), mist: cssvar('--mist'),
+    rule: cssvar('--rule'), jade: cssvar('--jade'), ember: cssvar('--ember'),
+    cinnabar: cssvar('--cinnabar'),
+  };
+}
+readPalette();
+
+/* ═══ 一 · the loading indicator ════════════════════════════════════════════
+   Mountain and water, in pixels, assembling itself on bone.
+
+   Rendered into a 256x144 buffer and blown up with smoothing off, which is the
+   honest way to make pixel art on a high-density panel: the pixels stay square
+   and enormous instead of being resampled into mush. Ridges are sums of sines
+   with a seeded offset, pale at the back and dark at the front, because that is
+   how distance reads in ink - not by perspective but by how much ink is left.
+   ═════════════════════════════════════════════════════════════════════════ */
+const BW = 256, BH = 144;
+const buf = document.createElement('canvas');
+buf.width = BW; buf.height = BH;
+const bg = buf.getContext('2d');
+const bootCv = $('#bootCanvas');
+const bootG = bootCv.getContext('2d');
+
+const hash = (n) => {
+  let x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+};
+
+/* Ridge layers: far (pale, high, slow parallax) to near (dark, low, fast). */
+const RIDGES = [
+  { y: 0.52, amp: 0.070, f: 1.7, seed: 3.1, tone: 0.12, par: 0.10 },
+  { y: 0.60, amp: 0.085, f: 2.6, seed: 8.7, tone: 0.22, par: 0.20 },
+  { y: 0.67, amp: 0.062, f: 4.1, seed: 1.4, tone: 0.36, par: 0.34 },
+  { y: 0.73, amp: 0.048, f: 6.3, seed: 5.9, tone: 0.54, par: 0.52 },
+  { y: 0.785, amp: 0.030, f: 9.2, seed: 2.2, tone: 0.78, par: 0.78 },
+];
+const WATER_Y = 0.80;
+
+/* 4x4 blocks, revealed in a fixed shuffled order as the load advances. */
+const BLK = 4, BX = Math.ceil(BW / BLK), BY = Math.ceil(BH / BLK);
+const order = Array.from({ length: BX * BY }, (_, i) => i);
+for (let i = order.length - 1; i > 0; i--) {
+  const j = Math.floor(hash(i * 2.3) * (i + 1));
+  [order[i], order[j]] = [order[j], order[i]];
+}
+
+const boot = {
+  p: 0, shown: 0, mx: 0.5, my: 0.4,
+  sun: { x: 0.70, y: 0.24, r: 13, held: false },
+  ripples: [],
+  birds: Array.from({ length: 4 }, (_, i) => ({
+    x: -0.2 - i * 0.28, y: 0.3 + hash(i * 7) * 0.14, v: 0.014 + hash(i * 11) * 0.01,
+  })),
+  done: false,
+};
+
+function ridgeY(r, x, t) {
+  const s = r.seed;
+  return r.y
+    + r.amp * (0.62 * Math.sin(x * r.f + s)
+      + 0.26 * Math.sin(x * r.f * 2.7 + s * 1.9)
+      + 0.12 * Math.sin(x * r.f * 5.3 + s * 3.3));
+}
+
+function mixHex(a, b, t) {
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const r = Math.round(lerp((pa >> 16) & 255, (pb >> 16) & 255, t));
+  const g2 = Math.round(lerp((pa >> 8) & 255, (pb >> 8) & 255, t));
+  const bl = Math.round(lerp(pa & 255, pb & 255, t));
+  return `rgb(${r},${g2},${bl})`;
+}
+
+function drawBoot(t) {
+  const paper = PAL.paper, ink = PAL.ink;
+  bg.setTransform(1, 0, 0, 1, 0, 0);
+  bg.fillStyle = paper;
+  bg.fillRect(0, 0, BW, BH);
+
+  const px = (boot.mx - 0.5), py = (boot.my - 0.5);
+
+  /* A breath of wash in the upper sky, so the paper is not dead flat. */
+  const sky = bg.createLinearGradient(0, 0, 0, BH * WATER_Y);
+  sky.addColorStop(0, mixHex(paper, ink, 0.055));
+  sky.addColorStop(1, paper);
+  bg.fillStyle = sky;
+  bg.fillRect(0, 0, BW, Math.round(BH * WATER_Y));
+
+  /* The disc. Pale, enormous, slightly off centre - and draggable. */
+  const sx = Math.round(boot.sun.x * BW - px * 3);
+  const sy = Math.round(boot.sun.y * BH - py * 2);
+  bg.fillStyle = mixHex(paper, ink, 0.10);
+  bg.beginPath(); bg.arc(sx, sy, boot.sun.r + 3, 0, 7); bg.fill();
+  bg.fillStyle = mixHex(paper, ink, 0.035);
+  bg.beginPath(); bg.arc(sx, sy, boot.sun.r, 0, 7); bg.fill();
+
+  /* Ridges, back to front. */
+  for (let i = 0; i < RIDGES.length; i++) {
+    const r = RIDGES[i];
+    const off = -px * 26 * r.par;
+    const lift = -py * 5 * r.par;
+    bg.fillStyle = mixHex(paper, ink, r.tone);
+    bg.beginPath();
+    bg.moveTo(0, BH);
+    for (let x = 0; x <= BW; x += 2) {
+      const u = (x + off) / BW;
+      const y = Math.round(ridgeY(r, u * 6.3, t) * BH + lift
+        + Math.sin(t * 0.11 + i) * 0.4);
+      bg.lineTo(x, y);
+    }
+    bg.lineTo(BW, BH);
+    bg.closePath();
+    bg.fill();
+
+    /* Mist caught against the near side of each ridge. */
+    if (i > 0) {
+      const my = ridgeY(r, 0, t) * BH + lift;
+      const drift = ((t * (5 + i * 3)) % (BW + 80)) - 40;
+      bg.fillStyle = `rgba(${hexRGB(paper)},0.55)`;
+      for (let k = 0; k < 3; k++) {
+        const yy = Math.round(my + 3 + k * 3);
+        const w = 40 + k * 26;
+        const xx = Math.round(drift - k * 30);
+        bg.fillRect(xx, yy, w, 1);
+        bg.fillRect(xx + BW, yy, w, 1);
+        bg.fillRect(xx - BW, yy, w, 1);
+      }
+    }
+  }
+
+  /* Water: the near ridge's tone, with the disc broken across it. */
+  const wy = Math.round(BH * WATER_Y);
+  bg.fillStyle = mixHex(paper, ink, 0.06);
+  bg.fillRect(0, wy, BW, BH - wy);
+
+  for (let y = wy + 2; y < BH; y += 3) {
+    const depth = (y - wy) / (BH - wy);
+    let amp = 1.6 + depth * 3.2;
+    for (const rp of boot.ripples) {
+      const age = t - rp.t;
+      const rad = age * 52;
+      const dy = Math.abs(y - rp.y * BH);
+      const band = Math.exp(-((dy - rad * 0.35) ** 2) / 40) * Math.exp(-age * 1.1);
+      amp += band * 9;
+    }
+    const shift = Math.sin(y * 0.9 + t * 1.1) * amp;
+    const rx = Math.round(sx + shift);
+    const rw = Math.round(boot.sun.r * 1.5 * (1 - depth * 0.35));
+    bg.fillStyle = mixHex(paper, ink, 0.02 + depth * 0.03);
+    bg.fillRect(rx - rw, y, rw * 2, 1);
+    /* a few loose strokes, the way water is drawn */
+    const k = Math.floor(hash(y * 3.7) * 3);
+    for (let j = 0; j <= k; j++) {
+      const lx = Math.round(hash(y * 1.3 + j * 9.1) * BW + Math.sin(t * 0.6 + j) * 3);
+      bg.fillStyle = mixHex(paper, ink, 0.05 + depth * 0.05);
+      bg.fillRect(lx, y, 6 + Math.floor(hash(y + j) * 12), 1);
+    }
+  }
+
+  /* Birds. Three pixels each, and they carry the whole scale of the thing. */
+  for (const b of boot.birds) {
+    b.x += b.v * 0.016;
+    if (b.x > 1.25) { b.x = -0.25; b.y = 0.26 + hash(b.v * 1000) * 0.16; }
+    const bx = Math.round(b.x * BW), by = Math.round(b.y * BH + Math.sin(t * 2 + b.x * 9) * 1.5);
+    bg.fillStyle = mixHex(paper, ink, 0.55);
+    bg.fillRect(bx, by, 1, 1);
+    bg.fillRect(bx - 1, by - 1, 1, 1);
+    bg.fillRect(bx + 1, by - 1, 1, 1);
+  }
+
+  /* The dissolve: blocks that have not arrived yet are still blank paper. */
+  const revealed = Math.floor(ease(clamp(boot.shown, 0, 1)) * order.length);
+  bg.fillStyle = paper;
+  for (let i = revealed; i < order.length; i++) {
+    const o = order[i];
+    bg.fillRect((o % BX) * BLK, Math.floor(o / BX) * BLK, BLK, BLK);
+  }
+  /* The arriving edge glows faintly, so it reads as assembling not erasing -
+     and it stops arriving once everything has arrived. */
+  if (boot.shown < 0.999) {
+    bg.fillStyle = mixHex(paper, PAL.jade, 0.30);
+    for (let i = Math.max(0, revealed - 26); i < revealed; i++) {
+      const o = order[i];
+      bg.fillRect((o % BX) * BLK, Math.floor(o / BX) * BLK, BLK, BLK);
+    }
+  }
+
+  /* The brushstroke that is the progress bar. */
+  const bx0 = 24, bx1 = BW - 24, byy = BH - 16;
+  bg.fillStyle = mixHex(paper, ink, 0.14);
+  bg.fillRect(bx0, byy, bx1 - bx0, 1);
+  const w = Math.round((bx1 - bx0) * ease(clamp(boot.shown, 0, 1)));
+  bg.fillStyle = mixHex(paper, ink, 0.72);
+  for (let x = 0; x < w; x++) {
+    const th = 1 + (Math.sin(x * 0.21) > 0.55 ? 1 : 0);
+    bg.fillRect(bx0 + x, byy - (th - 1), 1, th);
+  }
+
+  /* Blow it up. No smoothing: the pixels are the point. */
+  /* Nearest-neighbour from a 256x144 buffer, so a device ratio above 1 buys
+     nothing and costs four times the fill. The pixels are already square. */
+  const cw = bootCv.clientWidth, ch = bootCv.clientHeight;
+  if (bootCv.width !== cw) { bootCv.width = cw; bootCv.height = ch; }
+  bootG.imageSmoothingEnabled = false;
+  bootG.fillStyle = paper;
+  bootG.fillRect(0, 0, bootCv.width, bootCv.height);
+  const scale = Math.max(bootCv.width / BW, bootCv.height / BH);
+  const dw = BW * scale, dh = BH * scale;
+  bootG.drawImage(buf, Math.round((bootCv.width - dw) / 2), Math.round((bootCv.height - dh) / 2), dw, dh);
+
+  boot.ripples = boot.ripples.filter((r) => t - r.t < 3);
+}
+
+/* Fidget. */
+const bootEl = $('#boot');
+bootEl.addEventListener('pointermove', (e) => {
+  const r = bootEl.getBoundingClientRect();
+  boot.mx = (e.clientX - r.left) / r.width;
+  boot.my = (e.clientY - r.top) / r.height;
+  if (boot.sun.held) { boot.sun.x = clamp(boot.mx, 0.08, 0.92); boot.sun.y = clamp(boot.my, 0.06, 0.42); }
+});
+bootEl.addEventListener('pointerdown', (e) => {
+  const r = bootEl.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+  const d = Math.hypot((x - boot.sun.x) * BW, (y - boot.sun.y) * BH);
+  if (d < boot.sun.r + 8) boot.sun.held = true;
+  else boot.ripples.push({ x, y: Math.max(y, WATER_Y), t: (performance.now() - t0) / 1000 });
+});
+addEventListener('pointerup', () => { boot.sun.held = false; });
+
+const bootPct = $('#bootPct'), bootWhat = $('#bootWhat');
+const PHASES = [
+  [0.00, 'assembling mountain and water'],
+  [0.30, 'placing the far ridges'],
+  [0.52, 'letting the mist settle'],
+  [0.72, 'counting thirty-eight orders of magnitude'],
+  [0.90, 'the ten thousand things'],
+];
+let bootStart = performance.now();
+let ready = false;
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => { ready = true; });
+setTimeout(() => { ready = true; }, 2200);
+
+let bootLast = 0;
+function bootLoop(now) {
+  const t = (now - t0) / 1000;
+  const elapsed = (now - bootStart) / 1000;
+  /* Time-based, not frame-based. A slow machine must get a shorter loader,
+     never a longer one - the whole page is behind this. */
+  const dt = bootLast ? Math.min(0.25, (now - bootLast) / 1000) : 0.016;
+  bootLast = now;
+  const floor = clamp(elapsed / 2.2, 0, 1);
+  const target = ready ? 1 : Math.min(floor, 0.92);
+  boot.p = target;
+  boot.shown += (boot.p - boot.shown) * (REDUCED ? 1 : clamp(dt * 2.9, 0, 1));
+  if (boot.shown > 0.995 || elapsed > 6) boot.shown = 1;
+  drawBoot(t);
+  const pct = Math.round(clamp(boot.shown, 0, 1) * 100);
+  bootPct.textContent = pct + '%';
+  for (const [th, txt] of PHASES) if (boot.shown >= th) bootWhat.textContent = txt;
+  if (boot.shown >= 1 && !boot.done && elapsed > 2.6) {
+    boot.done = true;
+    setTimeout(() => {
+      bootEl.classList.add('gone');
+      setTimeout(() => { bootEl.style.display = 'none'; }, 950);
+    }, 520);
+  }
+  if (!boot.done || !bootEl.classList.contains('gone')) requestAnimationFrame(bootLoop);
+}
+requestAnimationFrame(bootLoop);
+
+function hexRGB(hex) {
+  const p = parseInt(hex.slice(1), 16);
+  return `${(p >> 16) & 255},${(p >> 8) & 255},${p & 255}`;
+}
+
+/* ═══ furniture the instruments share ═══════════════════════════════════════
+   Every panel is a hole cut in the paper, so they all speak the same dark
+   language: bone text, a grey for the things that are only labels, ember for
+   the one number that is the point of the panel.
+   ═════════════════════════════════════════════════════════════════════════ */
+const MONO = '"IBM Plex Mono", ui-monospace, monospace';
+const SERIF = 'Spectral, Georgia, serif';
+const INK = '#e8eae6', DIM = '#79827d', FAINT = 'rgba(255,255,255,.10)';
+const EMBER = '#e39a45', JADE = '#6f9a8e';
+
+/** Type scale for the panel currently being drawn. A 400px phone gets the
+    same composition, not the same point sizes. */
+let K = 1;
+
+/** A fitted 16:9 context, cleared, in CSS pixels. */
+function stage(cv) {
+  const w = Math.max(300, cv.clientWidth || 960), h = w * 9 / 16;
+  K = clamp(w / 1000, 0.62, 1.2);
+  const g = fit(cv, w, h);
+  g.clearRect(0, 0, w, h);
+  return { g, w, h };
+}
+
+function tag(g, x, y, txt, o) {
+  o = o || {};
+  g.save();
+  g.font = ((o.size || 11) * K).toFixed(2) + 'px ' + MONO;
+  g.fillStyle = o.col || DIM;
+  g.textAlign = o.align || 'left';
+  g.textBaseline = o.base || 'alphabetic';
+  if ('letterSpacing' in g) g.letterSpacing = (o.track === undefined ? 0.13 : o.track) + 'em';
+  g.fillText(txt, x, y);
+  g.restore();
+}
+function serif(g, x, y, txt, o) {
+  o = o || {};
+  g.save();
+  g.font = (o.italic ? 'italic ' : '') + (o.weight || 300) + ' '
+    + ((o.size || 17) * K).toFixed(2) + 'px ' + SERIF;
+  g.fillStyle = o.col || INK;
+  g.textAlign = o.align || 'left';
+  g.textBaseline = o.base || 'alphabetic';
+  g.fillText(txt, x, y);
+  g.restore();
+}
+
+/** Canvas has no wrapping, and these captions are real sentences. */
+function serifWrap(g, x, y, txt, maxW, o) {
+  o = o || {};
+  const size = o.size || 15, lh = size * K * 1.45;
+  g.save();
+  g.font = 'italic 300 ' + (size * K).toFixed(2) + 'px ' + SERIF;
+  const words = txt.split(' ');
+  const lines = []; let line = '';
+  for (const word of words) {
+    const test = line ? line + ' ' + word : word;
+    if (g.measureText(test).width > maxW && line) { lines.push(line); line = word; }
+    else line = test;
+  }
+  if (line) lines.push(line);
+  g.restore();
+  const top = y - (lines.length - 1) * lh;
+  lines.forEach((ln, i) => serif(g, x, top + i * lh, ln,
+    { size, align: o.align || 'center', col: o.col, italic: true }));
+  return lines.length;
+}
+
+const OUT_LAST = new WeakMap();
+function setOut(el, pairs) {
+  const html = pairs.map((p) => '<div><span>' + p[0] + '</span> <b>' + p[1] + '</b></div>').join('');
+  if (OUT_LAST.get(el) !== html) { el.innerHTML = html; OUT_LAST.set(el, html); }
+}
+
+const UNITS = [[1e-15, 'fm'], [1e-12, 'pm'], [1e-10, 'Å'], [1e-9, 'nm'],
+  [1e-6, 'µm'], [1e-3, 'mm'], [1e-2, 'cm'], [1, 'm'], [1e3, 'km'],
+  [1.496e11, 'AU'], [9.461e15, 'ly'], [9.461e24, 'billion ly']];
+function metres(m) {
+  if (!(m > 0)) return '0';
+  let best = UNITS[0];
+  for (const u of UNITS) if (m / u[0] >= 0.9995) best = u;
+  const v = m / best[0];
+  return (v >= 100 ? Math.round(v).toLocaleString('en-US')
+    : v >= 10 ? v.toFixed(1) : v.toFixed(2)) + ' ' + best[1];
+}
+/** Place a row of labels, dropping any that would collide with one already down. */
+function laneOut(g, items, minGap) {
+  const placed = [];
+  for (const it of items) {
+    const half = g.measureText(it.txt).width / 2 + (minGap || 8);
+    if (placed.some((p) => Math.abs(p.x - it.x) < p.half + half)) continue;
+    placed.push({ x: it.x, half });
+    it.draw();
+  }
+}
+const SUPD = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+const supStr = (n) => (n < 0 ? '⁻' : '') + String(Math.abs(n)).split('').map((c) => SUPD[+c]).join('');
+function sci(x, d) {
+  if (!(x > 0)) return '0';
+  const e = Math.floor(Math.log10(x));
+  return (x / Math.pow(10, e)).toFixed(d === undefined ? 1 : d) + '×10' + supStr(e);
+}
+const EL = ('H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn '
+  + 'Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd '
+  + 'Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U').split(' ');
+const symbol = (z) => EL[clamp(Math.round(z), 1, EL.length) - 1];
+
+/** A nucleus as packed nucleons: a sunflower disc, protons ember, neutrons bone. */
+function nucleusGlyph(g, cx, cy, z, a, scale, spin) {
+  const n = Math.max(1, Math.round(a));
+  const R = scale * Math.cbrt(n);
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  const dot = Math.max(1, R / Math.sqrt(n) * 0.82);
+  for (let i = 0; i < n; i++) {
+    const rr = R * Math.sqrt((i + 0.5) / n);
+    const th = i * golden + (spin || 0);
+    const x = cx + rr * Math.cos(th), y = cy + rr * Math.sin(th) * 0.96;
+    g.fillStyle = i % Math.max(2, Math.round(n / Math.max(1, z))) === 0 ? EMBER : '#b9c1bc';
+    g.globalAlpha = 0.55 + 0.45 * (1 - rr / (R + 1e-9));
+    g.beginPath(); g.arc(x, y, dot, 0, 6.2832); g.fill();
+  }
+  g.globalAlpha = 1;
+  return R;
+}
+
+/* ═══ 一 · the empty room ═══════════════════════════════════════════════════
+   One iron atom, magnified until the nucleus is on screen. Shell radii are
+   Slater's rules applied honestly — n*²a₀/Z_eff, group by group — so the four
+   shells sit where they actually sit, and the 4s pair really is more than
+   ninety times further out than the 1s pair.
+   ═════════════════════════════════════════════════════════════════════════ */
+(() => {
+  const cv = $('#cEmpty'); if (!cv) return;
+  const rng = $('#rEmpty'), out = $('#oEmpty'), btn = $('#bEmpty');
+  const A0 = 5.29177e-11, Z = 26, A = 56;
+  const R_ATOM = 1.56e-10;                       // iron, calculated radius
+  const R_NUC = 1.2e-15 * Math.cbrt(A);          // 4.59 fm
+  const VOL = Math.pow(R_ATOM / R_NUC, 3);       // 3.9×10¹³
+  const CARTOON = 0.10;                          // how big diagrams draw it
+
+  // 1s² · 2s²2p⁶ · 3s²3p⁶ · 3d⁶ · 4s²
+  const SHELLS = [
+    { id: '1s', nstar: 1, count: 2, sig: 0.30 },
+    { id: '2s2p', nstar: 2, count: 8, sig: 0.35 * 7 + 0.85 * 2 },
+    { id: '3s3p', nstar: 3, count: 8, sig: 0.35 * 7 + 0.85 * 8 + 2 },
+    { id: '3d', nstar: 3, count: 6, sig: 0.35 * 5 + 18 },
+    { id: '4s', nstar: 3.7, count: 2, sig: 0.35 + 0.85 * 14 + 10 },
+  ];
+  for (const s of SHELLS) { s.zeff = Z - s.sig; s.r = s.nstar * s.nstar * A0 / s.zeff; }
+  /* The inner shells hold most of the electrons inside a hundredth of the
+     radius. Drawn at equal weight they burn out into one white ball, which is
+     precisely the thing this panel exists to argue against - so each shell is
+     drawn at a weight that keeps its own extent readable. */
+  const rMax = SHELLS[SHELLS.length - 1].r;
+  for (const s of SHELLS) {
+    /* Samples, not electrons: the 1s pair lives inside a hundredth of the
+       radius, and drawing it at the same sample density as the 4s pair burns
+       the centre out into one white ball - which a reader takes for the
+       nucleus, undoing the whole panel. Positions stay exactly where Slater
+       puts them; only how densely each shell is sampled is a drawing choice. */
+    s.samples = Math.max(18, Math.round(s.count * 150 * Math.pow(s.r / rMax, 0.55)));
+    s.alpha = 0.14 + 0.44 * Math.pow(s.r / rMax, 0.40);
+  }
+
+  let seed = 20260913;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const gauss = () => Math.sqrt(-2 * Math.log(rnd() + 1e-9)) * Math.cos(6.28318 * rnd());
+  const PTS = [];
+  for (const s of SHELLS) {
+    for (let k = 0; k < s.samples; k++) {
+      const r = Math.max(s.r * 0.2, s.r * (1 + 0.28 * gauss()));
+      const u = rnd() * 2 - 1, ph = rnd() * 6.28318, sr = Math.sqrt(Math.max(0, 1 - u * u));
+      PTS.push({ x: r * sr * Math.cos(ph), y: r * sr * Math.sin(ph), z: u,
+        out: s.id === '4s' || s.id === '3d', a: s.alpha, ph: rnd() * 6.28318 });
+    }
+  }
+
+  const FOV0 = 3.1e-10, FOV1 = 1.15e-14;
+  let mag = 0, want = 0, cartoon = false;
+  const setCartoon = (v) => {
+    cartoon = v;
+    btn.setAttribute('aria-pressed', String(v));
+    btn.textContent = v ? 'draw it honestly' : 'draw it the usual way';
+    if (v) { want = 0; rng.value = '0'; }
+  };
+  rng.addEventListener('input', () => { want = +rng.value / 1000; if (cartoon) setCartoon(false); });
+  onDrag(cv, (p) => {
+    if (cartoon) setCartoon(false);
+    want = clamp(p.x, 0, 1); rng.value = String(Math.round(want * 1000));
+  });
+  btn.addEventListener('click', () => setCartoon(!cartoon));
+
+  function scalebar(g, w, h, S) {
+    let L = 1e-15;
+    while (L * S < w * 0.13) L *= (String(L / Math.pow(10, Math.floor(Math.log10(L)))).startsWith('1') ? 2
+      : String(L / Math.pow(10, Math.floor(Math.log10(L)))).startsWith('2') ? 2.5 : 2);
+    const px = L * S, x = w * 0.055, y = h - h * 0.10;
+    g.strokeStyle = 'rgba(255,255,255,.34)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + px, y);
+    g.moveTo(x, y - 4); g.lineTo(x, y + 4); g.moveTo(x + px, y - 4); g.lineTo(x + px, y + 4);
+    g.stroke();
+    tag(g, x, y + 16, metres(L), { size: 10, base: 'top' });
+  }
+
+  let last = 0;
+  const paint = (t) => {
+    const { g, w, h } = stage(cv);
+    const dt = last ? Math.min(0.1, t - last) : 0.016; last = t;
+    mag += (want - mag) * (REDUCED ? 1 : clamp(dt * 5.5, 0, 1));
+    const fov = FOV0 * Math.pow(FOV1 / FOV0, mag);
+    const cx = w * 0.5, cy = h * 0.5, S = (h * 0.42) / fov;
+
+    g.fillStyle = '#07090a'; g.fillRect(0, 0, w, h);
+    const vg = g.createRadialGradient(cx, cy, 0, cx, cy, h * 0.8);
+    vg.addColorStop(0, 'rgba(58,112,100,.17)');
+    vg.addColorStop(0.55, 'rgba(28,54,50,.07)');
+    vg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = vg; g.fillRect(0, 0, w, h);
+
+    if (cartoon) {
+      /* The picture everybody has seen. Rings, a fat nucleus, and a lie of
+         three and a half thousand in the radius. */
+      const RA = h * 0.40;
+      g.strokeStyle = 'rgba(207,214,203,.30)'; g.lineWidth = 1;
+      const rings = [0.30, 0.52, 0.76, 0.98];
+      rings.forEach((f, i) => {
+        g.beginPath(); g.arc(cx, cy, RA * f, 0, 6.2832); g.stroke();
+        const n = [2, 8, 14, 2][i];
+        for (let k = 0; k < n; k++) {
+          const th = t * (0.22 - i * 0.035) + (k / n) * 6.2832;
+          g.fillStyle = '#cfd6cb';
+          g.beginPath(); g.arc(cx + RA * f * Math.cos(th), cy + RA * f * Math.sin(th), 2.6, 0, 6.2832); g.fill();
+        }
+      });
+      const rn = RA * CARTOON;
+      const ng = g.createRadialGradient(cx - rn * 0.3, cy - rn * 0.3, 0, cx, cy, rn * 1.5);
+      ng.addColorStop(0, '#ffd9a0'); ng.addColorStop(0.5, EMBER); ng.addColorStop(1, 'rgba(227,154,69,0)');
+      g.fillStyle = ng; g.beginPath(); g.arc(cx, cy, rn * 1.5, 0, 6.2832); g.fill();
+      g.fillStyle = EMBER; g.beginPath(); g.arc(cx, cy, rn, 0, 6.2832); g.fill();
+
+      g.strokeStyle = 'rgba(184,65,46,.75)'; g.lineWidth = 1; g.setLineDash([3, 3]);
+      g.beginPath(); g.arc(cx, cy, rn, 0, 6.2832); g.stroke(); g.setLineDash([]);
+      tag(g, w * 0.5, h * 0.90, 'as every diagram draws it — the nucleus ' + Math.round(R_ATOM / R_NUC * CARTOON)
+        + '× too wide', { size: 11, align: 'center', col: '#c58a72' });
+      serif(g, w * 0.5, h * 0.115, 'the usual way', { size: 20, align: 'center', col: INK, italic: true });
+      setOut(out, [['drawn nucleus', (CARTOON * 100).toFixed(0) + '% of the atom'],
+        ['true nucleus', (R_NUC / R_ATOM * 100).toPrecision(2) + '‰ of a percent'],
+        ['exaggeration', '×' + Math.round(R_ATOM / R_NUC * CARTOON)]]);
+      return;
+    }
+
+    /* The atom's nominal edge, while it still fits. */
+    const ra = R_ATOM * S;
+    if (ra < w) {
+      g.strokeStyle = 'rgba(111,154,142,.34)'; g.lineWidth = 1; g.setLineDash([2, 5]);
+      g.beginPath(); g.arc(cx, cy, ra, 0, 6.2832); g.stroke(); g.setLineDash([]);
+      if (ra > 30 && ra < w * 0.62) {
+        tag(g, cx - ra * 0.72, cy - ra * 0.74, 'iron · 156 pm', { size: 10, align: 'right', col: JADE });
+      }
+    }
+
+    for (let i = 0; i < PTS.length; i++) {
+      const p = PTS[i];
+      const wob = 1 + 0.018 * Math.sin(t * 0.7 + p.ph);
+      const sx = cx + p.x * wob * S, sy = cy + p.y * wob * S;
+      if (sx < -2 || sx > w + 2 || sy < -2 || sy > h + 2) continue;
+      g.globalAlpha = p.a * (0.55 + 0.45 * (p.z * 0.5 + 0.5));
+      g.fillStyle = p.out ? '#9dc4b6' : '#d6dcd3';
+      g.fillRect(sx, sy, 1.4, 1.4);
+    }
+    g.globalAlpha = 1;
+
+    const rn = R_NUC * S;
+    if (rn > 1.6) {
+      const ng = g.createRadialGradient(cx, cy, 0, cx, cy, rn * 2.6);
+      ng.addColorStop(0, 'rgba(255,205,140,.55)'); ng.addColorStop(1, 'rgba(227,154,69,0)');
+      g.fillStyle = ng; g.beginPath(); g.arc(cx, cy, rn * 2.6, 0, 6.2832); g.fill();
+      if (rn > 10) nucleusGlyph(g, cx, cy, 26, 56, rn / Math.cbrt(56), t * 0.15);
+      else { g.fillStyle = EMBER; g.beginPath(); g.arc(cx, cy, rn, 0, 6.2832); g.fill(); }
+      if (rn > 26) tag(g, cx, cy + rn + 22, '⁵⁶Fe · 26 protons, 30 neutrons', { size: 10, align: 'center', col: '#c9a074' });
+    } else {
+      /* Below a pixel, and this is the whole lesson: mark it anyway. */
+      const puls = 0.5 + 0.5 * Math.sin(t * 2.1);
+      g.fillStyle = EMBER; g.fillRect(cx - 0.7, cy - 0.7, 1.4, 1.4);
+      g.strokeStyle = 'rgba(227,154,69,' + (0.30 + 0.35 * puls) + ')'; g.lineWidth = 1;
+      const gp = 7, ln = 11;
+      g.beginPath();
+      g.moveTo(cx - gp - ln, cy); g.lineTo(cx - gp, cy);
+      g.moveTo(cx + gp, cy); g.lineTo(cx + gp + ln, cy);
+      g.moveTo(cx, cy - gp - ln); g.lineTo(cx, cy - gp);
+      g.moveTo(cx, cy + gp); g.lineTo(cx, cy + gp + ln);
+      g.stroke();
+      g.beginPath();
+      g.moveTo(cx + gp + ln, cy); g.lineTo(cx + h * 0.20, cy - h * 0.13);
+      g.lineTo(cx + h * 0.26, cy - h * 0.13); g.stroke();
+      tag(g, cx + h * 0.27, cy - h * 0.13 + 4, 'the nucleus is in here', { size: 10, col: '#a8814f' });
+      tag(g, cx - h * 0.30, cy + h * 0.30, 'twenty-six electrons', { size: 10, align: 'right', col: '#7d9d92' });
+    }
+
+    scalebar(g, w, h, S);
+    tag(g, w * 0.055, h * 0.13, mag < 0.02 ? 'DRAG · OR USE THE SLIDER' : 'MAGNIFICATION ×' + sci(FOV0 / fov, 1),
+      { size: 10, col: mag < 0.02 ? '#5f6a65' : DIM });
+    setOut(out, [
+      ['frame', metres(w / S)],
+      ['nucleus', metres(2 * R_NUC)],
+      ['of the frame', (2 * R_NUC * S / w * 100) < 0.01 ? sci(2 * R_NUC / (w / S) * 100, 1) + '%'
+        : (2 * R_NUC * S / w * 100).toFixed(2) + '%'],
+      ['emptiness', '1 part in ' + sci(VOL, 1)],
+    ]);
+  };
+  register(cv.closest('.instrument'), paint);
+  paint(0);
+})();
+
+/* ═══ 二 · 道法自然 ═════════════════════════════════════════════════════════
+   Two circles. The light is whatever the overlap leaves, computed by
+   integrating a limb-darkened star in annuli — I(μ) = 1 − u(1−μ), u = 0.6 —
+   so the curve's shape is not drawn, it is the consequence.
+   ═════════════════════════════════════════════════════════════════════════ */
+(() => {
+  const cv = $('#cEcl'); if (!cv) return;
+  const out = $('#oEcl'), btn = $('#bEcl');
+  const U = 0.6, RM = 0.99;           // the moon really is this close in size
+  let px = -1.42, py = 0.10, running = false, runV = 0;
+  const geo = { cx: 0, cy: 0, R: 1, w: 1, h: 1 };
+
+  onDrag(cv, (p) => {
+    running = false;
+    px = clamp((p.x * geo.w - geo.cx) / geo.R, -2.3, 2.3);
+    py = clamp((p.y * geo.h - geo.cy) / geo.R, -1.9, 1.9);
+  });
+  btn.addEventListener('click', () => {
+    running = !running;
+    if (running) { px = -1.9; if (Math.abs(py) > 1.1) py = 0.10; }
+    btn.textContent = running ? 'stop it' : 'let it run';
+  });
+
+  let cache = { b: NaN };
+  function curve(b) {
+    if (Math.abs(cache.b - b) < 0.005) return cache;
+    const light = [], area = [];
+    for (let i = 0; i <= 150; i++) {
+      const x = -2.2 + (4.4 * i) / 150, s = Math.hypot(x, b);
+      light.push(eclipseLight(s, 1, RM, U));
+      area.push(1 - coveredFraction(s, 1, RM));
+    }
+    cache = { b, light, area };
+    return cache;
+  }
+
+  let stars = null;
+  const paint = (t) => {
+    const { g, w, h } = stage(cv);
+    if (!stars) {
+      stars = [];
+      let s = 991;
+      const r = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+      for (let i = 0; i < 70; i++) stars.push({ x: r(), y: r() * 0.56, m: 0.3 + 0.7 * r() * r() });
+    }
+    if (running && !REDUCED) { px += 0.0052 * (60 / 60); if (px > 1.95) px = -1.95; }
+
+    const skyH = h * 0.615;
+    const R = Math.min(skyH * 0.30, w * 0.15);
+    geo.cx = w * 0.365; geo.cy = skyH * 0.50; geo.R = R; geo.w = w; geo.h = h;
+    const sep = Math.hypot(px, py);
+    const lightF = eclipseLight(sep, 1, RM, U);
+    const areaF = 1 - coveredFraction(sep, 1, RM);
+    const totality = clamp((0.03 - lightF) / 0.03, 0, 1);
+
+    /* Sky. It darkens because the sun is covered, not the other way round. */
+    g.fillStyle = '#07090a'; g.fillRect(0, 0, w, h);
+    const day = Math.pow(lightF, 0.42);
+    const sg = g.createLinearGradient(0, 0, 0, skyH);
+    sg.addColorStop(0, 'rgba(24,44,58,' + (0.10 + 0.34 * day) + ')');
+    sg.addColorStop(0.82, 'rgba(96,116,120,' + (0.04 + 0.30 * day) + ')');
+    sg.addColorStop(1, 'rgba(96,116,120,0)');
+    g.fillStyle = sg; g.fillRect(0, 0, w, skyH);
+    for (const st of stars) {
+      const a = totality * st.m * (0.5 + 0.5 * Math.sin(t * 1.7 + st.x * 31));
+      if (a < 0.02) continue;
+      g.globalAlpha = a; g.fillStyle = '#dfe6ea';
+      g.fillRect(st.x * w, st.y * skyH, 1.3, 1.3);
+    }
+    g.globalAlpha = 1;
+
+    /* Corona, and the diamond on the last sliver. */
+    if (totality > 0.02) {
+      g.save(); g.globalAlpha = totality;
+      for (let i = 0; i < 64; i++) {
+        const th = (i / 64) * 6.28318 + 0.2 + (Math.sin(i * 12.9898) * 0.5) * 0.055;
+        const len = R * (0.28 + 1.15 * Math.pow(Math.abs(Math.sin(th * 3.3 + 1.1) * Math.sin(th * 1.7)), 2.1));
+        const cg = g.createLinearGradient(geo.cx + Math.cos(th) * R, geo.cy + Math.sin(th) * R,
+          geo.cx + Math.cos(th) * (R + len), geo.cy + Math.sin(th) * (R + len));
+        cg.addColorStop(0, 'rgba(226,236,238,.5)'); cg.addColorStop(1, 'rgba(190,214,220,0)');
+        g.strokeStyle = cg; g.lineWidth = 1.4;
+        g.beginPath();
+        g.moveTo(geo.cx + Math.cos(th) * R * 1.01, geo.cy + Math.sin(th) * R * 1.01);
+        g.lineTo(geo.cx + Math.cos(th) * (R + len), geo.cy + Math.sin(th) * (R + len));
+        g.stroke();
+      }
+      g.restore();
+    }
+
+    /* The star, painted from the limb-darkening law itself. */
+    const grad = g.createRadialGradient(geo.cx, geo.cy, 0, geo.cx, geo.cy, R);
+    for (let k = 0; k <= 10; k++) {
+      const x = k / 10, mu = Math.sqrt(Math.max(0, 1 - x * x));
+      const inten = 1 - U * (1 - mu);
+      grad.addColorStop(x, mixHex('#8a5220', '#fffaef', clamp((inten - 0.38) / 0.62, 0, 1)));
+    }
+    const glow = g.createRadialGradient(geo.cx, geo.cy, R * 0.9, geo.cx, geo.cy, R * 2.3);
+    glow.addColorStop(0, 'rgba(255,236,196,' + (0.20 * lightF) + ')');
+    glow.addColorStop(1, 'rgba(255,236,196,0)');
+    g.fillStyle = glow; g.beginPath(); g.arc(geo.cx, geo.cy, R * 2.3, 0, 6.2832); g.fill();
+    g.fillStyle = grad; g.beginPath(); g.arc(geo.cx, geo.cy, R, 0, 6.2832); g.fill();
+
+    /* The occulter: unlit, so it simply removes what is behind it. */
+    const mx = geo.cx + px * R, my = geo.cy + py * R, rm = R * RM;
+    g.fillStyle = '#050708'; g.beginPath(); g.arc(mx, my, rm, 0, 6.2832); g.fill();
+    g.save(); g.beginPath(); g.arc(mx, my, rm, 0, 6.2832); g.clip();
+    let cs = 4242;
+    const cr = () => { cs = (cs * 1103515245 + 12345) & 0x7fffffff; return cs / 0x7fffffff; };
+    for (let i = 0; i < 18; i++) {
+      g.fillStyle = 'rgba(255,255,255,.016)';
+      g.beginPath();
+      g.arc(mx + (cr() * 2 - 1) * rm * 0.8, my + (cr() * 2 - 1) * rm * 0.8, rm * (0.03 + 0.09 * cr()), 0, 6.2832);
+      g.fill();
+    }
+    g.restore();
+    g.strokeStyle = 'rgba(255,255,255,' + (0.06 + 0.16 * totality) + ')';
+    g.lineWidth = 1; g.beginPath(); g.arc(mx, my, rm, 0, 6.2832); g.stroke();
+
+    if (lightF > 0.004 && lightF < 0.075 && sep > 0.001) {
+      const ux = -px / sep, uy = -py / sep;
+      const dx = geo.cx + ux * R * 0.99, dy = geo.cy + uy * R * 0.99;
+      const dgl = g.createRadialGradient(dx, dy, 0, dx, dy, R * 0.55);
+      dgl.addColorStop(0, 'rgba(255,252,240,.95)'); dgl.addColorStop(0.25, 'rgba(255,236,196,.45)');
+      dgl.addColorStop(1, 'rgba(255,236,196,0)');
+      g.fillStyle = dgl; g.beginPath(); g.arc(dx, dy, R * 0.55, 0, 6.2832); g.fill();
+    }
+
+    /* The curve, traced from the same function that lit the sky. */
+    const gx = w * 0.56, gy = skyH + (h - skyH) * 0.30, gw = w * 0.385, gh = (h - skyH) * 0.52;
+    const cc = curve(py);
+    const X = (i) => gx + (i / 150) * gw;
+    const Y = (v) => gy + gh - v * gh;
+    g.strokeStyle = FAINT; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(gx, Y(0)); g.lineTo(gx + gw, Y(0)); g.stroke();
+    g.beginPath(); g.moveTo(gx, Y(1)); g.lineTo(gx + gw, Y(1)); g.stroke();
+    tag(g, gx - 6, Y(1) + 3, '100%', { size: 9, align: 'right' });
+    tag(g, gx - 6, Y(0) + 3, '0', { size: 9, align: 'right' });
+
+    g.strokeStyle = 'rgba(157,196,182,.55)'; g.lineWidth = 1; g.setLineDash([3, 3]);
+    g.beginPath();
+    for (let i = 0; i <= 150; i++) (i ? g.lineTo(X(i), Y(cc.area[i])) : g.moveTo(X(i), Y(cc.area[i])));
+    g.stroke(); g.setLineDash([]);
+
+    g.strokeStyle = EMBER; g.lineWidth = 1.7;
+    g.beginPath();
+    for (let i = 0; i <= 150; i++) (i ? g.lineTo(X(i), Y(cc.light[i])) : g.moveTo(X(i), Y(cc.light[i])));
+    g.stroke();
+
+    const mi = clamp((px + 2.2) / 4.4, 0, 1) * 150;
+    const mxp = gx + (mi / 150) * gw;
+    g.strokeStyle = 'rgba(255,255,255,.20)';
+    g.beginPath(); g.moveTo(mxp, Y(0)); g.lineTo(mxp, Y(1)); g.stroke();
+    g.fillStyle = EMBER; g.beginPath(); g.arc(mxp, Y(lightF), 3.2, 0, 6.2832); g.fill();
+    tag(g, gx, gy - 12, 'LIGHT LEFT', { size: 10, col: '#c9a074' });
+    tag(g, gx + gw, gy - 12, 'AREA UNCOVERED', { size: 10, col: '#7d9d92', align: 'right' });
+    tag(g, gx + gw, gy + gh + 15, 'separation →', { size: 9, align: 'right', base: 'top' });
+
+    serif(g, w * 0.055, skyH + (h - skyH) * 0.42,
+      lightF > 0.9995 ? 'nothing is happening'
+        : totality > 0.5 ? 'totality' : lightF < 0.30 ? 'the last minute costs everything'
+          : 'an hour, and you would not notice', { size: 19, italic: true, col: totality > 0.5 ? '#e6eef0' : INK });
+    tag(g, w * 0.055, skyH + (h - skyH) * 0.62, 'DRAG THE DARK DISC', { size: 10 });
+
+    setOut(out, [
+      ['separation', sep.toFixed(2) + ' R★'],
+      ['area covered', ((1 - areaF) * 100).toFixed(1) + '%'],
+      ['light left', (lightF * 100).toFixed(1) + '%'],
+      ['Δ magnitude', lightF > 0.9999 ? '0.00' : (-2.5 * Math.log10(Math.max(lightF, 1e-7))).toFixed(2)],
+    ]);
+  };
+  register(cv.closest('.instrument'), paint);
+  paint(0);
+})();
+
+/* ═══ 三 · 反者道之動 ═══════════════════════════════════════════════════════
+   The binding energy per nucleon along the floor of the valley of stability,
+   from the Bethe–Weizsäcker mass formula. Nothing about the turn is drawn in:
+   volume goes up with A, surface and Coulomb pull down, and where they cross
+   is where the sign of every reaction in the universe changes.
+   ═════════════════════════════════════════════════════════════════════════ */
+(() => {
+  const cv = $('#cBind'); if (!cv) return;
+  const rng = $('#rBind'), out = $('#oBind'), btn = $('#bBind');
+  const AMIN = 4, AMAX = 238;
+  const Btot = (a) => bindingTerms(Math.round(stableZ(a)), a).total;
+
+  let peak = 56, best = -1;
+  for (let a = 4; a <= 238; a++) { const v = curveAt(a); if (v > best) { best = v; peak = a; } }
+
+  let A = +rng.value, want = A;
+  rng.addEventListener('input', () => { want = +rng.value; });
+  btn.addEventListener('click', () => { want = peak; rng.value = String(peak); });
+  onDrag(cv, (p) => {
+    want = clamp(Math.round(AMIN + p.x * (AMAX - AMIN)), AMIN, AMAX);
+    rng.value = String(want);
+  });
+
+  let last = 0;
+  const paint = (t) => {
+    const { g, w, h } = stage(cv);
+    const dt = last ? Math.min(0.1, t - last) : 0.016; last = t;
+    A += (want - A) * (REDUCED ? 1 : clamp(dt * 7, 0, 1));
+    if (Math.abs(want - A) < 0.35) A = want;
+    g.fillStyle = '#07090a'; g.fillRect(0, 0, w, h);
+
+    const L = w * 0.085, Rr = w * 0.955, T = h * 0.16, B = h * 0.80;
+    const YMAX = 9.4;
+    const X = (a) => L + ((a - 1) / (AMAX - 1)) * (Rr - L);
+    const Y = (v) => B - (v / YMAX) * (B - T);
+
+    /* grid */
+    g.strokeStyle = 'rgba(255,255,255,.055)'; g.lineWidth = 1;
+    for (let v = 2; v <= 9; v += 2) {
+      g.beginPath(); g.moveTo(L, Y(v)); g.lineTo(Rr, Y(v)); g.stroke();
+      tag(g, L - 8, Y(v) + 3, String(v), { size: 9, align: 'right' });
+    }
+    for (let a = 50; a <= AMAX; a += 50) {
+      g.beginPath(); g.moveTo(X(a), B); g.lineTo(X(a), B + 5); g.stroke();
+      tag(g, X(a), B + 16, String(a), { size: 9, align: 'center', base: 'top' });
+    }
+    tag(g, L, T - 9, 'MeV PER NUCLEON', { size: 9 });
+    tag(g, Rr, B + 32, 'nucleons in the nucleus →', { size: 9, align: 'right', base: 'top' });
+
+    /* the curve, and the ground under it */
+    const pts = [];
+    for (let a = 2; a <= AMAX; a++) pts.push([X(a), Y(Math.max(0, curveAt(a)))]);
+    g.beginPath(); g.moveTo(pts[0][0], B);
+    for (const p of pts) g.lineTo(p[0], p[1]);
+    g.lineTo(pts[pts.length - 1][0], B); g.closePath();
+    const fg = g.createLinearGradient(0, T, 0, B);
+    fg.addColorStop(0, 'rgba(227,154,69,.20)'); fg.addColorStop(1, 'rgba(227,154,69,.02)');
+    g.fillStyle = fg; g.fill();
+    g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
+    for (const p of pts) g.lineTo(p[0], p[1]);
+    g.strokeStyle = EMBER; g.lineWidth = 1.8; g.stroke();
+
+    /* the peak */
+    g.strokeStyle = 'rgba(255,255,255,.24)'; g.setLineDash([2, 4]); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(X(peak), T - 4); g.lineTo(X(peak), B); g.stroke(); g.setLineDash([]);
+    tag(g, X(peak), T - 12, 'A = ' + peak + ' · IRON', { size: 10, align: 'center', col: '#cfd6cb' });
+
+    /* where you are */
+    const a = A, z = Math.round(stableZ(a)), per = curveAt(a);
+    const mx = X(a), my = Y(Math.max(0, per));
+    g.strokeStyle = 'rgba(255,255,255,.18)';
+    g.beginPath(); g.moveTo(mx, my); g.lineTo(mx, B); g.stroke();
+    g.fillStyle = '#fff6e6'; g.beginPath(); g.arc(mx, my, 4, 0, 6.2832); g.fill();
+    g.strokeStyle = 'rgba(255,246,230,.45)'; g.lineWidth = 1;
+    g.beginPath(); g.arc(mx, my, 8 + 3 * Math.sin(t * 2), 0, 6.2832); g.stroke();
+
+    /* the glyph, and which way is downhill from here */
+    /* The wedge under the curve is the one part of the plot that is always
+       empty, so the nucleus itself lives there. */
+    const gx = w * 0.60, gy = h * 0.545;
+    const gr = nucleusGlyph(g, gx, gy, z, Math.round(a), 7.4 * K, t * 0.12);
+    g.font = '300 ' + (24 * K).toFixed(1) + 'px ' + SERIF; g.fillStyle = INK; g.textAlign = 'center';
+    g.fillText(symbol(z), gx, gy + gr + 30 * K);
+    tag(g, gx, gy + gr + 46 * K, Math.round(a) + ' nucleons · ' + z + 'p ' + (Math.round(a) - z) + 'n',
+      { size: 10, align: 'center' });
+
+    const joinQ = Btot(2 * a) - 2 * Btot(a);
+    const splitQ = 2 * Btot(a / 2) - Btot(a);
+    const arrow = (x0, y0, dir, txt, live) => {
+      g.strokeStyle = live ? JADE : 'rgba(255,255,255,.16)';
+      g.fillStyle = live ? JADE : 'rgba(255,255,255,.16)';
+      g.lineWidth = 1.4;
+      const len = 30 * K;
+      g.beginPath(); g.moveTo(x0, y0); g.lineTo(x0 + dir * len, y0); g.stroke();
+      g.beginPath();
+      g.moveTo(x0 + dir * (len + 7), y0);
+      g.lineTo(x0 + dir * len, y0 - 4); g.lineTo(x0 + dir * len, y0 + 4); g.closePath(); g.fill();
+      tag(g, x0 + dir * (len + 12), y0 + 3.5, txt,
+        { size: 10, align: dir > 0 ? 'left' : 'right', col: live ? '#8fb9ad' : '#4d5652' });
+    };
+    const near = Math.abs(a - peak) < 14;
+    const ay = clamp(my + 34, T + 30, B - 12);
+    arrow(clamp(mx, L + 64, Rr - 64) - 13, ay, -1, 'split', splitQ > 0);
+    arrow(clamp(mx, L + 64, Rr - 64) + 13, ay, 1, 'join', joinQ > 0);
+
+    /* The verdict sits under the axis, where nothing else ever goes - the top
+       left of the plot belongs to the y-axis caption and the iron mark. */
+    serif(g, L, h * 0.955,
+      near ? 'at the top, neither pays' : joinQ > 0 ? 'joining pays — this is a star'
+        : 'splitting pays — this is a reactor',
+      { size: 20, italic: true, col: near ? '#e6d8b8' : INK });
+
+    setOut(out, [
+      ['nucleus', Math.round(a) + ' ' + symbol(z)],
+      ['B / A', per.toFixed(2) + ' MeV'],
+      ['join two of these', (joinQ > 0 ? '+' : '') + joinQ.toFixed(0) + ' MeV'],
+      ['split it in two', (splitQ > 0 ? '+' : '') + splitQ.toFixed(0) + ' MeV'],
+    ]);
+  };
+  register(cv.closest('.instrument'), paint);
+  paint(0);
+})();
+
+/* ═══ 四 · 三生萬物 ════════════════════════════════════════════════════════
+   The actual chain, with the actual Q values. Every atom heavier than lithium
+   in your body came through these seven steps, in this order.
+   ═════════════════════════════════════════════════════════════════════════ */
+(() => {
+  const cv = $('#cGen'); if (!cv) return;
+  const out = $('#oGen'), btn = $('#bGen');
+  const S = [
+    { han: '一', name: 'hydrogen', eq: 'p + p → ²H + e⁺ + ν', q: 0.42, T: '15 million K',
+      where: 'the core of any ordinary star', in: [{ z: 1, a: 1 }, { z: 1, a: 1 }], out: { z: 1, a: 2 },
+      note: 'a proton has to become a neutron first, which is why the sun is slow, and why it lasts' },
+    { han: '二', name: 'helium', eq: '³He + ³He → ⁴He + 2p', q: 12.86, T: '15 million K',
+      where: 'the same core, moments later', in: [{ z: 2, a: 3 }, { z: 2, a: 3 }], out: { z: 2, a: 4 },
+      note: 'the step that has kept the sky lit for 13.8 billion years' },
+    { han: '三', name: 'carbon', eq: '3 ⁴He → ¹²C', q: 7.27, T: '100 million K',
+      where: 'the core of a red giant', in: [{ z: 2, a: 4 }, { z: 2, a: 4 }, { z: 2, a: 4 }], out: { z: 6, a: 12 },
+      note: 'by way of ⁸Be, which exists for 10⁻¹⁶ seconds — the universe is threaded through that gap' },
+    { han: '四', name: 'oxygen', eq: '¹²C + ⁴He → ¹⁶O', q: 7.16, T: '200 million K',
+      where: 'the helium-burning shell', in: [{ z: 6, a: 12 }, { z: 2, a: 4 }], out: { z: 8, a: 16 },
+      note: 'every breath you take is the output of this reaction' },
+    { han: '五', name: 'silicon', eq: '¹⁶O + ¹⁶O → ²⁸Si + ⁴He', q: 9.59, T: '2 billion K',
+      where: 'the oxygen shell of a dying massive star', in: [{ z: 8, a: 16 }, { z: 8, a: 16 }], out: { z: 14, a: 28 },
+      note: 'sand, glass, and the rock you are standing on' },
+    { han: '六', name: 'iron', eq: '²⁸Si + ²⁸Si → ⁵⁶Ni → ⁵⁶Fe', q: 10.9, T: '3.5 billion K',
+      where: 'the last shell, for about one day', in: [{ z: 14, a: 28 }, { z: 14, a: 28 }], out: { z: 26, a: 56 },
+      note: 'the final step that gives anything back. After this the curve turns' },
+    { han: '七', name: 'the ten thousand things', eq: 'core collapse → supernova', q: null, T: '100 billion K',
+      where: 'one second, and then everywhere', in: [], out: null,
+      note: 'no fuel left, no way to hold itself up. It falls in, rebounds, and the shelf of elements is thrown out' },
+  ];
+  const D = REDUCED ? 2.2 : 4.4;
+  let k = 0, ph = 0, running = !REDUCED, last = 0;
+  btn.addEventListener('click', () => { k = 0; ph = 0; running = true; });
+  const hit = [];
+  cv.addEventListener('pointerdown', (e) => {
+    const r = cv.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width * (cv.clientWidth || 960);
+    const y = (e.clientY - r.top) / r.height * ((cv.clientWidth || 960) * 9 / 16);
+    for (let i = 0; i < hit.length; i++) {
+      if (Math.hypot(x - hit[i].x, y - hit[i].y) < hit[i].r) { k = i; ph = 0; running = false; return; }
+    }
+    running = !running;
+  });
+
+  let burst = null;
+  const paint = (t) => {
+    const { g, w, h } = stage(cv);
+    const dt = Math.min(0.05, last ? t - last : 0.016); last = t;
+    if (running) { ph += dt / D; if (ph >= 1) { ph = 0; k = (k + 1) % S.length; burst = null; } }
+    const s = S[k];
+    g.fillStyle = '#07090a'; g.fillRect(0, 0, w, h);
+    const vg = g.createRadialGradient(w * 0.5, h * 0.62, 0, w * 0.5, h * 0.62, w * 0.55);
+    vg.addColorStop(0, 'rgba(90,60,26,.20)'); vg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = vg; g.fillRect(0, 0, w, h);
+
+    /* The chain across the top: seven stations, click any of them. */
+    hit.length = 0;
+    const y0 = h * 0.155, x0 = w * 0.085, x1 = w * 0.955;
+    g.strokeStyle = 'rgba(255,255,255,.13)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y0); g.stroke();
+    for (let i = 0; i < S.length; i++) {
+      const x = x0 + (i / (S.length - 1)) * (x1 - x0);
+      const on = i === k, done = i < k;
+      const rr = (S[i].out ? 3.2 + Math.cbrt(S[i].out.a) * 1.8 : 9) * K;
+      hit.push({ x, y: y0, r: Math.max(16, rr + 8) });
+      g.fillStyle = on ? EMBER : done ? 'rgba(227,154,69,.42)' : 'rgba(255,255,255,.17)';
+      g.beginPath(); g.arc(x, y0, on ? rr : rr * 0.72, 0, 6.2832); g.fill();
+      if (on) {
+        g.strokeStyle = 'rgba(227,154,69,.5)'; g.lineWidth = 1;
+        g.beginPath(); g.arc(x, y0, rr + 6 + 2 * Math.sin(t * 2.4), 0, 6.2832); g.stroke();
+      }
+      g.font = '400 13px "Noto Serif SC", serif';
+      g.fillStyle = on ? INK : '#5a625e'; g.textAlign = 'center';
+      g.fillText(S[i].han, x, y0 - rr - 12);
+      tag(g, x, y0 + rr + 16, S[i].out ? symbol(S[i].out.z) : '★',
+        { size: 10, align: 'center', base: 'top', col: on ? '#c9a074' : '#4f5854' });
+    }
+
+    /* The reaction itself. */
+    const cx = w * 0.5, cy = h * 0.60, GS = 26 * K;
+    const merge = clamp((ph - 0.06) / 0.42, 0, 1);
+    if (s.out) {
+      const nIn = s.in.length;
+      if (ph < 0.50) {
+        for (let i = 0; i < nIn; i++) {
+          const th = nIn === 1 ? 0 : (i / (nIn - 1) - 0.5) * (nIn === 3 ? 2.2 : 2.0);
+          /* They close until they touch, not until they occupy the same
+             point - two nuclei on top of each other reads as a glitch. */
+          const spread = w * 0.17 * (1 - ease(merge)) + GS * 1.15 * Math.cbrt(s.in[i].a);
+          const px2 = cx + Math.cos(th * 1.2 + (nIn === 3 ? 1.57 : 0)) * spread * (nIn === 3 ? 1 : 1);
+          const py2 = cy + Math.sin(th * 1.2 + (nIn === 3 ? 1.57 : 0)) * spread * 0.55;
+          const xx = nIn === 2 ? cx + (i === 0 ? -1 : 1) * spread : px2;
+          const yy = nIn === 2 ? cy : py2;
+          const rr = nucleusGlyph(g, xx, yy, s.in[i].z, s.in[i].a, GS, t * 0.4 + i);
+          tag(g, xx, yy + rr + 20 * K, (s.in[i].a > 1 ? s.in[i].a + ' ' : '') + symbol(s.in[i].z),
+            { size: 10, align: 'center', col: '#8a938e' });
+        }
+      } else {
+        const pop = 1 + 0.14 * Math.exp(-(ph - 0.50) * 26);
+        const pr = nucleusGlyph(g, cx, cy, s.out.z, s.out.a, GS * pop, t * 0.2);
+        g.font = '300 ' + (24 * K).toFixed(1) + 'px ' + SERIF;
+        g.fillStyle = INK; g.textAlign = 'center';
+        g.fillText(s.out.a + ' ' + symbol(s.out.z), cx, cy + pr + 34 * K);
+        tag(g, cx, cy + pr + 50 * K, s.name.toUpperCase(), { size: 10, align: 'center', col: '#c9a074' });
+        const fl = clamp((ph - 0.50) / 0.30, 0, 1);
+        if (fl < 1) {
+          g.strokeStyle = 'rgba(255,226,178,' + (0.55 * (1 - fl)) + ')'; g.lineWidth = 2 - fl;
+          g.beginPath(); g.arc(cx, cy, 20 + fl * w * 0.20, 0, 6.2832); g.stroke();
+        }
+      }
+    } else {
+      /* Collapse. One second, and the shelf of elements goes out. */
+      if (!burst) {
+        burst = [];
+        let bs = 77;
+        const br = () => { bs = (bs * 1103515245 + 12345) & 0x7fffffff; return bs / 0x7fffffff; };
+        for (let i = 0; i < 260; i++) {
+          const th = br() * 6.28318, sp = 0.25 + br() * 1.0;
+          burst.push({ th, sp, z: br() < 0.45, ph: br() });
+        }
+      }
+      const fall = clamp(ph / 0.26, 0, 1);
+      const out2 = clamp((ph - 0.26) / 0.74, 0, 1);
+      if (ph < 0.30) nucleusGlyph(g, cx, cy, 26, 56, GS * (1 - 0.55 * ease(fall)), t * (0.2 + fall * 8));
+      if (out2 > 0) {
+        const e2 = Math.pow(out2, 0.62);
+        for (const p of burst) {
+          const d = e2 * p.sp * w * 0.52;
+          g.globalAlpha = clamp(1.15 - out2 * 1.15, 0, 1) * (0.4 + 0.6 * p.ph);
+          g.fillStyle = p.z ? EMBER : '#cfd6cb';
+          g.fillRect(cx + Math.cos(p.th) * d, cy + Math.sin(p.th) * d * 0.62, 1.8, 1.8);
+        }
+        g.globalAlpha = 1;
+        g.strokeStyle = 'rgba(255,238,206,' + (0.5 * (1 - out2)) + ')'; g.lineWidth = 2;
+        g.beginPath(); g.arc(cx, cy, e2 * w * 0.5, 0, 6.2832); g.stroke();
+      }
+    }
+
+    serif(g, w * 0.5, h * 0.305, s.eq, { size: 23, align: 'center', col: INK });
+    tag(g, w * 0.5, h * 0.365, s.where.toUpperCase() + '  ·  ' + s.T.toUpperCase(),
+      { size: 10, align: 'center', col: '#7b847f' });
+    serifWrap(g, w * 0.5, h * 0.885, s.note, w * 0.82, { size: 15, col: '#98a09b' });
+    tag(g, w * 0.085, h * 0.96, running ? 'RUNNING · CLICK TO HOLD' : 'HELD · CLICK TO RUN', { size: 10 });
+    tag(g, w * 0.955, h * 0.96, 'CLICK A STEP', { size: 10, align: 'right' });
+
+    setOut(out, [
+      ['step', s.han + ' · ' + s.name],
+      ['where', s.where],
+      ['temperature', s.T],
+      ['energy', s.q === null ? '10⁴⁶ J, in neutrinos' : '+' + s.q.toFixed(2) + ' MeV'],
+    ]);
+  };
+  register(cv.closest('.instrument'), paint);
+  paint(0);
+})();
+
+/* ═══ 五 · 視之不見 ════════════════════════════════════════════════════════
+   Green light is 550 nm. The best lens ever built resolves about λ/2NA ≈ 200
+   nm and not one nanometre better, because the ruler you are measuring with
+   is that long. Both panes are at the same magnification throughout: that is
+   the point — magnifying a blur gives a bigger blur.
+   ═════════════════════════════════════════════════════════════════════════ */
+(() => {
+  const cv = $('#cSee'); if (!cv) return;
+  const rng = $('#rSee'), out = $('#oSee'), btn = $('#bSee');
+  const LAM = 5.5e-7, NA = 1.4, LIMIT = LAM / (2 * NA);     // 196 nm
+  const DMAX = 1e-3, DMIN = 1e-11;
+  const toD = (v) => DMAX * Math.pow(DMIN / DMAX, v / 1000);
+  const toV = (d) => 1000 * Math.log(d / DMAX) / Math.log(DMIN / DMAX);
+  const MARKS = [
+    [1e-3, 'a poppy seed'], [7e-5, 'a hair'], [8e-6, 'a red cell'], [2e-6, 'E. coli'],
+    [LAM, 'green light'], [LIMIT, 'the limit'], [1e-7, 'influenza'],
+    [2.5e-9, 'DNA, across'], [4.9e-10, 'a quartz cell'], [1.56e-10, 'an iron atom'],
+  ];
+  let d = toD(+rng.value), want = d, last = 0;
+  rng.addEventListener('input', () => { want = toD(+rng.value); });
+  btn.addEventListener('click', () => { want = LIMIT; rng.value = String(Math.round(toV(LIMIT))); });
+
+  const ob1 = document.createElement('canvas'), ob2 = document.createElement('canvas');
+  const specimen = (g, w, h, sep) => {
+    g.fillStyle = '#07090a'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#d9dfd6';
+    /* a grating: bars one separation wide, one separation apart */
+    const gy = h * 0.12, gh = h * 0.34;
+    for (let i = -2; i <= 2; i++) g.fillRect(w * 0.5 + i * sep * 2 - sep / 2, gy, sep, gh);
+    /* two points, the classic pair */
+    const py = h * 0.72;
+    g.fillStyle = '#f0f3ee';
+    for (const s of [-0.5, 0.5]) {
+      g.beginPath(); g.arc(w * 0.30 + s * sep, py, sep * 0.34, 0, 6.2832); g.fill();
+    }
+    /* and a ring of them, because real things are not test patterns */
+    g.fillStyle = EMBER;
+    for (let i = 0; i < 9; i++) {
+      const th = (i / 9) * 6.28318;
+      g.beginPath();
+      g.arc(w * 0.72 + Math.cos(th) * sep * 1.5, py + Math.sin(th) * sep * 1.5, sep * 0.30, 0, 6.2832);
+      g.fill();
+    }
+  };
+
+  const paint = (t) => {
+    const { g, w, h } = stage(cv);
+    const dt = last ? Math.min(0.1, t - last) : 0.016; last = t;
+    const lw = Math.log(want), ld = Math.log(d);
+    d = Math.exp(ld + (lw - ld) * (REDUCED ? 1 : clamp(dt * 6, 0, 1)));
+    g.fillStyle = '#07090a'; g.fillRect(0, 0, w, h);
+
+    const pad = w * 0.055, gap = w * 0.028;
+    const pw = (w - pad * 2 - gap) / 2, phh = h * 0.615, py = h * 0.115;
+    const sep = Math.max(3, pw * 0.098);
+    const blur = clamp(0.42 * sep * (LIMIT / d), 0, 90);
+
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    for (const c of [ob1, ob2]) {
+      if (c.width !== Math.round(pw * dpr)) { c.width = Math.round(pw * dpr); c.height = Math.round(phh * dpr); }
+    }
+    const g1 = ob1.getContext('2d');
+    g1.setTransform(dpr, 0, 0, dpr, 0, 0);
+    specimen(g1, pw, phh, sep);
+    const g2 = ob2.getContext('2d');
+    g2.setTransform(1, 0, 0, 1, 0, 0);
+    g2.globalCompositeOperation = 'copy';
+    g2.filter = blur > 0.05 ? 'blur(' + (blur * dpr).toFixed(2) + 'px)' : 'none';
+    g2.drawImage(ob1, 0, 0);
+    g2.filter = 'none'; g2.globalCompositeOperation = 'source-over';
+
+    g.drawImage(ob1, pad, py, pw, phh);
+    g.drawImage(ob2, pad + pw + gap, py, pw, phh);
+    g.strokeStyle = FAINT; g.lineWidth = 1;
+    g.strokeRect(pad + 0.5, py + 0.5, pw - 1, phh - 1);
+    g.strokeRect(pad + pw + gap + 0.5, py + 0.5, pw - 1, phh - 1);
+    tag(g, pad, py - 10, 'WHAT IS THERE', { size: 10, col: '#8d968f' });
+    tag(g, pad + pw + gap, py - 10, 'WHAT LIGHT CAN SHOW', { size: 10, col: '#c9a074' });
+
+    const ratio = d / LIMIT;
+    if (ratio < 0.75) {
+      serif(g, pad + pw + gap + pw / 2, py + phh * 0.55, '視之不見',
+        { size: 30, align: 'center', col: 'rgba(232,234,230,' + clamp((0.75 - ratio) * 1.6, 0, 0.8) + ')' });
+    }
+
+    /* the ruler */
+    const ry = h * 0.855, rx0 = pad, rx1 = w - pad;
+    const RX = (m) => rx0 + (Math.log(m / DMAX) / Math.log(DMIN / DMAX)) * (rx1 - rx0);
+    g.fillStyle = 'rgba(184,65,46,.07)';
+    g.fillRect(RX(LIMIT), ry - 10, rx1 - RX(LIMIT), 20);
+    g.strokeStyle = 'rgba(255,255,255,.16)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(rx0, ry); g.lineTo(rx1, ry); g.stroke();
+    for (let e = -3; e >= -11; e--) {
+      const x = RX(Math.pow(10, e));
+      g.beginPath(); g.moveTo(x, ry - 5); g.lineTo(x, ry + 5); g.stroke();
+    }
+    g.save(); g.font = (9 * K).toFixed(2) + 'px ' + MONO;
+    const lower = [];
+    for (const m of MARKS) {
+      const x = RX(m[0]), key = m[1] === 'the limit' || m[1] === 'green light';
+      g.fillStyle = key ? 'rgba(227,154,69,.85)' : 'rgba(255,255,255,.30)';
+      g.fillRect(x - 0.5, ry - 9, 1, 18);
+      if (key) {
+        /* 550 nm and 196 nm are half a decade apart: they would collide side
+           by side, so they stack instead. Both have to stay. */
+        const up = m[1] === 'the limit' ? -30 : -16;
+        g.strokeStyle = 'rgba(227,154,69,.35)'; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(x, ry - 9); g.lineTo(x, ry + up + 3); g.stroke();
+        tag(g, x, ry + up, m[1], { size: 9, align: 'center', col: '#c9a074', track: 0.05 });
+      } else {
+        lower.push({ x, txt: m[1], draw: () => tag(g, x, ry + 21, m[1],
+          { size: 9, align: 'center', base: 'top', col: '#6e7772', track: 0.05 }) });
+      }
+    }
+    laneOut(g, lower, 10);
+    g.restore();
+    const mx = RX(d);
+    g.fillStyle = '#fff6e6';
+    g.beginPath(); g.moveTo(mx, ry - 13); g.lineTo(mx - 5, ry - 22); g.lineTo(mx + 5, ry - 22); g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(255,246,230,.5)';
+    g.beginPath(); g.moveTo(mx, ry - 13); g.lineTo(mx, ry + 13); g.stroke();
+
+    const verdict = ratio > 2 ? 'resolved' : ratio > 1 ? 'at the limit'
+      : ratio > 0.5 ? 'almost gone' : 'not resolvable, at any magnification';
+    serif(g, w * 0.5, h * 0.985, verdict,
+      { size: 16, align: 'center', base: 'bottom', italic: true, col: ratio > 1 ? INK : '#c58a72' });
+
+    setOut(out, [
+      ['separation', metres(d)],
+      ['in green waves', d / LAM >= 1 ? (d / LAM).toFixed(1) + ' λ' : '1/' + (LAM / d).toFixed(1) + ' λ'],
+      ['blur', (blur / sep).toFixed(2) + ' × the feature'],
+      ['verdict', verdict],
+    ]);
+  };
+  register(cv.closest('.instrument'), paint);
+  paint(0);
+})();
+
+/* ═══ context-dependent animations for the words that carry the concepts ═══
+   A term in the prose is not a definition to look up; it is a thing to watch
+   happen. Each one gets its own small loop, and the loop is the explanation.
+   ═════════════════════════════════════════════════════════════════════════ */
+(() => {
+  const pop = $('#pop'); if (!pop) return;
+  const pcv = $('#popCanvas'), ptx = $('#popTxt');
+  const PW = 268, PH = 130;
+
+  const TERMS = {
+    subpixel: {
+      txt: 'To draw the nucleus one pixel wide, the atom has to be <b>33,978 pixels</b> across — '
+        + 'about <b>nine metres</b> of screen. Every diagram you have seen cheats by a factor of three thousand.',
+      draw(g, t) {
+        const loop = (t % 7) / 7;
+        g.fillStyle = '#07090a'; g.fillRect(0, 0, PW, PH);
+        g.strokeStyle = 'rgba(255,255,255,.07)'; g.lineWidth = 1;
+        for (let x = 0; x <= PW; x += 13) { g.beginPath(); g.moveTo(x + 0.5, 0); g.lineTo(x + 0.5, PH); g.stroke(); }
+        for (let y = 0; y <= PH; y += 13) { g.beginPath(); g.moveTo(0, y + 0.5); g.lineTo(PW, y + 0.5); g.stroke(); }
+        const cx = PW * 0.5, cy = PH * 0.52;
+        const px = Math.pow(33978, Math.min(1, loop / 0.86));
+        g.strokeStyle = 'rgba(111,154,142,.8)'; g.lineWidth = 1.4;
+        g.beginPath(); g.arc(cx, cy, Math.min(px, PW * 2.2), 0, 6.2832); g.stroke();
+        g.fillStyle = 'rgba(111,154,142,.10)';
+        g.beginPath(); g.arc(cx, cy, Math.min(px, PW * 2.2), 0, 6.2832); g.fill();
+        g.fillStyle = EMBER; g.fillRect(cx - 0.5, cy - 0.5, 1, 1);
+        g.strokeStyle = 'rgba(227,154,69,.5)';
+        g.beginPath(); g.arc(cx, cy, 5 + 2 * Math.sin(t * 3), 0, 6.2832); g.stroke();
+        tag(g, 10, 18, 'ATOM ' + (px < 1000 ? px.toFixed(0) : sci(px, 1)) + ' PX', { size: 9, col: '#8fb9ad' });
+        tag(g, PW - 10, 18, 'NUCLEUS 1 PX', { size: 9, align: 'right', col: '#c9a074' });
+      },
+    },
+    limb: {
+      txt: 'A star is a ball of gas, so at the rim you see only its cooler outer layer: '
+        + '<b>I = 1 − u(1 − μ)</b>, u ≈ 0.6. The edge gives back <b>40%</b> of what the centre does.',
+      draw(g, t) {
+        g.fillStyle = '#07090a'; g.fillRect(0, 0, PW, PH);
+        const cx = PW * 0.30, cy = PH * 0.48, R = PH * 0.34;
+        const grad = g.createRadialGradient(cx, cy, 0, cx, cy, R);
+        for (let k = 0; k <= 10; k++) {
+          const x = k / 10, mu = Math.sqrt(Math.max(0, 1 - x * x));
+          grad.addColorStop(x, mixHex('#8a5220', '#fffaef', clamp(((1 - 0.6 * (1 - mu)) - 0.38) / 0.62, 0, 1)));
+        }
+        g.fillStyle = grad; g.beginPath(); g.arc(cx, cy, R, 0, 6.2832); g.fill();
+        const s = (Math.sin(t * 0.9) * 0.92);
+        g.strokeStyle = 'rgba(255,255,255,.5)'; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(cx + s * R, cy - R - 4); g.lineTo(cx + s * R, cy + R + 4); g.stroke();
+        const gx = PW * 0.58, gw = PW * 0.34, gy = PH * 0.78, gh = PH * 0.50;
+        g.strokeStyle = EMBER; g.lineWidth = 1.5; g.beginPath();
+        for (let i = 0; i <= 60; i++) {
+          const x = -1 + (2 * i) / 60, mu = Math.sqrt(Math.max(0, 1 - x * x));
+          const v = 1 - 0.6 * (1 - mu);
+          const X = gx + ((x + 1) / 2) * gw, Y = gy - v * gh;
+          (i ? g.lineTo(X, Y) : g.moveTo(X, Y));
+        }
+        g.stroke();
+        g.strokeStyle = 'rgba(255,255,255,.14)';
+        g.beginPath(); g.moveTo(gx, gy); g.lineTo(gx + gw, gy); g.stroke();
+        const mu2 = Math.sqrt(Math.max(0, 1 - s * s)), v2 = 1 - 0.6 * (1 - mu2);
+        g.fillStyle = '#fff6e6';
+        g.beginPath(); g.arc(gx + ((s + 1) / 2) * gw, gy - v2 * gh, 2.6, 0, 6.2832); g.fill();
+        tag(g, gx, PH - 6, 'CENTRE → RIM', { size: 9 });
+        tag(g, 10, 16, (v2 * 100).toFixed(0) + '% BRIGHTNESS', { size: 9, col: '#c9a074' });
+      },
+    },
+    return: {
+      txt: 'The binding curve is a bowl. Light nuclei roll down it by fusing, heavy ones by splitting — '
+        + 'opposite motions, <b>one destination</b>. 反者道之動.',
+      draw(g, t) {
+        g.fillStyle = '#07090a'; g.fillRect(0, 0, PW, PH);
+        const L = 14, R = PW - 14, T = 22, B = PH - 20;
+        const X = (a) => L + (a / 240) * (R - L);
+        const Y = (a) => T + (1 - clamp(curveAt(Math.max(2, a)) / 9.0, 0, 1)) * (B - T);
+        g.strokeStyle = 'rgba(255,255,255,.30)'; g.lineWidth = 1.4;
+        g.beginPath();
+        for (let a = 4; a <= 240; a += 2) (a > 4 ? g.lineTo(X(a), Y(a)) : g.moveTo(X(a), Y(a)));
+        g.stroke();
+        const loop = (t % 8) / 8;
+        const from = loop < 0.5 ? 10 : 238, to = 58;
+        const u = ease(clamp((loop % 0.5) / 0.42, 0, 1));
+        const a = lerp(from, to, u);
+        g.fillStyle = EMBER; g.beginPath(); g.arc(X(a), Y(a) - 3.2, 3.2, 0, 6.2832); g.fill();
+        g.strokeStyle = 'rgba(255,255,255,.2)'; g.setLineDash([2, 3]);
+        g.beginPath(); g.moveTo(X(58), T - 6); g.lineTo(X(58), B); g.stroke(); g.setLineDash([]);
+        tag(g, X(58), T - 9, 'IRON', { size: 9, align: 'center', col: '#cfd6cb' });
+        tag(g, 14, PH - 6, loop < 0.5 ? 'FUSING →' : '← SPLITTING', { size: 9, col: '#8fb9ad' });
+      },
+    },
+    pp: {
+      txt: 'Two protons cannot stick: <b>²He is unbound</b>. One of them has to turn into a neutron on the way in, '
+        + 'by the weak interaction — which is why a proton in the sun waits about <b>a billion years</b> for its turn.',
+      draw(g, t) {
+        g.fillStyle = '#07090a'; g.fillRect(0, 0, PW, PH);
+        const cy = PH * 0.46, loop = (t % 9) / 9;
+        const succeed = loop > 0.62;
+        const u = succeed ? (loop - 0.62) / 0.38 : (loop / 0.62 % 0.25) / 0.25;
+        const close = succeed ? ease(clamp(u * 1.6, 0, 1)) : Math.sin(clamp(u, 0, 1) * Math.PI) * 0.92;
+        const sx = lerp(PW * 0.30, PW * 0.47, close), ex = lerp(PW * 0.70, PW * 0.53, close);
+        const flip = succeed && u > 0.55;
+        g.fillStyle = EMBER; g.beginPath(); g.arc(sx, cy, 9, 0, 6.2832); g.fill();
+        g.fillStyle = flip ? '#b9c1bc' : EMBER; g.beginPath(); g.arc(ex, cy, 9, 0, 6.2832); g.fill();
+        if (succeed && u > 0.5 && u < 0.72) {
+          g.strokeStyle = 'rgba(111,154,142,' + (1 - (u - 0.5) / 0.22) + ')'; g.lineWidth = 1.4;
+          g.beginPath(); g.arc(ex, cy, 12 + (u - 0.5) * 90, 0, 6.2832); g.stroke();
+        }
+        if (!succeed && close > 0.8) {
+          g.strokeStyle = 'rgba(184,65,46,.7)'; g.lineWidth = 1.2;
+          for (const d of [-1, 1]) {
+            g.beginPath();
+            g.moveTo(PW * 0.5 + d * 16, cy - 13); g.lineTo(PW * 0.5 + d * 26, cy - 20); g.stroke();
+          }
+        }
+        tag(g, PW * 0.5, PH - 12, succeed ? 'ONE IN 10²⁶ · DEUTERIUM' : 'THEY BOUNCE',
+          { size: 9, align: 'center', col: succeed ? '#8fb9ad' : '#c58a72' });
+        tag(g, 10, 16, succeed ? 'p + p → ²H + e⁺ + ν' : 'p + p → ²He ✗', { size: 9, track: 0.04 });
+      },
+    },
+    diffract: {
+      txt: 'Light bends around anything near its own size, so a gap narrower than <b>λ</b> throws no shadow — '
+        + 'it throws a spray. Everything we know about atoms came from the <b>pattern</b>, not the picture.',
+      draw(g, t) {
+        g.fillStyle = '#07090a'; g.fillRect(0, 0, PW, PH);
+        const bx = PW * 0.42, loop = (t % 10) / 10;
+        const gapPx = lerp(38, 5, 0.5 - 0.5 * Math.cos(loop * 6.28318));
+        const lam = 11;
+        for (let i = 0; i < 9; i++) {
+          const x = ((t * 26 + i * lam) % (bx - 6));
+          g.strokeStyle = 'rgba(207,214,203,' + (0.10 + 0.22 * (x / bx)) + ')'; g.lineWidth = 1;
+          g.beginPath(); g.moveTo(x, 8); g.lineTo(x, PH - 8); g.stroke();
+        }
+        g.fillStyle = '#20272a';
+        g.fillRect(bx, 0, 6, PH * 0.5 - gapPx / 2);
+        g.fillRect(bx, PH * 0.5 + gapPx / 2, 6, PH);
+        const th = Math.asin(clamp(lam / Math.max(gapPx, 1), 0, 1));
+        for (let i = 0; i < 9; i++) {
+          const r = ((t * 26 + i * lam) % (PW - bx));
+          g.strokeStyle = 'rgba(227,154,69,' + (0.34 * (1 - r / (PW - bx))) + ')'; g.lineWidth = 1;
+          g.beginPath(); g.arc(bx + 3, PH * 0.5, r, -th, th); g.stroke();
+        }
+        g.strokeStyle = 'rgba(111,154,142,.45)'; g.setLineDash([2, 3]); g.lineWidth = 1;
+        for (const s of [-1, 1]) {
+          g.beginPath(); g.moveTo(bx + 6, PH * 0.5);
+          g.lineTo(PW - 4, PH * 0.5 + s * Math.tan(th) * (PW - bx - 10)); g.stroke();
+        }
+        g.setLineDash([]);
+        tag(g, PW - 10, 16, 'SPREAD ' + (th * 57.3).toFixed(0) + '°', { size: 9, align: 'right', col: '#c9a074' });
+        tag(g, 10, PH - 8, 'GAP ' + (gapPx / lam).toFixed(1) + ' λ', { size: 9 });
+      },
+    },
+  };
+
+  let open = null;
+  const entry = { el: pop, fn: () => {}, on: false };
+  const show = (el) => {
+    const key = el.dataset.term, spec = TERMS[key];
+    if (!spec || open === el) return;
+    open = el;
+    ptx.innerHTML = spec.txt;
+    pop.classList.add('on'); pop.setAttribute('aria-hidden', 'false');
+    const r = el.getBoundingClientRect();
+    const ph = pop.offsetHeight || 240;
+    const above = r.top > ph + 18;
+    pop.style.left = clamp(r.left + r.width / 2 - 134, 12, innerWidth - 280) + 'px';
+    pop.style.top = (above ? r.top - ph - 10 : r.bottom + 10) + 'px';
+    entry.fn = (t) => {
+      K = 1;
+      const g = fit(pcv, PW, PH); spec.draw(g, t);
+      /* Re-anchor every frame: a tooltip that drifts off its word while the
+         page settles is worse than no tooltip. */
+      const b = el.getBoundingClientRect(), ht = pop.offsetHeight || 240;
+      const up = b.top > ht + 18;
+      pop.style.left = clamp(b.left + b.width / 2 - 134, 12, innerWidth - 280) + 'px';
+      pop.style.top = (up ? b.top - ht - 10 : b.bottom + 10) + 'px';
+    };
+    entry.on = true; live.add(entry);
+  };
+  const hide = () => {
+    open = null; entry.on = false; live.delete(entry);
+    pop.classList.remove('on'); pop.setAttribute('aria-hidden', 'true');
+  };
+  for (const el of document.querySelectorAll('.term')) {
+    el.addEventListener('pointerenter', () => show(el));
+    el.addEventListener('pointerleave', hide);
+    el.addEventListener('focus', () => show(el));
+    el.addEventListener('blur', hide);
+    el.addEventListener('click', (e) => { e.preventDefault(); show(el); });
+  }
+  addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
+})();
+
+/* ═══ the spine: forty-three decades, and where you are on them ════════════ */
+(() => {
+  const wrap = $('#spine'); if (!wrap) return;
+  const cv = $('#spineCanvas');
+  const LO = 1e-16, HI = 1e27;
+  const P = (m) => Math.log(m / LO) / Math.log(HI / LO);
+  const LAND = [
+    [1.68e-15, 'proton'], [1.5e-10, 'atom'], [5.5e-7, 'green light'], [7e-5, 'a hair'],
+    [1.7, 'a person'], [1.27e7, 'Earth'], [1.39e9, 'the sun'], [1.5e11, 'the sun’s distance'],
+    [9.46e15, 'a light year'], [1e21, 'the galaxy'], [8.8e26, 'everything'],
+  ];
+  const SECTIONS = [
+    ['.hero', 8.8e26, 'the observable universe'],
+    ['#l1', 1.56e-10, 'one iron atom'],
+    ['#l2', 1.5e11, 'the sun’s distance'],
+    ['#l3', 4.59e-15, 'an iron nucleus'],
+    ['#l4', 6.96e8, 'the core of a star'],
+    ['#l5', 5.5e-7, 'one wave of green light'],
+    ['.close', 1.7, 'you, in the middle of it'],
+  ].map((s) => ({ el: document.querySelector(s[0]), m: s[1], label: s[2] })).filter((s) => s.el);
+
+  let want = SECTIONS[0], at = P(SECTIONS[0].m), pending = false;
+  const pick = () => {
+    pending = false;
+    const focus = innerHeight * 0.42;
+    let bestD = Infinity;
+    for (const s of SECTIONS) {
+      const r = s.el.getBoundingClientRect();
+      const d = Math.abs(r.top + r.height * 0.34 - focus);
+      if (d < bestD) { bestD = d; want = s; }
+    }
+  };
+  addEventListener('scroll', () => { if (!pending) { pending = true; requestAnimationFrame(pick); } }, { passive: true });
+  addEventListener('resize', pick);
+  pick();
+
+  let last = 0;
+  const paint = (t) => {
+    if (getComputedStyle(wrap).display === 'none') return;
+    K = 1;
+    const w = Math.max(320, wrap.clientWidth), h = 46;
+    const g = fit(cv, w, h);
+    g.clearRect(0, 0, w, h);
+    const dt = last ? Math.min(0.1, t - last) : 0.016; last = t;
+    at += (P(want.m) - at) * (REDUCED ? 1 : clamp(dt * 2.6, 0, 1));
+    const pad = 18, L = pad, R = w - pad, y = h * 0.62;
+
+    g.strokeStyle = PAL.rule; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(L, y + 0.5); g.lineTo(R, y + 0.5); g.stroke();
+    for (let e = -16; e <= 27; e++) {
+      const x = L + P(Math.pow(10, e)) * (R - L);
+      const big = e % 5 === 0;
+      g.strokeStyle = big ? PAL.mist : PAL.rule;
+      g.beginPath(); g.moveTo(x + 0.5, y - (big ? 6 : 3)); g.lineTo(x + 0.5, y); g.stroke();
+    }
+    g.save();
+    g.font = '9px ' + MONO; g.fillStyle = PAL.mist; g.textAlign = 'center';
+    if ('letterSpacing' in g) g.letterSpacing = '0.10em';
+    laneOut(g, LAND.map((m) => {
+      const half = g.measureText(m[1]).width / 2;
+      const x = clamp(L + P(m[0]) * (R - L), half + 6, w - half - 6);
+      return { x, txt: m[1], draw: () => g.fillText(m[1], x, y + 13) };
+    }), 12);
+    g.restore();
+    const mx = L + at * (R - L);
+    g.fillStyle = PAL.ink;
+    g.beginPath(); g.moveTo(mx, y - 9); g.lineTo(mx - 4.5, y - 17); g.lineTo(mx + 4.5, y - 17); g.closePath(); g.fill();
+    g.save();
+    g.font = '400 10px ' + MONO; g.fillStyle = PAL.ink;
+    g.textAlign = mx > w * 0.72 ? 'right' : 'left';
+    if ('letterSpacing' in g) g.letterSpacing = '0.12em';
+    g.fillText(want.label.toUpperCase() + ' · ' + metres(want.m), mx + (mx > w * 0.72 ? -10 : 10), y - 10);
+    g.restore();
+  };
+  const e2 = { el: wrap, fn: paint, on: true };
+  live.add(e2);
+  paint(0);
+})();
+
+/* ═══ 陰陽 · swap which one is the ground ══════════════════════════════════ */
+(() => {
+  const btn = $('#yin'); if (!btn) return;
+  btn.addEventListener('click', () => {
+    document.documentElement.classList.toggle('yin');
+    readPalette();
+    btn.setAttribute('aria-pressed', String(document.documentElement.classList.contains('yin')));
+  });
+})();
+
+})();
+</script>

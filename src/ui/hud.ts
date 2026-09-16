@@ -87,8 +87,27 @@ export function commas(n: number): string {
 }
 
 /** Distance rendered in whichever astronomical unit keeps the number small. */
+/**
+ * One ruler for forty-three decades.
+ *
+ * The ladder runs from a nucleus to the observable universe, and every rung of
+ * it used to format its own number in its own unit - six copies of the same
+ * two lines and three hand-rolled variants for the small end, which is how a
+ * readout ends up disagreeing with itself across a transition. This is the
+ * whole span in one function, in the unit somebody working at that size would
+ * actually use: femtometres for a nucleus, angstroms for a lattice,
+ * astronomical units for a system, megaparsecs for the web.
+ */
 export function formatDistance(metres: number): [string, string] {
   const a = Math.abs(metres);
+  if (a === 0) return ['0', 'm'];
+  if (a < 1e-15) return [sig(metres * 1e18, 3), 'am'];
+  if (a < 1e-12) return [sig(metres * 1e15, 3), 'fm'];
+  if (a < 1e-10) return [sig(metres * 1e12, 3), 'pm'];
+  if (a < 1e-9) return [sig(metres * 1e10, 3), 'Å'];
+  if (a < 1e-6) return [sig(metres * 1e9, 3), 'nm'];
+  if (a < 1e-3) return [sig(metres * 1e6, 3), 'µm'];
+  if (a < 1) return [sig(metres * 1e3, 3), 'mm'];
   if (a < 1e4) return [sig(metres, 3), 'm'];
   if (a < 1.5e9) return [sig(metres / 1e3, 3), 'km'];
   if (a < 1e15) return [sig(metres / 1.495978707e11, 3), 'AU'];
@@ -98,8 +117,30 @@ export function formatDistance(metres: number): [string, string] {
   return [sig(metres / 3.0856775814913673e16 / 1e9, 3), 'Gpc'];
 }
 
+/**
+ * The same ruler, for time.
+ *
+ * `formatDistance` covers forty-three decades of length because the ladder
+ * spans that much; this has to cover forty-four of time, because the ladder
+ * divided by c spans that much - from light crossing a proton to the age of
+ * the universe. It used to stop at the second and fall back to scientific
+ * notation below it, which is fine for an orbital period and useless for a
+ * lattice: the whole bottom half of the ladder measures itself in attoseconds
+ * and femtoseconds, and those are units people actually use.
+ *
+ * Everything from one second up is unchanged, because a day is a day.
+ */
 export function formatTime(seconds: number): [string, string] {
   const a = Math.abs(seconds);
+  if (a === 0) return ['0', 's'];
+  if (a < 1e-21) return [sig(seconds * 1e24, 3), 'ys'];
+  if (a < 1e-18) return [sig(seconds * 1e21, 3), 'zs'];
+  if (a < 1e-15) return [sig(seconds * 1e18, 3), 'as'];
+  if (a < 1e-12) return [sig(seconds * 1e15, 3), 'fs'];
+  if (a < 1e-9) return [sig(seconds * 1e12, 3), 'ps'];
+  if (a < 1e-6) return [sig(seconds * 1e9, 3), 'ns'];
+  if (a < 1e-3) return [sig(seconds * 1e6, 3), 'µs'];
+  if (a < 1) return [sig(seconds * 1e3, 3), 'ms'];
   if (a < 120) return [sig(seconds, 3), 's'];
   if (a < 7200) return [sig(seconds / 60, 3), 'min'];
   if (a < 3 * 86400) return [sig(seconds / 3600, 3), 'h'];

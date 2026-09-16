@@ -131,6 +131,7 @@ const COMMANDS: Command[] = [
 
   { key: 'KeyJ', label: 'near light speed', rank: 60, live: always, on: lit('KeyJ') },
   { key: 'KeyO', label: 'the Solar System', rank: 61, live: always },
+  { key: 'Quote', label: 'in seconds', rank: 62, live: always, on: lit('Quote') },
   { key: 'KeyP', label: 'save frame', rank: 70, live: always },
   { key: 'KeyU', label: 'hide', rank: 71, live: always },
   { key: 'KeyH', label: 'guide', rank: 72, live: always },

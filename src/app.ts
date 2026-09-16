@@ -17,9 +17,12 @@ import { DeviceOrientation } from './camera/orientation';
 import { Universe } from './sim/universe';
 import {
   Stage, ScaleId, StageCtx, Target, StageEnv, makeStage, SCALE_ORDER, CosmosStage,
+  type Row,
 } from './sim/stages';
 import { Timeline } from './ui/timeline';
-import { Rows, el, sig, commas } from './ui/hud';
+import { Rows, el, sig, commas, formatTime } from './ui/hud';
+import { clockGap, lightTime, ownTime } from './physics/clock';
+import { ScaleStrip } from './ui/scalestrip';
 import { saveBlob } from './ui/save';
 import { spectrumCanvas } from './ui/spectrum';
 import { detectionCanvas } from './ui/detection';
@@ -121,6 +124,7 @@ export class App {
   private subEl: HTMLDivElement;
   private flashEl: HTMLDivElement;
   private warpEl: HTMLDivElement;
+  private strip = new ScaleStrip({ width: window.innerWidth });
   private helpEl: HTMLDivElement;
   private boot: HTMLDivElement;
   private bootBar: HTMLElement;
@@ -325,7 +329,7 @@ export class App {
 
     // Where a stage can mount an instrument of its own - a strain trace, say.
     this.overlayHost = el('div', 'overlay-host');
-    this.uiRoot.append(masthead, this.readout.el, this.timeline.el, this.warpEl,
+    this.uiRoot.append(masthead, this.readout.el, this.timeline.el, this.strip.el, this.warpEl,
       this.ladder, this.inspector, hint, rail, this.overlayHost, this.flashEl);
     document.body.append(this.helpEl);
 
@@ -364,12 +368,26 @@ export class App {
 
   // -------------------------------------------------------------------------
 
+  /**
+   * What a stage is handed to work with.
+   *
+   * The cosmology is a getter rather than a value, and that is not a style
+   * choice. It used to be copied in here once, when the stage was built - so
+   * pressing C swapped the label in the masthead to Einstein-de Sitter and the
+   * running scene went on integrating Planck 2018 behind it, with the growth
+   * factor, the age and H(z) in the readout all still answering for a universe
+   * that was no longer the one being claimed. Everything else in this object is
+   * either an object that is mutated in place or already a function; the
+   * cosmology was the one field that was reassigned, and it was the one that
+   * silently stopped arriving.
+   */
   private env(): StageEnv {
+    const app = this;
     return {
       engine: this.engine,
       controls: this.controls,
       universe: this.universe,
-      cosmology: this.cosmology,
+      get cosmology(): Cosmology { return app.cosmology; },
       epoch: () => this.epochA,
       viewport: () => this.engine.size,
       quality: () => this.quality,
@@ -495,6 +513,13 @@ export class App {
     }
 
     if (stage.id !== 'cosmos') this.endOverture(true);
+    // The axis stays in whichever reading it was left in, so arriving at the
+    // cosmic scale with it in seconds has to arrive on the cone as well - or
+    // the strip would be talking about light travel time over a picture that
+    // had gone back to one epoch everywhere.
+    if (stage instanceof CosmosStage && this.strip.reading === 'time') {
+      stage.observeLightCone(true);
+    }
     this.titleEl.textContent = stage.title;
     this.subEl.textContent = stage.subtitle;
     this.updateCrumb();
@@ -592,11 +617,39 @@ export class App {
     });
   }
 
+  /**
+   * What the stage has to say, plus what its clock does when the axis is being
+   * read in seconds.
+   *
+   * The stage cannot know which reading is showing - it has no business
+   * knowing - so the three rows that only make sense in seconds are added
+   * here, and the readout's own key-change detection rebuilds it when they
+   * appear and disappear.
+   */
+  private stageRows(): Row[] {
+    const stage = this.stage;
+    if (!stage) return [];
+    const rows = stage.rows();
+    if (this.strip.reading !== 'time') return rows;
+    const k = stage.clock();
+    if (!k) return [...rows, { k: 'in seconds', v: 'nothing here keeps time' }];
+    const gap = clockGap(k);
+    const [lv, lu] = formatTime(lightTime(k));
+    const [ov, ou] = formatTime(ownTime(k));
+    return [...rows,
+      { k: 'light across it', v: lv, u: lu, accent: true },
+      { k: k.what, v: ov, u: ou, accent: true },
+      { k: 'slower by', v: gap < 1.05
+        ? 'nothing — it moves at c'
+        : `×${sig(gap, 3)} · ${Math.log10(gap).toFixed(2)} decades` },
+    ];
+  }
+
   private rebuildReadout(): void {
     this.readout.clear();
     this.readoutKeys = '';
     if (!this.stage) return;
-    const rows = this.stage.rows();
+    const rows = this.stageRows();
     // Keyed by position, not by label. Two rows can honestly want the same
     // label - the star is 'it is day' and the planet overhead is 'it is 28%
     // lit' - and keying on the label meant the second one silently took the
@@ -871,6 +924,29 @@ export class App {
           this.mark('KeyQ', which !== 'all of them');
           this.rebuildReadout();
           this.flash(which === 'all of them' ? 'the whole cloud again' : `just ${which}`);
+          break;
+        }
+        case 'Quote': {
+          // Read everything in seconds. It goes on a punctuation key for the
+          // same reason the microwave sky did: every letter is spoken for.
+          // Next to the semicolon, which is where the other one ended up.
+          //
+          // One key rather than two, because the axis in seconds and the web on
+          // its light cone are the same statement. The strip says the standoff
+          // is eight hundred million years of light; the cone is what that
+          // means for what is at the far end of it. Splitting them into two
+          // commands would have let you have either half of the idea.
+          const mode = this.strip.cycleMode();
+          this.mark('Quote', mode === 'time');
+          const cosmos = this.stage instanceof CosmosStage ? this.stage : null;
+          const cone = cosmos ? cosmos.observeLightCone(mode === 'time') : false;
+          this.rebuildReadout();
+          this.flash(mode !== 'time'
+            ? 'back to metres, and to one epoch everywhere'
+            : cone
+              ? 'the past light cone — everything is as old as it is far away; '
+                + 'fly out and look at it from outside'
+              : `the same ruler, in seconds — ${this.strip.clockLine()}`);
           break;
         }
         case 'KeyP': this.capture(); break;
@@ -1241,6 +1317,7 @@ export class App {
     const w = Math.round(vv?.width ?? window.innerWidth);
     const h = Math.round(vv?.height ?? window.innerHeight);
     this.engine.setSize(w, h, dpr);
+    this.strip.resize(w);
     this.stage?.onResize();
     this.mobile?.onResize();
   }
@@ -1355,9 +1432,9 @@ export class App {
             ` · γ ${lorentz(this.boost) < 100 ? lorentz(this.boost).toFixed(2)
               : lorentz(this.boost).toExponential(1)}`
           : '';
-        this.warpEl.textContent = (this.playing
-          ? `${warp.label} · ${this.stage.scaleLabel()}`
-          : `paused · ${this.stage.scaleLabel()}`) + rel;
+        // The scale used to be repeated here; the strip below carries it now,
+        // and carries the context that a bare number never could.
+        this.warpEl.textContent = (this.playing ? warp.label : 'paused') + rel;
       }
       // The sensor aims the camera before the rig is integrated, so a reading
       // and the frame it affects are never one apart.
@@ -1383,11 +1460,17 @@ export class App {
       this.stage.setBoost(this.boost, this.boostDir);
     }
 
+    if (this.stage) {
+      this.strip.set(this.stage.scaleMetres(), SCALE_LABELS[this.stage.id]);
+      this.strip.setClock(this.strip.wantsClock ? this.stage.clock() : null);
+      this.strip.draw();
+    }
+
     this.engine.render(dt);
 
     if (this.frame % 6 === 0 && this.stage) {
       this.fps += (1 / Math.max(dt, 1e-4) - this.fps) * 0.15;
-      const rows = this.stage.rows();
+      const rows = this.stageRows();
       // Stages add and drop rows as things happen - a comet switches on, an
       // eclipse starts, the microwave background is turned on - so the set has
       // to be rebuilt when it changes, not only when the scale does.
@@ -1483,6 +1566,8 @@ const HELP_HTML = `
       <dt>drag timeline</dt><dd>scrub 13.8 billion years</dd>
       <dt>R</dt><dd>rewind to the dark ages</dd>
       <dt>B</dt><dd>show the microwave background</dd>
+      <dt>'</dt><dd>read the axis in seconds instead of metres — and at the
+        cosmic scale, put the web on its own past light cone</dd>
     </dl>
   </div>
   <div>

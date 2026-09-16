@@ -218,25 +218,36 @@ float fbm(vec2 p) {
   for (int i = 0; i < 7; i++) { s += a * vnoise(p); p *= 2.03; a *= 0.5; }
   return s;
 }
-float rawTerrain(vec2 p) {
-  // Landform spacing scales with how far you can see. A fixed wavelength in
-  // metres puts three mountain ranges in an Earth view and less than one in
-  // the view from a small moon, where the horizon is two kilometres off.
+/**
+ * The landforms: hills, ridges, the shape of the horizon.
+ *
+ * Their spacing scales with how far you can see. A fixed wavelength in metres
+ * puts three mountain ranges in an Earth view and less than one in the view
+ * from a small moon, where the horizon is two kilometres off.
+ */
+float landform(vec2 p) {
   float k = 1.0 / max(uFeature, 1.0);
   float base = fbm(p * k) * 2.0 - 1.0;
   float ridge = 1.0 - abs(fbm(p * k * 3.4) * 2.0 - 1.0);
-  // Plus something at the scale of the ground you are standing on. The two
-  // terms above have nothing finer than about forty metres in them, which is
-  // correct for a mountain range and leaves the nearest fifty metres of the
-  // view - most of the lower half of the frame - perfectly smooth.
-  //
-  // Capped in metres rather than scaled with the relief: on a rugged little
-  // moon a fixed fraction of a kilometre of relief puts twenty-metre boulders
-  // at your feet, and from eye level a twenty-metre boulder twenty metres away
-  // fills half the sky.
-  float near = fbm(p * 0.07) * 2.0 - 1.0;
-  return uRelief * (base * 0.75 + ridge * ridge * 0.55 - 0.35)
-    + min(uRelief * 0.02, 2.5) * near;
+  return uRelief * (base * 0.75 + ridge * ridge * 0.55 - 0.35);
+}
+
+/**
+ * And the ground itself, at the scale of the ground you are standing on.
+ *
+ * The landform terms have nothing finer than about forty metres in them, which
+ * is correct for a mountain range and leaves the nearest fifty metres - most of
+ * the lower half of the frame, and the only part of this world anybody is
+ * actually standing on - perfectly smooth. This is what stops the near field
+ * being a painted slab.
+ *
+ * Capped in metres rather than scaled with the relief: on a rugged little moon
+ * a fixed fraction of a kilometre of relief puts twenty-metre boulders at your
+ * feet, and from eye level a twenty-metre boulder twenty metres away fills half
+ * the sky.
+ */
+float grain(vec2 p) {
+  return min(uRelief * 0.02, 2.5) * (fbm(p * 0.07) * 2.0 - 1.0);
 }
 
 /**
@@ -253,10 +264,18 @@ float rawTerrain(vec2 p) {
  * which puts the eye inside a hill and fills the screen with the underside of
  * the landscape. A level patch to stand on fixes it, and every landing site
  * ever chosen was chosen for being one.
+ *
+ * The levelling is for the landforms and for the landforms only. It used to
+ * multiply the whole height field, grain and all, which flattened the one term
+ * that exists to give the near ground a surface - so the thing it was
+ * protecting the view from was a hillside, and the thing it actually removed
+ * was the ground. A two-metre swell cannot bury a camera standing thirteen
+ * metres up, so it does not need protecting from.
  */
 float terrain(vec2 p) {
-  float h = rawTerrain(p) - rawTerrain(vec2(0.0));
-  return h * smoothstep(uFlat, uFlat * 3.0, length(p));
+  float big = landform(p) - landform(vec2(0.0));
+  float fine = grain(p) - grain(vec2(0.0));
+  return big * smoothstep(uFlat, uFlat * 3.0, length(p)) + fine;
 }
 
 void main() {
@@ -273,9 +292,23 @@ void main() {
   // The real surface normal, by central difference. Without it every fragment
   // gets the same light and the whole landscape is one flat wash - which is
   // exactly what it was before this was here.
+  //
+  // Two differences rather than one, because the two terms are forty metres
+  // apart in wavelength. A step wide enough to see a ridge steps clean over
+  // every stone; a step fine enough to see the stones reads pure noise off a
+  // mountainside, and the vertices out there are tens of metres apart so it
+  // would be noise that moved when the camera did. The fine step opens out
+  // with distance, which filters the grain out of the normal at exactly the
+  // range where the mesh can no longer carry it.
   float e = max(6.0, uRelief * 0.05);
-  vec2 grad = vec2(terrain(xz + vec2(e, 0.0)) - terrain(xz - vec2(e, 0.0)),
-                   terrain(xz + vec2(0.0, e)) - terrain(xz - vec2(0.0, e))) / (2.0 * e);
+  float lev = smoothstep(uFlat, uFlat * 3.0, length(xz));
+  vec2 gBig = vec2(landform(xz + vec2(e, 0.0)) - landform(xz - vec2(e, 0.0)),
+                   landform(xz + vec2(0.0, e)) - landform(xz - vec2(0.0, e)))
+              / (2.0 * e) * lev;
+  float f = max(0.35, length(xz) * 0.06);
+  vec2 gFine = vec2(grain(xz + vec2(f, 0.0)) - grain(xz - vec2(f, 0.0)),
+                    grain(xz + vec2(0.0, f)) - grain(xz - vec2(0.0, f))) / (2.0 * f);
+  vec2 grad = gBig + gFine;
   vSlope = clamp(length(grad) * 3.0, 0.0, 1.0);
   // Water is flat, whatever the rock under it is doing.
   vNormal = h < uSeaLevel ? vec3(0.0, 1.0, 0.0)
